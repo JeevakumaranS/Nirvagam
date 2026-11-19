@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+    --font-code: "DM Mono", Menlo, Monaco, Consolas, monospace;
+
+    /* Light Theme (Fallback + Display-P3) */
+    --color-background: #ffffff;
+    --color-surface-secondary: #fbfbfb;
+    --color-app-frame: #f1f1f1;
+    --color-text-primary: #333333;
+    --color-text-secondary: #666666;
+    --color-text-tertiary: #999999;
+    --color-border: #eaeaea;
+    --color-accent: #4662d6;
+
+    @supports (color: color(display-p3 1 1 1)) {
+      --color-background: color(display-p3 1 1 1);
+      --color-surface-secondary: color(display-p3 0.988 0.988 0.988);
+      --color-app-frame: color(display-p3 0.945 0.945 0.945);
+      --color-text-primary: color(display-p3 0.2 0.2 0.2);
+      --color-text-secondary: color(display-p3 0.4 0.4 0.4);
+      --color-text-tertiary: color(display-p3 0.6 0.6 0.6);
+      --color-border: color(display-p3 0.922 0.922 0.922);
+      --color-accent: color(display-p3 0.276 0.384 0.837);
+    }
+  }
+
+  [data-theme="dark"] {
+    /* Dark Theme */
+    --color-background: #171717;
+    --color-surface-secondary: #1b1b1b;
+    --color-app-frame: #1d1d1d;
+    --color-text-primary: #ebebeb;
+    --color-text-secondary: #b3b3b3;
+    --color-text-tertiary: #818181;
+    --color-border: #222222;
+    --color-accent: #4c6ef5;
+
+    @supports (color: color(display-p3 1 1 1)) {
+      --color-background: color(display-p3 0.09 0.09 0.09);
+      --color-surface-secondary: color(display-p3 0.106 0.106 0.106);
+      --color-app-frame: color(display-p3 0.114 0.114 0.114);
+      --color-text-primary: color(display-p3 0.922 0.922 0.922);
+      --color-text-secondary: color(display-p3 0.702 0.702 0.702);
+      --color-text-tertiary: color(display-p3 0.506 0.506 0.506);
+      --color-border: color(display-p3 0.133 0.133 0.133);
+    }
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-text-primary);
+    font-size: 13px;
+    line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Custom subtle scrollbars */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-text-tertiary);
+  }
+}
