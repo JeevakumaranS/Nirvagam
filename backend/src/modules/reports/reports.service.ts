@@ -1,5 +1,25 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { InvoiceStatus, InvoiceType } from '@nirvagam/shared';
+
+const SALES_REPORT_DOCUMENT_TYPES = [
+  InvoiceType.TAX_INVOICE,
+  InvoiceType.BILL_OF_SUPPLY,
+  InvoiceType.NON_GST,
+  InvoiceType.POS_RECEIPT,
+  InvoiceType.CREDIT_NOTE,
+  InvoiceType.DEBIT_NOTE,
+  InvoiceType.SALES_RETURN,
+];
+
+const GST_REPORT_DOCUMENT_TYPES = [
+  InvoiceType.TAX_INVOICE,
+  InvoiceType.BILL_OF_SUPPLY,
+  InvoiceType.POS_RECEIPT,
+  InvoiceType.CREDIT_NOTE,
+  InvoiceType.DEBIT_NOTE,
+  InvoiceType.SALES_RETURN,
+];
 
 @Injectable()
 export class ReportsService {
@@ -10,7 +30,11 @@ export class ReportsService {
 
     const [sales, purchases, customers, suppliers, stockBalances, bankAccounts] = await Promise.all([
       this.prisma.salesInvoice.aggregate({
-        where: { ...branchWhere, status: { not: 'CANCELLED' } },
+        where: {
+          ...branchWhere,
+          status: { notIn: [InvoiceStatus.CANCELLED, InvoiceStatus.DRAFT] },
+          invoiceType: { in: SALES_REPORT_DOCUMENT_TYPES },
+        },
         _sum: { grandTotal: true, paidAmount: true, taxableAmount: true },
         _count: { id: true },
       }),
@@ -91,7 +115,11 @@ export class ReportsService {
 
     const [salesInvoices, purchaseInvoices] = await Promise.all([
       this.prisma.salesInvoice.findMany({
-        where: { ...branchWhere, status: { not: 'CANCELLED' } },
+        where: {
+          ...branchWhere,
+          status: { notIn: [InvoiceStatus.CANCELLED, InvoiceStatus.DRAFT] },
+          invoiceType: { in: GST_REPORT_DOCUMENT_TYPES },
+        },
         include: { customer: true },
       }),
       this.prisma.purchaseInvoice.findMany({
