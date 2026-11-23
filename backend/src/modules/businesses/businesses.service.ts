@@ -9,6 +9,9 @@ export class BusinessesService {
   constructor(private prisma: PrismaService) {}
 
   async findAll(tenantId: string) {
+    if (!tenantId) {
+      return [];
+    }
     return this.prisma.business.findMany({
       where: { tenantId, isActive: true },
       include: {

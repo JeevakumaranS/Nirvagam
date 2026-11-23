@@ -13,6 +13,9 @@
     "prisma:push": "prisma db push",
     "prisma:uuidv7": "prisma db execute --schema prisma/schema.prisma --file prisma/migrations/20261119160000_uuidv7_ids/migration.sql",
     "prisma:seed": "ts-node prisma/seed.ts",
+    "tenant:provision": "ts-node src/cli/tenant-cli.ts provision",
+    "tenant:migrate": "ts-node src/cli/tenant-cli.ts migrate",
+    "super-admin:create": "ts-node src/cli/create-super-admin.ts",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage"

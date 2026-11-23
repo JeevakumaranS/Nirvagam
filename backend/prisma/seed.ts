@@ -79,12 +79,17 @@ async function main() {
     'payment',
     'expense',
     'accounting',
+    'journal_entry',
+    'financial_period',
+    'stock_adjustment',
+    'warehouse',
+    'pos',
     'gst_report',
     'report',
     'settings',
     'subscription',
   ];
-  const actions = ['view', 'create', 'edit', 'delete', 'approve', 'cancel', 'export', 'print'];
+  const actions = ['view', 'create', 'edit', 'delete', 'approve', 'cancel', 'export', 'print', 'access_reports'];
 
   const createdPermissions = [];
   for (const resource of resources) {
@@ -106,15 +111,16 @@ async function main() {
   // 3. Seed Roles
   const roles = [
     { name: 'SUPER_ADMIN', description: 'Platform Super Administrator with complete system access', isSystem: true },
-    { name: 'BUSINESS_OWNER', description: 'Business Owner with complete commercial and financial control', isSystem: true },
-    { name: 'BUSINESS_ADMIN', description: 'Business Administrator managing operations and configuration', isSystem: true },
-    { name: 'ACCOUNTANT', description: 'Accountant with full ledger, voucher, and financial reporting access', isSystem: true },
-    { name: 'MANAGER', description: 'Store / Operations Manager managing billing, inventory and procurement', isSystem: true },
-    { name: 'SALES_EXECUTIVE', description: 'Sales staff managing customer invoices and quotes', isSystem: true },
-    { name: 'CASHIER', description: 'POS Cashier focused on high-speed checkout and shift reconciliation', isSystem: true },
-    { name: 'PURCHASE_MANAGER', description: 'Procurement manager handling vendor POs and GRNs', isSystem: true },
-    { name: 'INVENTORY_MANAGER', description: 'Warehouse and stock manager tracking inventory movements', isSystem: true },
-    { name: 'AUDITOR', description: 'Read-only access to all financial, statutory, and audit trail records', isSystem: true },
+    { name: 'BUSINESS_OWNER', description: 'Complete business access', isSystem: true },
+    { name: 'BUSINESS_ADMIN', description: 'Business configuration and management', isSystem: true },
+    { name: 'ACCOUNTANT', description: 'Accounting and financial reports', isSystem: true },
+    { name: 'MANAGER', description: 'Sales, purchase and inventory', isSystem: true },
+    { name: 'SALES_EXECUTIVE', description: 'Billing and customer management', isSystem: true },
+    { name: 'CASHIER', description: 'POS and sales billing', isSystem: true },
+    { name: 'PURCHASE_MANAGER', description: 'Purchase and suppliers', isSystem: true },
+    { name: 'INVENTORY_MANAGER', description: 'Stock and warehouses', isSystem: true },
+    { name: 'AUDITOR', description: 'Read-only financial access', isSystem: true },
+    { name: 'CUSTOM_USER', description: 'Permission-based access', isSystem: true },
   ];
 
   for (const roleDef of roles) {
@@ -134,24 +140,73 @@ async function main() {
           },
         });
 
-    // Grant all permissions to SUPER_ADMIN and BUSINESS_OWNER
-    if (roleDef.name === 'SUPER_ADMIN' || roleDef.name === 'BUSINESS_OWNER') {
-      for (const perm of createdPermissions) {
-        await prisma.rolePermission.upsert({
-          where: { roleId_permissionId: { roleId: role.id, permissionId: perm.id } },
-          update: {},
-          create: { roleId: role.id, permissionId: perm.id },
-        });
-      }
-    } else if (roleDef.name === 'AUDITOR') {
-      // Auditor gets view, export, print on everything
-      for (const perm of createdPermissions.filter((p) => ['view', 'export', 'print'].includes(p.action))) {
-        await prisma.rolePermission.upsert({
-          where: { roleId_permissionId: { roleId: role.id, permissionId: perm.id } },
-          update: {},
-          create: { roleId: role.id, permissionId: perm.id },
-        });
-      }
+  }
+
+  const permissionKeys = (resourceNames: string[], actionNames: string[]) =>
+    resourceNames.flatMap((resource) => actionNames.map((action) => `${resource}:${action}`));
+  const allPermissionKeys = new Set(createdPermissions.map((p) => `${p.resource}:${p.action}`));
+  const defaultRolePermissions: Record<string, Set<string>> = {
+    SUPER_ADMIN: allPermissionKeys,
+    BUSINESS_OWNER: allPermissionKeys,
+    BUSINESS_ADMIN: new Set([
+      ...permissionKeys(
+        [
+          'business', 'branch', 'user', 'role', 'customer', 'supplier', 'product', 'inventory',
+          'sales_invoice', 'quotation', 'sales_order', 'purchase_invoice', 'purchase_order',
+          'accounting', 'report', 'gst_report', 'settings', 'subscription', 'warehouse', 'pos',
+        ],
+        ['view', 'create', 'edit', 'export', 'print', 'access_reports']
+      ),
+      ...permissionKeys(['sales_invoice', 'purchase_invoice', 'purchase_order', 'accounting'], ['approve']),
+    ]),
+    ACCOUNTANT: new Set(permissionKeys(
+      ['accounting', 'journal_entry', 'financial_period', 'payment', 'sales_invoice', 'purchase_invoice', 'report', 'gst_report'],
+      ['view', 'create', 'edit', 'approve', 'export', 'print', 'access_reports']
+    )),
+    MANAGER: new Set(permissionKeys(
+      ['sales_invoice', 'purchase_invoice', 'purchase_order', 'product', 'inventory', 'stock_adjustment', 'warehouse', 'customer', 'supplier', 'report'],
+      ['view', 'create', 'edit', 'export', 'print', 'access_reports']
+    )),
+    SALES_EXECUTIVE: new Set([
+      ...permissionKeys(['sales_invoice', 'customer', 'quotation', 'sales_order'], ['view', 'create', 'edit']),
+      ...permissionKeys(['product', 'inventory', 'report'], ['view', 'access_reports']),
+    ]),
+    CASHIER: new Set([
+      ...permissionKeys(['pos', 'sales_invoice'], ['view', 'create']),
+      ...permissionKeys(['customer', 'product', 'inventory'], ['view']),
+    ]),
+    PURCHASE_MANAGER: new Set([
+      ...permissionKeys(['purchase_invoice', 'purchase_order'], ['view', 'create', 'edit', 'approve']),
+      ...permissionKeys(['supplier'], ['view', 'create', 'edit']),
+      ...permissionKeys(['inventory', 'product', 'report'], ['view', 'edit', 'access_reports']),
+    ]),
+    INVENTORY_MANAGER: new Set([
+      ...permissionKeys(['inventory', 'stock_adjustment'], ['view', 'create', 'edit', 'approve']),
+      ...permissionKeys(['product', 'warehouse'], ['view', 'create', 'edit']),
+      ...permissionKeys(['branch', 'report'], ['view', 'access_reports']),
+    ]),
+    AUDITOR: new Set(permissionKeys(
+      resources,
+      ['view', 'export', 'print', 'access_reports']
+    )),
+    CUSTOM_USER: new Set(),
+  };
+
+  for (const [roleName, grants] of Object.entries(defaultRolePermissions)) {
+    const role = await prisma.role.findFirst({
+      where: { name: roleName, businessId: null },
+      select: { id: true },
+    });
+    if (!role) continue;
+
+    const permissionIds = createdPermissions
+      .filter((permission) => grants.has(`${permission.resource}:${permission.action}`))
+      .map((permission) => permission.id);
+    await prisma.rolePermission.deleteMany({ where: { roleId: role.id } });
+    if (permissionIds.length > 0) {
+      await prisma.rolePermission.createMany({
+        data: permissionIds.map((permissionId) => ({ roleId: role.id, permissionId })),
+      });
     }
   }
   console.log('✓ System roles and permissions mapped.');
@@ -446,6 +501,221 @@ async function main() {
   });
 
   console.log('✓ Admin user seeded (Email: admin@nirvagam.com, Password: Password@123)');
+
+  // 6. Seed Demo Customers
+  const customer1 = (await prisma.customer.findFirst({ where: { phone: '+91 9842109876' } })) ||
+    (await prisma.customer.create({
+      data: {
+        businessId: business.id,
+        name: 'Kavitha Silks & Textiles',
+        companyName: 'Kavitha Silks Pvt Ltd',
+        phone: '+91 9842109876',
+        email: 'orders@kavithasilks.com',
+        gstin: '33AABCK1234F1Z9',
+        billingStreet: '104 Cross Cut Road',
+        billingCity: 'Coimbatore',
+        billingState: 'Tamil Nadu',
+        billingStateCode: '33',
+        billingPincode: '641012',
+        creditLimit: 150000.0,
+        creditPeriodDays: 30,
+        openingBalance: 12500.0,
+      },
+    }));
+
+  const customer2 = (await prisma.customer.findFirst({ where: { phone: '+91 9443212345' } })) ||
+    (await prisma.customer.create({
+      data: {
+        businessId: business.id,
+        name: 'Trichy Engineering Works',
+        companyName: 'Trichy Engg LLP',
+        phone: '+91 9443212345',
+        email: 'trichyeng@gmail.com',
+        gstin: '33AACCT9876H1Z4',
+        billingStreet: '52 Thillai Nagar',
+        billingCity: 'Tiruchirappalli',
+        billingState: 'Tamil Nadu',
+        billingStateCode: '33',
+        billingPincode: '620018',
+        creditLimit: 75000.0,
+        creditPeriodDays: 15,
+        openingBalance: 0,
+      },
+    }));
+  console.log('✓ Demo customers seeded.');
+
+  // 7. Seed Demo Suppliers
+  const supplier1 = (await prisma.supplier.findFirst({ where: { phone: '+91 9789012345' } })) ||
+    (await prisma.supplier.create({
+      data: {
+        businessId: business.id,
+        name: 'Sree Textiles Mills',
+        companyName: 'Sree Mills India Ltd',
+        phone: '+91 9789012345',
+        email: 'sales@sreemills.com',
+        gstin: '33AABCS5432G1Z1',
+        addressStreet: 'Ring Road, Avinashi Bypass',
+        city: 'Tirupur',
+        state: 'Tamil Nadu',
+        stateCode: '33',
+        pincode: '641604',
+        creditPeriodDays: 45,
+        openingBalance: 24000.0,
+      },
+    }));
+  console.log('✓ Demo suppliers seeded.');
+
+  // 8. Seed Demo Products & Stock Balances
+  const unitPcs = await prisma.unit.findFirst({ where: { businessId: business.id, symbol: 'PCS' } });
+  const tax18 = await prisma.taxRate.findFirst({ where: { businessId: business.id, rate: 18 } });
+  const tax5 = await prisma.taxRate.findFirst({ where: { businessId: business.id, rate: 5 } });
+  const centralWh = await prisma.warehouse.findFirst({ where: { branchId: hqBranch.id } });
+
+  const demoProducts = [
+    {
+      name: 'Premium Oxford Cotton Shirt',
+      sku: 'SHIRT-OXF-01',
+      barcode: '890100100001',
+      hsnCode: '6205',
+      purchasePrice: 480.0,
+      salesPrice: 950.0,
+      mrp: 1199.0,
+      minStockLevel: 20,
+      taxRateId: tax5?.id || tax18?.id || '',
+      stockQty: 85,
+    },
+    {
+      name: 'Stretch Chino Trousers',
+      sku: 'CHINO-STR-02',
+      barcode: '890100100002',
+      hsnCode: '6203',
+      purchasePrice: 650.0,
+      salesPrice: 1299.0,
+      mrp: 1499.0,
+      minStockLevel: 15,
+      taxRateId: tax18?.id || '',
+      stockQty: 60,
+    },
+    {
+      name: 'Pure Linen Formal Kurta',
+      sku: 'KURTA-LIN-03',
+      barcode: '890100100003',
+      hsnCode: '6211',
+      purchasePrice: 750.0,
+      salesPrice: 1599.0,
+      mrp: 1899.0,
+      minStockLevel: 10,
+      taxRateId: tax5?.id || tax18?.id || '',
+      stockQty: 35,
+    },
+    {
+      name: 'Classic Pique Polo T-Shirt',
+      sku: 'POLO-PIQ-04',
+      barcode: '890100100004',
+      hsnCode: '6105',
+      purchasePrice: 280.0,
+      salesPrice: 599.0,
+      mrp: 799.0,
+      minStockLevel: 25,
+      taxRateId: tax5?.id || tax18?.id || '',
+      stockQty: 110,
+    },
+  ];
+
+  for (const p of demoProducts) {
+    if (!p.taxRateId || !unitPcs) continue;
+
+    const existingProduct = await prisma.product.findFirst({
+      where: { businessId: business.id, sku: p.sku },
+    });
+
+    const createdProd = existingProduct || (await prisma.product.create({
+      data: {
+        businessId: business.id,
+        unitId: unitPcs.id,
+        taxRateId: p.taxRateId,
+        name: p.name,
+        sku: p.sku,
+        barcode: p.barcode,
+        hsnCode: p.hsnCode,
+        purchasePrice: p.purchasePrice,
+        salesPrice: p.salesPrice,
+        mrp: p.mrp,
+        minStockLevel: p.minStockLevel,
+      },
+    }));
+
+    const variant = (await prisma.productVariant.findUnique({ where: { sku: p.sku } })) ||
+      (await prisma.productVariant.create({
+        data: {
+          productId: createdProd.id,
+          name: 'Standard',
+          sku: p.sku,
+          barcode: p.barcode,
+          purchasePrice: p.purchasePrice,
+          salesPrice: p.salesPrice,
+          mrp: p.mrp,
+        },
+      }));
+
+    if (centralWh) {
+      await prisma.stockBalance.upsert({
+        where: { warehouseId_variantId: { warehouseId: centralWh.id, variantId: variant.id } },
+        update: { quantity: p.stockQty },
+        create: {
+          warehouseId: centralWh.id,
+          variantId: variant.id,
+          quantity: p.stockQty,
+          averageCost: p.purchasePrice,
+        },
+      });
+    }
+  }
+  console.log('✓ Demo catalog products & stock balances seeded.');
+
+  // 9. Seed Initial Sales Invoice
+  const existingInv = await prisma.salesInvoice.findFirst({ where: { branchId: hqBranch.id } });
+  if (!existingInv) {
+    const prod1 = await prisma.productVariant.findFirst({ where: { sku: 'SHIRT-OXF-01' } });
+    if (prod1) {
+      const inv = await prisma.salesInvoice.create({
+        data: {
+          branchId: hqBranch.id,
+          customerId: customer1.id,
+          invoiceNumber: 'INV-26/1001',
+          invoiceDate: new Date(),
+          dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          status: 'PAID',
+          taxableAmount: 9500.0,
+          cgstAmount: 237.5,
+          sgstAmount: 237.5,
+          igstAmount: 0,
+          totalTax: 475.0,
+          roundOff: 0,
+          grandTotal: 9975.0,
+          paidAmount: 9975.0,
+          notes: 'Commercial wholesale sales order',
+          terms: 'Standard terms',
+        },
+      });
+
+      await prisma.salesInvoiceItem.create({
+        data: {
+          salesInvoiceId: inv.id,
+          variantId: prod1.id,
+          quantity: 10,
+          unitPrice: 950.0,
+          taxableValue: 9500.0,
+          gstRate: 5.0,
+          cgstAmount: 237.5,
+          sgstAmount: 237.5,
+          totalAmount: 9975.0,
+        },
+      });
+      console.log('✓ Demo sales invoice seeded.');
+    }
+  }
+
   console.log('--- NIRVAGAM DATABASE SEEDING COMPLETED SUCCESSFULLY ---');
 }
 

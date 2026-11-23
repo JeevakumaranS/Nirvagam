@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { clsx } from 'clsx';
 
@@ -14,9 +16,9 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
     const inputId = id || (label ? label.toLowerCase().replace(/\s+/g, '-') : undefined);
 
     return (
-      <div className="w-full flex flex-col gap-1">
+      <div className="w-full flex flex-col gap-1 text-left">
         {label && (
-          <label htmlFor={inputId} className="text-xs font-medium text-text-secondary select-none">
+          <label htmlFor={inputId} className="text-xs font-medium text-text-secondary select-none tracking-tight">
             {label}
           </label>
         )}
@@ -30,13 +32,13 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
             id={inputId}
             ref={ref}
             className={clsx(
-              'w-full h-8 px-2.5 text-xs bg-background text-text-primary rounded border border-border shadow-subtle',
-              'placeholder:text-text-tertiary transition-colors',
-              'focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent',
+              'w-full h-8 px-2.5 text-xs bg-surface text-text-primary rounded-sm border border-border',
+              'placeholder:text-text-tertiary/80 transition-all duration-fast ease-standard',
+              'focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/35',
               'disabled:opacity-50 disabled:bg-surface-secondary',
               prefixIcon && 'pl-8',
               suffixIcon && 'pr-8',
-              error && 'border-red-500 focus:border-red-500 focus:ring-red-500',
+              error && 'border-danger focus:border-danger focus:ring-danger/30',
               className
             )}
             {...props}
@@ -48,9 +50,9 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
           )}
         </div>
         {error ? (
-          <span className="text-[11px] text-red-500 font-normal">{error}</span>
+          <span className="text-[11px] text-danger font-normal leading-tight">{error}</span>
         ) : hint ? (
-          <span className="text-[11px] text-text-tertiary">{hint}</span>
+          <span className="text-[11px] text-text-tertiary font-normal leading-tight">{hint}</span>
         ) : null}
       </div>
     );

@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -10,6 +11,10 @@ export class UsersService {
   constructor(private prisma: PrismaService) {}
 
   async findAll(tenantId: string, params: PaginationParams) {
+    if (!tenantId) {
+      return { items: [], total: 0, page: 1, limit: 20, totalPages: 0 };
+    }
+
     const page = Math.max(1, Number(params.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(params.limit) || 20));
     const skip = (page - 1) * limit;
@@ -91,7 +96,7 @@ export class UsersService {
     return cleanUser;
   }
 
-  async create(tenantId: string, dto: CreateUserDto) {
+  async create(tenantId: string, businessId: string, dto: CreateUserDto) {
     const existing = await this.prisma.user.findUnique({
       where: { email: dto.email.toLowerCase().trim() },
     });
@@ -102,6 +107,7 @@ export class UsersService {
     const passwordHash = await bcrypt.hash(dto.password, 10);
 
     return this.prisma.$transaction(async (tx) => {
+      await this.validateRoleIds(tx, businessId, dto.roleIds || []);
       const user = await tx.user.create({
         data: {
           tenantId,
@@ -138,10 +144,14 @@ export class UsersService {
     });
   }
 
-  async update(tenantId: string, userId: string, dto: UpdateUserDto) {
+  async update(tenantId: string, businessId: string, userId: string, dto: UpdateUserDto) {
     await this.findOne(tenantId, userId);
 
     return this.prisma.$transaction(async (tx) => {
+      if (dto.roleIds) {
+        await this.validateRoleIds(tx, businessId, dto.roleIds);
+      }
+
       const updated = await tx.user.update({
         where: { id: userId },
         data: {
@@ -179,5 +189,34 @@ export class UsersService {
       where: { id: userId },
       data: { isActive: false },
     });
+  }
+
+  private async validateRoleIds(
+    tx: Prisma.TransactionClient,
+    businessId: string,
+    roleIds: string[]
+  ) {
+    if (new Set(roleIds).size !== roleIds.length) {
+      throw new BadRequestException('Duplicate role IDs are not allowed');
+    }
+
+    if (!roleIds.length) {
+      return;
+    }
+
+    const roles = await tx.role.findMany({
+      where: {
+        id: { in: roleIds },
+        OR: [
+          { isSystem: true, businessId: null },
+          ...(businessId ? [{ businessId }] : []),
+        ],
+      },
+      select: { id: true },
+    });
+
+    if (roles.length !== roleIds.length) {
+      throw new BadRequestException('One or more roles are not available to this business');
+    }
   }
 }

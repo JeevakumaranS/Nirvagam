@@ -6,122 +6,80 @@
 
 ---
 
-## 🛠 Technology Stack
+## 🛠 Architecture & Directory Layout
 
-- **Monorepo Layout:**
-  - `apps/web`: Next.js 14 (App Router, TypeScript, Tailwind CSS, Custom Design System)
-  - `apps/api`: NestJS 10 (TypeScript, Modular Architecture, OpenAPI/Swagger, JWT, Passport)
-  - `packages/shared`: Shared TypeScript types, Enums, GST calculators, DTOs
-- **Database:** PostgreSQL 18+
-- **ORM:** Prisma 5
-- **Design System:** Strict macOS-inspired, quiet minimalist aesthetic (Inter + DM Mono, CSS variables, Display-P3 colors, light/dark themes via `[data-theme="dark"]`)
+- **`node_modules/`** — 🌟 **Single root `node_modules` directory** (all dependencies hoisted, no separate/nested node_modules)
+- **`backend/`** — NestJS 10 modular REST API & double-entry accounting engine
+- **`frontend/`** — Next.js 14 App Router with quiet macOS-inspired minimal design
+- **`packages/shared/`** — Shared TypeScript types, Enums, DTOs, and GST calculation engine
+- **Database:** PostgreSQL 16 (with Prisma ORM)
 
 ---
 
-## 📋 Module Delivery Status Table
+## 🧭 Navigation & Sidebar Modules
 
-| Module ID | Module Name | Scope & Requirement IDs | Status |
-|:---|:---|:---|:---:|
-| **MOD-01** | **Tenant & Business Configuration** | FR-001 to FR-007 (Tenancy, Businesses, Branches, Sequences, FY, GSTIN) | ✅ **Completed & Verified** |
-| **MOD-02** | **Authentication & RBAC** | FR-010 to FR-013 (JWT rotation, bcrypt, 10 system roles, permissions, branch scope) | ✅ **Completed & Verified** |
-| **MOD-03** | **Master Data Management** | FR-020 to FR-024 (Catalog, UOMs, Categories, Brands, Tax Rates, Customers/Suppliers) | 🔄 Next in Sequence |
-| **MOD-04** | **Inventory & Warehouses** | FR-030 to FR-037 (Stock ledgers, movements, FIFO/WAC valuation, transfers) | ⏳ Queued |
-| **MOD-05** | **Double-Entry Accounting Core** | FR-070 to FR-076 (COA, balanced journals, period lock, vouchers, ledger) | ⏳ Queued |
-| **MOD-06** | **Sales & Invoicing Engine** | FR-040 to FR-045, FR-048, FR-049 (GST Invoices, Bill of Supply, Credit Notes, PDF) | ⏳ Queued |
-| **MOD-07** | **Point of Sale (POS)** | FR-046, FR-047 (High-speed barcode scanner, shift closing, thermal slips) | ⏳ Queued |
-| **MOD-08** | **Purchase & Procurement** | FR-050 to FR-054 (POs, GRNs, Vendor Bills, Debit Notes, ITC Tracking) | ⏳ Queued |
-| **MOD-09** | **Payments & Settlements** | FR-060 to FR-063 (Receipts, Disbursements, Invoice FIFO Allocations) | ⏳ Queued |
-| **MOD-10** | **Expense & Operational Costs** | FR-065 (Categories, Vouchers, Reverse Charge, Attachments) | ⏳ Queued |
-| **MOD-11** | **GST Compliance Engine** | FR-081 (CGST/SGST/IGST, Place of Supply, GSTR-1 & GSTR-3B preparation) | ⏳ Queued |
-| **MOD-12** | **Banking & Reconciliation** | Bank/Cash Books, Contra Transfers, Statement Reconciliations | ⏳ Queued |
-| **MOD-13** | **Multi-Branch & Multi-Company** | Inter-branch Stock Transfers, Distinct GSTINs, Consolidated Views | ⏳ Queued |
-| **MOD-14** | **Financial & Business Reports** | FR-080, FR-082 (P&L, Balance Sheet, Trial Balance, Executive KPIs) | ⏳ Queued |
-| **MOD-15** | **Document & Template System** | Vector PDF Generation, Storage Drivers, Document Audit | ⏳ Queued |
-| **MOD-16** | **Notifications & Audit Trails** | FR-084 (Tamper-evident Audit Logs, Overdue & Stock Alerts) | ⏳ Queued |
-| **MOD-17** | **SaaS Subscription Platform** | FR-083 (Plans, Quotas, Usage Metering, Platform Admin) | ⏳ Queued |
+| Group | Module Name | Route | Key Features |
+|:---|:---|:---|:---|
+| **Commercial** | **Dashboard** | `/dashboard` | Executive KPIs, MTD sales, receivables, cash/bank balance |
+| **Commercial** | **Sales & Billing** | `/sales` | Tax invoices, GST calculations (CGST/SGST/IGST), cancellations |
+| **Commercial** | **POS Checkout** | `/pos` | Barcode scanning, instant cart, Cash/Card/UPI tenders, thermal slip |
+| **Commercial** | **Purchases & GRN** | `/purchases` | Vendor bills, stock intake, Input Tax Credit (ITC) tracking |
+| **Operations** | **Inventory & Stock** | `/inventory` | Stock balances, HSN codes, UOM units, low-stock reorder alerts |
+| **Operations** | **Customers & Vendors** | `/partners` | Buyer directory (Debtors), Supplier directory (Creditors), credit limits |
+| **Operations** | **Double-Entry Ledger** | `/accounting` | Chart of Accounts, balanced Journal Vouchers ($\sum\text{Dr}=\sum\text{Cr}$), Trial Balance |
+| **Operations** | **Reports & Analytics** | `/reports` | Profit & Loss Statement, GSTR-1 & GSTR-3B tax data breakdown |
+| **Organization** | **Business Profile** | `/settings/business` | Legal name, PAN, CIN, GSTINs, branch outlets, active FY |
+| **Organization** | **Team Members** | `/settings/users` | Staff directory, role permissions, branch assignments, onboarding |
+| **Organization** | **Roles & Access** | `/settings/roles` | Granular permission matrix inspection (view, create, edit, delete, etc.) |
+
+### Roles & RBAC
+
+Run `npm run prisma:seed` to create the predefined roles and their default
+permissions. Seeding also restores predefined role grants to those defaults.
+Predefined role permission changes made in `/settings/roles` are global and
+affect every tenant using that role; custom roles are scoped to the current
+business. A role cannot be deleted while it is assigned to users.
+
+The permission catalog is stored in the database and includes view, create,
+edit, delete, approve, cancel, export, print, and access-reports actions.
+Implemented sensitive actions, including invoice cancellation, manual journal
+posting, and opening-stock entry, are checked by the API.
 
 ---
 
-## 🚀 Getting Started
+## 🚀 Running the Platform
 
-### 1. Prerequisites
-- Node.js $\ge 20$
-- PostgreSQL 18 or later running locally on port `5432` (UUIDv7 support is required)
-- npm $\ge 10$
-
-### 2. Local PostgreSQL Setup
-Create a PostgreSQL role and database for the application (the commands prompt for the local PostgreSQL administrator password and the new role password):
-```powershell
-createuser -h localhost -p 5432 -U postgres --pwprompt nirvagam
-createdb -h localhost -p 5432 -U postgres -O nirvagam nirvagam_db
-```
-Set the `DATABASE_URL` in both `.env` and `backend/.env` to use `localhost:5432` and the password chosen for the `nirvagam` role. If the role or database already exists, update it as needed instead of creating it again.
-
-### 3. Install Dependencies & Build Shared Package
 ```bash
-npm install
-npm run build:shared
-```
+# 1. Start backend (http://localhost:4000 & Swagger at /api/docs)
+npm run dev:backend
 
-### 4. Database Schema Migration & Seeding
-```bash
-# If this database already contains Nirvagam data with text IDs, back it up and
-# stop the backend, then run this one-time UUIDv7 re-key before prisma:push:
-npm run prisma:uuidv7
+# 2. Start frontend (http://localhost:3000)
+npm run dev:frontend
 
-# Create/update the local PostgreSQL schema
-npm run prisma:push
-
-# Seed plans, roles, permissions, standard accounts and the admin user
-npm run prisma:seed
-```
-For a fresh database, skip `prisma:uuidv7` and run `prisma:push` directly. The UUIDv7 migration changes existing primary keys and their references; old IDs (including IDs in existing JWTs) are no longer valid.
-
-### 5. Running the Application
-```bash
-# Run both API and Web concurrently
+# Or run both concurrently from root:
 npm run dev
-
-# Or run separately:
-npm run dev:backend   # Runs on http://localhost:4000
-npm run dev:frontend  # Runs on http://localhost:3000
 ```
 
----
+### Create a Platform Super Admin
 
-## 🔑 Default Seed Credentials
+Apply the platform migrations in filename order before creating a super admin or
+using platform registration:
 
-- **Workspace Slug:** `durozen`
-- **Admin Email:** `admin@nirvagam.com`
+```text
+backend/migrations/platform/001_platform_init.sql
+backend/migrations/platform/002_business_registration.sql
+```
+
+Then run:
+
+```bash
+npm run super-admin:create -- --email=admin@example.com --first-name=Platform --last-name=Admin
+```
+
+The CLI prompts for a new identity's password without echoing it. Existing active
+identities are promoted without changing their password. For non-interactive use,
+provide `SUPER_ADMIN_PASSWORD` through the environment.
+
+### Default Demo Credentials
+- **Email:** `admin@nirvagam.com`
 - **Password:** `Password@123`
-- **Role:** `BUSINESS_OWNER` (Full platform & commercial access)
-- **Active Business:** Durozen Technologies Private Limited (Namakkal HQ / Chennai Branch)
-
----
-
-## 📡 Documented API Endpoints (Module 1 & 2)
-
-- **Interactive OpenAPI/Swagger:** `http://localhost:4000/api/docs`
-- **Authentication:**
-  - `POST /api/v1/auth/register` — Onboard new tenant, business entity, and administrator.
-  - `POST /api/v1/auth/login` — Authenticate and retrieve JWT token pair.
-  - `POST /api/v1/auth/refresh` — Exchange refresh token for fresh access token.
-  - `GET /api/v1/auth/me` — Retrieve active profile and branch context.
-- **Tenants:**
-  - `GET /api/v1/tenants/current` — Current tenant subscription, status, and quotas.
-  - `PATCH /api/v1/tenants/current` — Update organization information.
-- **Businesses & Branches:**
-  - `GET /api/v1/businesses` — List legal entities.
-  - `POST /api/v1/businesses` — Create additional business entity.
-  - `GET /api/v1/businesses/:id` — Detail view with GST registrations and fiscal periods.
-  - `PUT /api/v1/businesses/:id` — Update legal/trade name, PAN, contact.
-  - `GET /api/v1/businesses/:id/branches` — List operating branches.
-  - `POST /api/v1/businesses/:id/branches` — Provision a new branch outlet.
-- **Users & RBAC:**
-  - `GET /api/v1/users` — Paginated team member directory with search and role filters.
-  - `POST /api/v1/users` — Onboard new team member.
-  - `GET /api/v1/users/:id` — User details and role assignments.
-  - `PUT /api/v1/users/:id` — Update user permissions, roles, or branch assignments.
-  - `DELETE /api/v1/users/:id` — Soft-deactivate user account.
-  - `GET /api/v1/roles` — List system and custom roles.
-  - `GET /api/v1/roles/permissions` — Granular permission catalog grouped by resource.

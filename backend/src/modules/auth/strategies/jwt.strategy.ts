@@ -3,13 +3,15 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { TenantDatabaseService } from '../../../tenancy/tenant-database.service';
 import { JwtPayload, AuthUser } from '@nirvagam/shared';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     private configService: ConfigService,
-    private prisma: PrismaService
+    private prisma: PrismaService,
+    private tenantDb: TenantDatabaseService
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -19,6 +21,43 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload): Promise<AuthUser> {
+    if (payload.platformAdmin) {
+      const identity = await this.tenantDb.withPlatform((tx) =>
+        tx.queryOne<{
+          id: string;
+          email: string;
+          first_name: string | null;
+          last_name: string | null;
+          status: string;
+          role: string | null;
+        }>(
+          `SELECT i.id, i.email, i.first_name, i.last_name, i.status, pu.role
+           FROM platform.identities i
+           JOIN platform.platform_users pu ON pu.identity_id = i.id
+           WHERE i.id = $1
+           LIMIT 1;`,
+          [payload.sub]
+        )
+      );
+
+      if (!identity || identity.status !== 'ACTIVE') {
+        throw new UnauthorizedException('Platform admin account not found or deactivated');
+      }
+
+      const roleName = identity.role || 'PLATFORM_SUPER_ADMIN';
+      return {
+        id: identity.id,
+        email: identity.email,
+        firstName: identity.first_name || '',
+        lastName: identity.last_name || '',
+        tenantId: '',
+        businessId: '',
+        roles: [roleName],
+        permissions: ['*:*'],
+        platformAdmin: true,
+      };
+    }
+
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
       include: {

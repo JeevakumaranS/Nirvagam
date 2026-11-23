@@ -23,11 +23,7 @@ export class PermissionsGuard implements CanActivate {
       throw new ForbiddenException('User context missing');
     }
 
-    // Super Admin and Business Owner have complete system access
-    if (
-      user.roles.includes(UserRoleName.SUPER_ADMIN) ||
-      user.roles.includes(UserRoleName.BUSINESS_OWNER)
-    ) {
+    if (user.roles.includes(UserRoleName.SUPER_ADMIN)) {
       return true;
     }
 

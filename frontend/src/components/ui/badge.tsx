@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { clsx } from 'clsx';
 
@@ -14,23 +16,23 @@ export function Badge({
   ...props
 }: BadgeProps) {
   const variants = {
-    neutral: 'bg-app-frame text-text-secondary border-border',
-    success: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20',
-    warning: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
-    danger: 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20',
-    accent: 'bg-accent/10 text-accent border-accent/20',
+    neutral: 'bg-app-frame/60 text-text-secondary border-border/80',
+    success: 'bg-success/12 text-success border-success/20',
+    warning: 'bg-warning/12 text-warning border-warning/20',
+    danger: 'bg-danger/12 text-danger border-danger/20',
+    accent: 'bg-accent/12 text-accent border-accent/20',
     outline: 'bg-transparent text-text-secondary border-border',
   };
 
   const sizes = {
-    sm: 'text-[10px] px-1.5 py-0.5',
-    md: 'text-[11px] px-2 py-0.5',
+    sm: 'text-[10px] px-2 py-0.5 leading-none',
+    md: 'text-[11px] px-2.5 py-0.5 leading-tight',
   };
 
   return (
     <span
       className={clsx(
-        'inline-flex items-center gap-1 font-medium rounded border tracking-tight select-none',
+        'inline-flex items-center gap-1 font-medium rounded-full border tracking-tight select-none font-sans',
         variants[variant],
         sizes[size],
         className

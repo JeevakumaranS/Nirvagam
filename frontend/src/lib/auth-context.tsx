@@ -10,6 +10,7 @@ export interface UserSession {
   lastName: string;
   roles: string[];
   permissions: string[];
+  platformAdmin?: boolean;
 }
 
 export interface TenantSession {
@@ -34,7 +35,7 @@ interface AuthContextType {
   token: string | null;
   loading: boolean;
   theme: 'light' | 'dark';
-  login: (credentials: any) => Promise<void>;
+  login: (credentials: any) => Promise<any>;
   register: (payload: any) => Promise<void>;
   logout: () => void;
   toggleTheme: () => void;
@@ -69,10 +70,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               email: profile.email,
               firstName: profile.firstName,
               lastName: profile.lastName,
-              roles: profile.userRoles?.map((ur: any) => ur.role.name) || [],
+              roles: profile.userRoles?.map((ur: any) => ur.role?.name || ur.role || ur) || [],
               permissions: [],
+              platformAdmin: Boolean(profile.platformAdmin),
             });
-            setTenant(profile.tenant);
+            setTenant(profile.tenant || null);
             if (profile.branchAssignments?.[0]?.branch) {
               const b = profile.branchAssignments[0].branch;
               setActiveBusiness({
@@ -82,6 +84,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 branchId: b.id,
                 branchName: b.name,
               });
+            } else {
+              setActiveBusiness(null);
             }
           }
         })
@@ -116,6 +120,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(data.user);
     setTenant(data.tenant);
     setActiveBusiness(data.activeBusiness);
+    return data;
   };
 
   const register = async (payload: any) => {

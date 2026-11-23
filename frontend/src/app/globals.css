@@ -4,64 +4,103 @@
 
 @layer base {
   :root {
-    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    font-size: 13px;
-    --font-code: "DM Mono", Menlo, Monaco, Consolas, monospace;
+    font-family:
+      -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", Inter,
+      "Segoe UI", Roboto, sans-serif;
+    font-size: 14.3px;
+    --font-code: "SF Mono", "DM Mono", Menlo, Monaco, Consolas, monospace;
 
-    /* Light Theme (Fallback + Display-P3) */
-    --color-background: #ffffff;
-    --color-surface-secondary: #fbfbfb;
-    --color-app-frame: #f1f1f1;
-    --color-text-primary: #333333;
-    --color-text-secondary: #666666;
-    --color-text-tertiary: #999999;
-    --color-border: #eaeaea;
-    --color-accent: #4662d6;
+    /* Motion Tokens */
+    --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --dur-fast: 120ms;
+    --dur-base: 200ms;
+    --dur-slow: 320ms;
 
-    @supports (color: color(display-p3 1 1 1)) {
-      --color-background: color(display-p3 1 1 1);
-      --color-surface-secondary: color(display-p3 0.988 0.988 0.988);
-      --color-app-frame: color(display-p3 0.945 0.945 0.945);
-      --color-text-primary: color(display-p3 0.2 0.2 0.2);
-      --color-text-secondary: color(display-p3 0.4 0.4 0.4);
-      --color-text-tertiary: color(display-p3 0.6 0.6 0.6);
-      --color-border: color(display-p3 0.922 0.922 0.922);
-      --color-accent: color(display-p3 0.276 0.384 0.837);
-    }
+    /* macOS Light Mode Tokens */
+    --color-background: #f5f5f7;
+    --color-sidebar: rgba(246, 246, 248, 0.78);
+    --color-surface: #ffffff;
+    --color-surface-secondary: #fafafc;
+    --color-app-frame: #ebebed;
+    --color-text-primary: #1d1d1f;
+    --color-text-secondary: #6e6e73;
+    --color-text-tertiary: #86868b;
+    --color-border: rgba(0, 0, 0, 0.08);
+    --color-accent: #007aff;
+    --color-accent-hover: #0062cc;
+    --color-accent-subtle: rgba(0, 122, 255, 0.12);
+    --color-success: #34c759;
+    --color-danger: #ff3b30;
+    --color-warning: #ff9f0a;
+
+    --shadow-subtle: 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
+    --shadow-modal:
+      0 16px 36px rgba(0, 0, 0, 0.15), 0 2px 8px rgba(0, 0, 0, 0.05),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.3);
   }
 
   [data-theme="dark"] {
-    /* Dark Theme */
-    --color-background: #171717;
-    --color-surface-secondary: #1b1b1b;
-    --color-app-frame: #1d1d1d;
-    --color-text-primary: #ebebeb;
-    --color-text-secondary: #b3b3b3;
-    --color-text-tertiary: #818181;
-    --color-border: #222222;
-    --color-accent: #4c6ef5;
+    /* macOS Dark Mode Tokens (Ventura/Sonoma/Sequoia) */
+    --color-background: #1e1e1e;
+    --color-sidebar: rgba(40, 40, 42, 0.78);
+    --color-surface: #2a2a2c;
+    --color-surface-secondary: #242426;
+    --color-app-frame: #161616;
+    --color-text-primary: #f5f5f7;
+    --color-text-secondary: #98989d;
+    --color-text-tertiary: #636366;
+    --color-border: rgba(255, 255, 255, 0.1);
+    --color-accent: #0a84ff;
+    --color-accent-hover: #0071e3;
+    --color-accent-subtle: rgba(10, 132, 255, 0.16);
+    --color-success: #30d158;
+    --color-danger: #ff453a;
+    --color-warning: #ff9f0a;
 
-    @supports (color: color(display-p3 1 1 1)) {
-      --color-background: color(display-p3 0.09 0.09 0.09);
-      --color-surface-secondary: color(display-p3 0.106 0.106 0.106);
-      --color-app-frame: color(display-p3 0.114 0.114 0.114);
-      --color-text-primary: color(display-p3 0.922 0.922 0.922);
-      --color-text-secondary: color(display-p3 0.702 0.702 0.702);
-      --color-text-tertiary: color(display-p3 0.506 0.506 0.506);
-      --color-border: color(display-p3 0.133 0.133 0.133);
-    }
+    --shadow-subtle: 0 1px 2px rgba(0, 0, 0, 0.2);
+    --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.25), 0 1px 2px rgba(0, 0, 0, 0.15);
+    --shadow-modal:
+      0 20px 48px rgba(0, 0, 0, 0.45), 0 4px 12px rgba(0, 0, 0, 0.3),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.08);
   }
 
   body {
     background-color: var(--color-background);
     color: var(--color-text-primary);
-    font-size: 13px;
+    font-size: 14.3px;
     line-height: 1.4;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    user-select: none; /* macOS desktop feel for shell chrome */
   }
 
-  /* Custom subtle scrollbars */
+  /* Allow text selection in content containers, tables, inputs */
+  main,
+  input,
+  textarea,
+  [data-selectable="true"],
+  table td,
+  table th {
+    user-select: text;
+  }
+
+  /* macOS translucent vibrancy helper */
+  .macos-vibrancy {
+    background-color: var(--color-sidebar);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+  }
+
+  .macos-window {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-card);
+    border-radius: 10px;
+  }
+
+  /* macOS Floating Overlay Scrollbars */
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -70,10 +109,65 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: var(--color-border);
-    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.18);
+    border-radius: 9999px;
+    transition: background-color var(--dur-fast) var(--ease-standard);
+  }
+  [data-theme="dark"] ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: var(--color-text-tertiary);
+    background: rgba(0, 0, 0, 0.35);
+  }
+  [data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.38);
+  }
+
+  /* Smooth page & card cross-fade transitions */
+  .page-transition {
+    animation: macosPageEnter var(--dur-base) var(--ease-standard) forwards;
+  }
+
+  @keyframes macosPageEnter {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @layer components {
+    .accordion-grid {
+      display: grid;
+      grid-template-rows: 0fr;
+      transition: grid-template-rows var(--dur-base) var(--ease-standard);
+    }
+
+    .accordion-grid[data-expanded="true"] {
+      grid-template-rows: 1fr;
+    }
+
+    .accordion-grid > * {
+      min-height: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+    .page-transition {
+      animation: none !important;
+      opacity: 1 !important;
+      transform: none !important;
+    }
   }
 }

@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import { TenantDatabaseService } from '../../tenancy/tenant-database.service';
 import * as bcrypt from 'bcryptjs';
 
 describe('AuthService', () => {
@@ -68,6 +69,10 @@ describe('AuthService', () => {
     verify: jest.fn(),
   };
 
+  const mockTenantDatabaseService = {
+    withPlatform: jest.fn(),
+  };
+
   const mockConfigService = {
     get: jest.fn((key: string) => {
       if (key === 'JWT_SECRET') return 'test_jwt_secret';
@@ -83,6 +88,7 @@ describe('AuthService', () => {
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: JwtService, useValue: mockJwtService },
         { provide: ConfigService, useValue: mockConfigService },
+        { provide: TenantDatabaseService, useValue: mockTenantDatabaseService },
       ],
     }).compile();
 
@@ -90,6 +96,9 @@ describe('AuthService', () => {
     prisma = module.get<PrismaService>(PrismaService);
     jwtService = module.get<JwtService>(JwtService);
     jest.clearAllMocks();
+    mockTenantDatabaseService.withPlatform.mockImplementation((callback: (tx: unknown) => unknown) =>
+      callback({ queryOne: jest.fn().mockResolvedValue(null) })
+    );
   });
 
   it('should be defined', () => {
@@ -169,6 +178,37 @@ describe('AuthService', () => {
   });
 
   describe('login', () => {
+    it('authenticates active platform super admins from platform identities', async () => {
+      const passwordHash = await bcrypt.hash('StrongPassword@123', 10);
+      mockTenantDatabaseService.withPlatform.mockImplementationOnce(
+        (callback: (tx: unknown) => unknown) =>
+          callback({
+            queryOne: jest.fn().mockResolvedValue({
+              id: 'platform-identity-1',
+              email: 'root@example.com',
+              password_hash: passwordHash,
+              first_name: 'Platform',
+              last_name: 'Admin',
+              status: 'ACTIVE',
+            }),
+          })
+      );
+
+      const result = await service.login({
+        email: 'root@example.com',
+        password: 'StrongPassword@123',
+      });
+
+      expect(result.user.roles).toContain('SUPER_ADMIN');
+      expect(result.tenant).toBeNull();
+      expect(result.activeBusiness).toBeNull();
+      expect(mockPrismaService.user.findUnique).not.toHaveBeenCalled();
+      expect(mockJwtService.signAsync).toHaveBeenCalledWith(
+        expect.objectContaining({ platformAdmin: true, sub: 'platform-identity-1' }),
+        expect.any(Object)
+      );
+    });
+
     it('should throw UnauthorizedException if user not found', async () => {
       mockPrismaService.user.findUnique.mockResolvedValueOnce(null);
 

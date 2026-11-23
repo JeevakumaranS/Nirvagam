@@ -8,6 +8,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../prisma/prisma.service';
+import { TenantDatabaseService } from '../../tenancy/tenant-database.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
@@ -24,7 +25,8 @@ export class AuthService {
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
-    private configService: ConfigService
+    private configService: ConfigService,
+    private tenantDb: TenantDatabaseService
   ) {}
 
   async register(dto: RegisterDto) {
@@ -271,8 +273,68 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
+    const email = dto.email.toLowerCase().trim();
+    const platformAdmin = await this.tenantDb.withPlatform((tx) =>
+      tx.queryOne<{
+        id: string;
+        email: string;
+        password_hash: string;
+        first_name: string | null;
+        last_name: string | null;
+        status: string;
+        role: string | null;
+        is_super_admin: boolean;
+      }>(
+        `SELECT i.id, i.email, i.password_hash, i.first_name, i.last_name, i.status,
+                pu.role, pu.is_super_admin
+         FROM platform.identities i
+         JOIN platform.platform_users pu ON pu.identity_id = i.id
+         WHERE lower(i.email) = $1
+         LIMIT 1;`,
+        [email]
+      )
+    );
+
+    if (platformAdmin) {
+      const passwordValid =
+        platformAdmin.status === 'ACTIVE' &&
+        (await bcrypt.compare(dto.password, platformAdmin.password_hash));
+      if (!passwordValid) {
+        throw new UnauthorizedException('Invalid email or password');
+      }
+
+      const roleName = platformAdmin.role || (platformAdmin.is_super_admin ? 'PLATFORM_SUPER_ADMIN' : 'PLATFORM_SUPPORT_ADMIN');
+      const roles = [roleName];
+      const permissions = ['*:*'];
+      const payload: JwtPayload = {
+        sub: platformAdmin.id,
+        email: platformAdmin.email,
+        tenantId: '',
+        businessId: '',
+        roles,
+        permissions,
+        platformAdmin: true,
+      };
+      const tokens = await this.generateTokens(payload);
+
+      return {
+        user: {
+          id: platformAdmin.id,
+          email: platformAdmin.email,
+          firstName: platformAdmin.first_name || '',
+          lastName: platformAdmin.last_name || '',
+          roles,
+          permissions,
+          platformAdmin: true,
+        },
+        tenant: null,
+        activeBusiness: null,
+        ...tokens,
+      };
+    }
+
     const user = await this.prisma.user.findUnique({
-      where: { email: dto.email.toLowerCase().trim() },
+      where: { email },
       include: {
         tenant: true,
         userRoles: {
@@ -373,6 +435,34 @@ export class AuthService {
       const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET') || 'nirvagam_jwt_refresh_super_secret_key_at_least_32_characters';
       const decoded = this.jwtService.verify<JwtPayload>(dto.refreshToken, { secret: refreshSecret });
 
+      if (decoded.platformAdmin) {
+        const platformAdmin = await this.tenantDb.withPlatform((tx) =>
+          tx.queryOne<{ id: string; email: string; status: string; role: string | null }>(
+            `SELECT i.id, i.email, i.status, pu.role
+             FROM platform.identities i
+             JOIN platform.platform_users pu ON pu.identity_id = i.id
+             WHERE i.id = $1
+             LIMIT 1;`,
+            [decoded.sub]
+          )
+        );
+
+        if (!platformAdmin || platformAdmin.status !== 'ACTIVE') {
+          throw new UnauthorizedException('Platform admin account is no longer active');
+        }
+
+        const roleName = platformAdmin.role || 'PLATFORM_SUPER_ADMIN';
+        return this.generateTokens({
+          sub: platformAdmin.id,
+          email: platformAdmin.email,
+          tenantId: '',
+          businessId: '',
+          roles: [roleName],
+          permissions: ['*:*'],
+          platformAdmin: true,
+        });
+      }
+
       const user = await this.prisma.user.findUnique({
         where: { id: decoded.sub },
         include: {
@@ -414,7 +504,48 @@ export class AuthService {
     }
   }
 
-  async getProfile(userId: string) {
+  async getProfile(userId: string, platformAdmin = false) {
+    if (platformAdmin) {
+      const identity = await this.tenantDb.withPlatform((tx) =>
+        tx.queryOne<{
+          id: string;
+          email: string;
+          first_name: string | null;
+          last_name: string | null;
+          phone: string | null;
+          created_at: Date;
+          status: string;
+          role: string | null;
+        }>(
+          `SELECT i.id, i.email, i.first_name, i.last_name, i.phone, i.created_at, i.status, pu.role
+           FROM platform.identities i
+           JOIN platform.platform_users pu ON pu.identity_id = i.id
+           WHERE i.id = $1
+           LIMIT 1;`,
+          [userId]
+        )
+      );
+
+      if (!identity || identity.status !== 'ACTIVE') {
+        throw new NotFoundException('Platform admin profile not found');
+      }
+
+      const roleName = identity.role || 'PLATFORM_SUPER_ADMIN';
+      return {
+        id: identity.id,
+        email: identity.email,
+        firstName: identity.first_name || '',
+        lastName: identity.last_name || '',
+        phone: identity.phone,
+        avatarUrl: null,
+        tenant: null,
+        userRoles: [{ role: { name: roleName } }],
+        branchAssignments: [],
+        createdAt: identity.created_at,
+        platformAdmin: true,
+      };
+    }
+
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -452,7 +583,10 @@ export class AuthService {
       throw new NotFoundException('User profile not found');
     }
 
-    return user;
+    return {
+      ...user,
+      platformAdmin: false,
+    };
   }
 
   private async generateTokens(payload: JwtPayload) {
