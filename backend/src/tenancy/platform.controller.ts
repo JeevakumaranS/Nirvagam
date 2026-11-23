@@ -179,6 +179,25 @@ export class PlatformController {
   @ApiOperation({ summary: 'List system-level roles and platform administrators' })
   async getSystemRoles() {
     return await this.tenantDb.withPlatform(async (tx) => {
+      const roles = await tx.query<any>(
+        `SELECT pr.id, pr.role_key AS key, pr.name, pr.description,
+                COUNT(pu.id)::int AS "assignedCount"
+         FROM platform.platform_roles pr
+         LEFT JOIN platform.platform_users pu ON pu.role = pr.role_key
+         GROUP BY pr.id
+         ORDER BY pr.name ASC;`
+      );
+      const permissions = await tx.query<any>(
+        `SELECT id, permission_key AS key, category, label
+         FROM platform.platform_permissions
+         ORDER BY category ASC, label ASC;`
+      );
+      const rolePermissions = await tx.query<any>(
+        `SELECT pr.role_key AS key, p.id AS "permissionId"
+         FROM platform.platform_role_permissions rpp
+         JOIN platform.platform_roles pr ON pr.id = rpp.role_id
+         JOIN platform.platform_permissions p ON p.id = rpp.permission_id;`
+      );
       const users = await tx.query<any>(
         `SELECT pu.id, pu.identity_id AS "identityId", pu.is_super_admin AS "isSuperAdmin",
                 pu.role, pu.created_at AS "createdAt",
@@ -188,28 +207,41 @@ export class PlatformController {
          ORDER BY pu.created_at ASC;`
       );
 
-      const roles = [
-        {
-          key: 'PLATFORM_SUPER_ADMIN',
-          name: 'Platform Super Admin',
-          responsibilities: 'Manage entire SaaS platform',
-          description: 'Full administrative control over tenant organizations, schema provisioning, business profiles, and global system configurations.',
-        },
-        {
-          key: 'PLATFORM_SUPPORT_ADMIN',
-          name: 'Platform Support Admin',
-          responsibilities: 'Customer support and troubleshooting',
-          description: 'Investigates customer incidents, inspects tenant logs and workspace health, and diagnoses system errors without financial write access.',
-        },
-        {
-          key: 'PLATFORM_FINANCE_ADMIN',
-          name: 'Platform Finance Admin',
-          responsibilities: 'Subscription and payment management',
-          description: 'Oversees SaaS subscriptions, invoice reconciliation, plan limits, billing schedules, and payment gateway transactions.',
-        },
-      ];
+      return { roles, permissions, rolePermissions, users };
+    });
+  }
 
-      return { roles, users };
+  @Put('system-roles/:roleKey/permissions')
+  @UseGuards(JwtAuthGuard, PlatformAdminGuard)
+  @ApiOperation({ summary: 'Replace access permissions for a platform role' })
+  async updateSystemRolePermissions(
+    @Param('roleKey') roleKey: string,
+    @Body() body: { permissionIds: string[] }
+  ) {
+    const allowedRoles = ['PLATFORM_SUPPORT_ADMIN', 'PLATFORM_FINANCE_ADMIN'];
+    if (!allowedRoles.includes(roleKey) || !Array.isArray(body.permissionIds)) {
+      throw new HttpException('Invalid platform role or permission list', HttpStatus.BAD_REQUEST);
+    }
+
+    return await this.tenantDb.withPlatform(async (tx) => {
+      const role = await tx.queryOne<{ id: string }>(
+        'SELECT id FROM platform.platform_roles WHERE role_key = $1', [roleKey]
+      );
+      if (!role) throw new HttpException('Platform role not found', HttpStatus.NOT_FOUND);
+      const permissions = await tx.query<any>(
+        'SELECT id FROM platform.platform_permissions WHERE id = ANY($1::uuid[])', [body.permissionIds]
+      );
+      if (permissions.length !== body.permissionIds.length) {
+        throw new HttpException('One or more platform permissions do not exist', HttpStatus.BAD_REQUEST);
+      }
+      await tx.execute('DELETE FROM platform.platform_role_permissions WHERE role_id = $1', [role.id]);
+      for (const permissionId of body.permissionIds) {
+        await tx.execute(
+          'INSERT INTO platform.platform_role_permissions (role_id, permission_id) VALUES ($1, $2)',
+          [role.id, permissionId]
+        );
+      }
+      return { success: true };
     });
   }
 
@@ -221,6 +253,9 @@ export class PlatformController {
   ) {
     if (!body.email || !body.role) {
       throw new HttpException('Email and role are required', HttpStatus.BAD_REQUEST);
+    }
+    if (!['PLATFORM_SUPPORT_ADMIN', 'PLATFORM_FINANCE_ADMIN', 'PLATFORM_SUPER_ADMIN', 'SUPER_ADMIN'].includes(body.role)) {
+      throw new HttpException('Unsupported platform role', HttpStatus.BAD_REQUEST);
     }
     const email = body.email.toLowerCase().trim();
     const isSuperAdmin = body.role === 'PLATFORM_SUPER_ADMIN' || body.role === 'SUPER_ADMIN';
@@ -267,6 +302,9 @@ export class PlatformController {
       }
 
       if (body.role) {
+        if (!['PLATFORM_SUPPORT_ADMIN', 'PLATFORM_FINANCE_ADMIN', 'PLATFORM_SUPER_ADMIN', 'SUPER_ADMIN'].includes(body.role)) {
+          throw new HttpException('Unsupported platform role', HttpStatus.BAD_REQUEST);
+        }
         const isSuperAdmin = body.role === 'PLATFORM_SUPER_ADMIN' || body.role === 'SUPER_ADMIN';
         await tx.execute(
           'UPDATE platform.platform_users SET role = $1, is_super_admin = $2 WHERE id = $3',

@@ -68,8 +68,11 @@ using platform registration:
 ```text
 backend/migrations/platform/001_platform_init.sql
 backend/migrations/platform/002_business_registration.sql
+backend/migrations/platform/003_platform_role_permissions.sql
+backend/migrations/platform/003_platform_role_permissions.sql
 ```
 
+The CLI implementation is in `backend/src/account-creation/create-super-admin.ts`.
 Then run:
 
 ```bash
