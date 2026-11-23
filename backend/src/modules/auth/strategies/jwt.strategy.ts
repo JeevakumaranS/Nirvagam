@@ -94,6 +94,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
 
     const defaultBranchId = user.branchAssignments[0]?.branchId || payload.branchId;
+    const passwordState = await this.prisma.$queryRaw<Array<{ mustChangePassword: boolean }>>`
+      SELECT must_change_password AS "mustChangePassword"
+      FROM users
+      WHERE id = ${user.id}::uuid;
+    `;
 
     return {
       id: user.id,
@@ -105,6 +110,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       branchId: defaultBranchId,
       roles,
       permissions: Array.from(permissionsSet),
+      mustChangePassword: passwordState[0]?.mustChangePassword ?? false,
     };
   }
 }

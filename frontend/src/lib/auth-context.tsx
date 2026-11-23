@@ -11,6 +11,7 @@ export interface UserSession {
   roles: string[];
   permissions: string[];
   platformAdmin?: boolean;
+  mustChangePassword?: boolean;
 }
 
 export interface TenantSession {
@@ -73,6 +74,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               roles: profile.userRoles?.map((ur: any) => ur.role?.name || ur.role || ur) || [],
               permissions: [],
               platformAdmin: Boolean(profile.platformAdmin),
+              mustChangePassword: Boolean(profile.mustChangePassword),
             });
             setTenant(profile.tenant || null);
             if (profile.branchAssignments?.[0]?.branch) {

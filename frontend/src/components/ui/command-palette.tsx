@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import {
   Search,
@@ -98,10 +99,11 @@ export function CommandPalette() {
   }, [isOpen, filtered, selectedIndex, router]);
 
   if (!isOpen) return null;
+  if (typeof document === 'undefined') return null;
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh] p-4 bg-black/35 backdrop-blur-md animate-in fade-in duration-150"
+      className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh] p-4 bg-black/35 animate-in fade-in duration-150"
       onClick={() => setIsOpen(false)}
     >
       <div
@@ -169,6 +171,7 @@ export function CommandPalette() {
           <span>Open with <kbd className="font-mono">↵</kbd></span>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -1,5 +1,6 @@
 import {
   Injectable,
+  BadRequestException,
   UnauthorizedException,
   ConflictException,
   NotFoundException,
@@ -11,6 +12,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { TenantDatabaseService } from '../../tenancy/tenant-database.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import {
   TenantStatus,
@@ -373,6 +375,11 @@ export class AuthService {
     }
 
     const roles = user.userRoles.map((ur) => ur.role.name);
+    const passwordState = await this.prisma.$queryRaw<Array<{ mustChangePassword: boolean }>>`
+      SELECT must_change_password AS "mustChangePassword"
+      FROM users
+      WHERE id = ${user.id}::uuid;
+    `;
     const permissions = new Set<string>();
     for (const ur of user.userRoles) {
       for (const rp of ur.role.rolePermissions) {
@@ -412,6 +419,7 @@ export class AuthService {
         lastName: user.lastName,
         roles,
         permissions: Array.from(permissions),
+        mustChangePassword: passwordState[0]?.mustChangePassword ?? false,
       },
       tenant: {
         id: user.tenant.id,
@@ -504,6 +512,47 @@ export class AuthService {
     }
   }
 
+  async changePassword(userId: string, dto: ChangePasswordDto) {
+    const rows = await this.prisma.$queryRaw<Array<{
+      id: string;
+      passwordHash: string;
+      mustChangePassword: boolean;
+      isActive: boolean;
+    }>>`
+      SELECT id, password_hash AS "passwordHash",
+             must_change_password AS "mustChangePassword",
+             is_active AS "isActive"
+      FROM users
+      WHERE id = ${userId}::uuid;
+    `;
+    const user = rows[0];
+    if (!user || !user.isActive) {
+      throw new NotFoundException('User profile not found');
+    }
+
+    if (!user.mustChangePassword && !dto.currentPassword) {
+      throw new BadRequestException('Current password is required');
+    }
+    if (
+      dto.currentPassword &&
+      !(await bcrypt.compare(dto.currentPassword, user.passwordHash))
+    ) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+    if (await bcrypt.compare(dto.newPassword, user.passwordHash)) {
+      throw new BadRequestException('New password must be different from the temporary password');
+    }
+
+    await this.prisma.$executeRaw`
+      UPDATE users
+      SET password_hash = ${await bcrypt.hash(dto.newPassword, 12)},
+          must_change_password = false,
+          updated_at = NOW()
+      WHERE id = ${user.id}::uuid;
+    `;
+    return { success: true };
+  }
+
   async getProfile(userId: string, platformAdmin = false) {
     if (platformAdmin) {
       const identity = await this.tenantDb.withPlatform((tx) =>
@@ -583,8 +632,14 @@ export class AuthService {
       throw new NotFoundException('User profile not found');
     }
 
+    const passwordState = await this.prisma.$queryRaw<Array<{ mustChangePassword: boolean }>>`
+      SELECT must_change_password AS "mustChangePassword"
+      FROM users
+      WHERE id = ${userId}::uuid;
+    `;
     return {
       ...user,
+      mustChangePassword: passwordState[0]?.mustChangePassword ?? false,
       platformAdmin: false,
     };
   }

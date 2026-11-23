@@ -60,6 +60,27 @@ npm run dev:frontend
 npm run dev
 ```
 
+### Prisma Database Migrations
+
+For a fresh database, run from `backend/`:
+
+```powershell
+npx prisma migrate deploy
+```
+
+For an existing database already created from the current Prisma schema, mark
+the initial schema as applied once, then apply pending migrations:
+
+```powershell
+npx prisma migrate resolve --applied 20261119155900_initial_schema
+npx prisma migrate dev --skip-generate
+```
+
+Only mark the baseline as applied when the existing database already matches
+the current schema. The UUIDv7 migration preserves IDs that are already UUIDv7.
+If you need to regenerate Prisma Client, stop the running backend first and run
+`npx prisma generate` from `backend/`.
+
 ### Create a Platform Super Admin
 
 Apply the platform migrations in filename order before creating a super admin or

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { apiFetch } from '@/lib/api';
 import { useToast } from '@/components/ui/toast';
 import { Button } from '@/components/ui/button';
@@ -427,8 +428,8 @@ export default function SystemRolesPage() {
       </div>
 
       {/* INVITE PLATFORM ADMINISTRATOR MODAL */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+      {isModalOpen && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/35 animate-fade-in">
           <div className="bg-background border border-border rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-scale-up">
             <div className="flex items-center justify-between px-5 py-4 border-b border-border bg-surface-secondary/40">
               <div className="flex items-center gap-2">
@@ -520,7 +521,8 @@ export default function SystemRolesPage() {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
