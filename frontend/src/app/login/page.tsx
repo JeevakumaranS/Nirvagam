@@ -30,6 +30,10 @@ export default function LoginPage() {
       setLoading(true);
       setError(null);
       const authData = await login({ email, password });
+      if (authData.user?.mustChangePassword) {
+        router.push('/change-password');
+        return;
+      }
       toast({ type: 'success', title: 'Welcome back', message: 'Successfully authenticated' });
       const isPlatform =
         Boolean(authData?.user?.platformAdmin) ||

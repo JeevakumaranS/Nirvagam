@@ -95,6 +95,7 @@ export interface JwtPayload {
   roles: string[];
   permissions: string[];
   platformAdmin?: boolean;
+  mustChangePassword?: boolean;
 }
 
 export interface AuthUser {
@@ -108,6 +109,7 @@ export interface AuthUser {
   roles: string[];
   permissions: string[];
   platformAdmin?: boolean;
+  mustChangePassword?: boolean;
 }
 
 export interface PaginationParams {

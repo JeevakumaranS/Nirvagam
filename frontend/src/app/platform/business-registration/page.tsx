@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { BusinessType, IndustryType } from '@nirvagam/shared';
 import { apiFetch } from '@/lib/api';
 import { useToast } from '@/components/ui/toast';
@@ -70,6 +71,8 @@ interface Profile {
   logoUrl: string | null;
   digitalSignatureUrl: string | null;
   enabledModules: string[];
+  username: string | null;
+  requirePasswordChange: boolean;
   branches: Branch[];
   createdAt: string;
 }
@@ -99,6 +102,9 @@ interface RegistrationForm {
   digitalSignatureUrl: string;
   enabledModules: string[];
   branches: Branch[];
+  username: string;
+  temporaryPassword: string;
+  requirePasswordChange: boolean;
 }
 
 interface Workspace {
@@ -187,6 +193,9 @@ function emptyForm(defaultModules: string[] = []): RegistrationForm {
     digitalSignatureUrl: '',
     enabledModules: defaultModules.length ? defaultModules : ['sales', 'purchases', 'inventory', 'accounting', 'pos', 'gst', 'reports'],
     branches: [],
+    username: '',
+    temporaryPassword: '',
+    requirePasswordChange: true,
   };
 }
 
@@ -203,7 +212,7 @@ export default function PlatformBusinessRegistrationPage() {
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('ALL');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form, setForm] = useState<RegistrationForm>(() => emptyForm());
-  const [activeFormTab, setActiveFormTab] = useState<'IDENTITY' | 'STATUTORY' | 'TAX_BRANDING' | 'BRANCHES' | 'MODULES'>('IDENTITY');
+  const [activeFormTab, setActiveFormTab] = useState<'IDENTITY' | 'STATUTORY' | 'TAX_BRANDING' | 'BRANCHES' | 'MODULES' | 'SETTINGS'>('IDENTITY');
 
   // Branch draft state
   const [branchDraft, setBranchDraft] = useState<Branch>({
@@ -280,6 +289,9 @@ export default function PlatformBusinessRegistrationPage() {
       digitalSignatureUrl: profile.digitalSignatureUrl || '',
       enabledModules: profile.enabledModules || [],
       branches: profile.branches || [],
+      username: profile.username || '',
+      temporaryPassword: '',
+      requirePasswordChange: profile.requirePasswordChange,
     });
     setActiveFormTab('IDENTITY');
     setIsModalOpen(true);
@@ -407,6 +419,15 @@ export default function PlatformBusinessRegistrationPage() {
       toast({ type: 'warning', title: 'Missing address', message: 'Complete the registered address.' });
       return;
     }
+    if (!form.profileId && (!form.username.trim() || !form.temporaryPassword)) {
+      toast({
+        type: 'warning',
+        title: 'Owner credentials required',
+        message: 'Enter the owner username and a temporary password to register this business.',
+      });
+      setActiveFormTab('SETTINGS');
+      return;
+    }
 
     try {
       setSaving(true);
@@ -434,6 +455,9 @@ export default function PlatformBusinessRegistrationPage() {
         digitalSignatureUrl: form.digitalSignatureUrl || null,
         enabledModules: form.enabledModules,
         branches: form.branches,
+        username: form.username.trim() || undefined,
+        temporaryPassword: form.temporaryPassword || undefined,
+        requirePasswordChange: form.requirePasswordChange,
       };
 
       if (form.profileId) {
@@ -717,8 +741,8 @@ export default function PlatformBusinessRegistrationPage() {
       )}
 
       {/* REGISTRATION MODAL FORM */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+      {isModalOpen && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/35 animate-fade-in">
           <div className="bg-background border border-border rounded-xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden animate-scale-up">
             {/* Modal Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-surface-secondary/40 shrink-0">
@@ -752,6 +776,7 @@ export default function PlatformBusinessRegistrationPage() {
                 { key: 'TAX_BRANDING', label: '3. Tax & Branding' },
                 { key: 'BRANCHES', label: `4. Branches (${form.branches.length})` },
                 { key: 'MODULES', label: `5. Modules & Workflows (${form.enabledModules.length})` },
+                { key: 'SETTINGS', label: '6. Settings' },
               ].map((tab) => (
                 <button
                   key={tab.key}
@@ -1250,6 +1275,53 @@ export default function PlatformBusinessRegistrationPage() {
                 </div>
               )}
 
+              {/* TAB 6: OWNER LOGIN SETTINGS */}
+              {activeFormTab === 'SETTINGS' && (
+                <div className="space-y-5">
+                  <div className="border-b border-border pb-2">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
+                      Owner Login & Password Settings
+                    </h3>
+                    <p className="text-[11px] text-text-tertiary">
+                      Set the business owner account used to sign in to this workspace.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <Input
+                      label={`Username (email address)${form.profileId ? '' : ' *'}`}
+                      type="email"
+                      autoComplete="username"
+                      placeholder="owner@company.com"
+                      value={form.username}
+                      required={!form.profileId}
+                      onChange={(e) => setForm({ ...form, username: e.target.value })}
+                    />
+                    <Input
+                      label={`Temporary Password${form.profileId ? ' (leave blank to keep current)' : ' *'}`}
+                      type="password"
+                      autoComplete="new-password"
+                      minLength={8}
+                      placeholder={form.profileId ? 'Enter only to reset the password' : 'At least 8 characters'}
+                      value={form.temporaryPassword}
+                      required={!form.profileId}
+                      onChange={(e) => setForm({ ...form, temporaryPassword: e.target.value })}
+                    />
+                  </div>
+
+                  <div className="macos-card p-4">
+                    <Switch
+                      label="Require password change at next sign-in"
+                      checked={form.requirePasswordChange}
+                      onChange={(value) => setForm({ ...form, requirePasswordChange: value })}
+                    />
+                    <p className="text-[11px] text-text-tertiary pl-11 mt-1">
+                      The owner must set a new password before accessing the workspace.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* Modal Footer Controls */}
               <div className="flex items-center justify-between border-t border-border pt-4">
                 <Button
@@ -1270,7 +1342,8 @@ export default function PlatformBusinessRegistrationPage() {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

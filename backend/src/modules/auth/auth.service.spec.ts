@@ -61,6 +61,8 @@ describe('AuthService', () => {
     userBranchAssignment: {
       create: jest.fn(),
     },
+    $queryRaw: jest.fn(),
+    $executeRaw: jest.fn(),
     $transaction: jest.fn((cb) => cb(mockPrismaService)),
   };
 
@@ -238,6 +240,37 @@ describe('AuthService', () => {
           password: 'WrongPassword',
         })
       ).rejects.toThrow(UnauthorizedException);
+    });
+
+    describe('changePassword', () => {
+      it('allows a user with a temporary password to set a new password without the temporary password', async () => {
+        const passwordHash = await bcrypt.hash('Temporary@123', 10);
+        mockPrismaService.$queryRaw.mockResolvedValueOnce([{
+          id: 'user-1',
+          passwordHash,
+          mustChangePassword: true,
+          isActive: true,
+        }]);
+        mockPrismaService.$executeRaw.mockResolvedValueOnce(1);
+
+        await expect(
+          service.changePassword('user-1', { newPassword: 'NewPassword@123' })
+        ).resolves.toEqual({ success: true });
+        expect(mockPrismaService.$executeRaw).toHaveBeenCalled();
+      });
+
+      it('requires the current password for a regular password change', async () => {
+        mockPrismaService.$queryRaw.mockResolvedValueOnce([{
+          id: 'user-1',
+          passwordHash: await bcrypt.hash('Current@123', 10),
+          mustChangePassword: false,
+          isActive: true,
+        }]);
+
+        await expect(
+          service.changePassword('user-1', { newPassword: 'NewPassword@123' })
+        ).rejects.toThrow('Current password is required');
+      });
     });
   });
 });

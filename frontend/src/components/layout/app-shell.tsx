@@ -13,6 +13,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
   const isAuthPage = pathname === '/login' || pathname === '/register';
+  const isChangePasswordPage = pathname === '/change-password';
   // Only platform superadmins are locked to platform routes
   const isPlatformAdmin = Boolean(
     user?.platformAdmin ||
@@ -24,15 +25,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (!loading && !user && !isAuthPage) {
       router.push('/login');
     }
+    if (!loading && user?.mustChangePassword && !isChangePasswordPage) {
+      router.replace('/change-password');
+    }
+    if (!loading && user && !user.mustChangePassword && isChangePasswordPage) {
+      router.replace('/dashboard');
+    }
     if (!loading && isPlatformAdmin && !pathname.startsWith('/platform')) {
       router.replace(platformHome);
     }
     if (!loading && user && !isPlatformAdmin && pathname.startsWith('/platform')) {
       router.replace('/dashboard');
     }
-  }, [loading, user, tenant, isAuthPage, isPlatformAdmin, pathname, router]);
+  }, [loading, user, tenant, isAuthPage, isChangePasswordPage, isPlatformAdmin, pathname, router]);
 
-  if (isAuthPage) {
+  if (isAuthPage || isChangePasswordPage) {
     return <main className="min-h-screen bg-background">{children}</main>;
   }
 

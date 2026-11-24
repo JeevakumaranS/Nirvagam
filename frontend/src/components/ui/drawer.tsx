@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { clsx } from 'clsx';
 import { X } from 'lucide-react';
 
@@ -42,7 +43,7 @@ export function Drawer({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
-  if (!isOpen && !mounted) return null;
+  if (!mounted || typeof document === 'undefined') return null;
 
   const widths = {
     md: 'max-w-md',
@@ -50,13 +51,13 @@ export function Drawer({
     xl: 'max-w-xl',
   };
 
-  return (
+  return createPortal(
     <div
       className={clsx(
         'fixed inset-0 z-50 flex justify-end transition-all duration-[200ms]',
         isOpen
-          ? 'bg-black/35 backdrop-blur-sm opacity-100 pointer-events-auto'
-          : 'bg-black/0 backdrop-blur-none opacity-0 pointer-events-none'
+          ? 'bg-black/35 opacity-100 pointer-events-auto'
+          : 'bg-black/0 opacity-0 pointer-events-none'
       )}
       onClick={onClose}
     >
@@ -86,6 +87,7 @@ export function Drawer({
         </div>
         <div className="flex-1 overflow-y-auto p-6">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
