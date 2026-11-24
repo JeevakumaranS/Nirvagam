@@ -657,16 +657,32 @@ enum InvoiceType {
   BILL_OF_SUPPLY
   NON_GST
   PROFORMA
+  QUOTATION
+  ESTIMATE
+  SALES_ORDER
+  DELIVERY_CHALLAN
+  CREDIT_NOTE
+  DEBIT_NOTE
+  SALES_RETURN
+  RECURRING_INVOICE
   POS_RECEIPT
 }
 
 enum InvoiceStatus {
   DRAFT
   POSTED
+  UNPAID
   PARTIALLY_PAID
   PAID
   OVERDUE
   CANCELLED
+}
+
+enum RecurrenceFrequency {
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
 }
 
 model SalesInvoice {
@@ -674,7 +690,9 @@ model SalesInvoice {
   branchId       String        @map("branch_id") @db.Uuid
   customerId     String        @map("customer_id") @db.Uuid
   journalEntryId String?       @map("journal_entry_id") @db.Uuid
+  relatedInvoiceId String?     @map("related_invoice_id") @db.Uuid
   invoiceType    InvoiceType   @default(TAX_INVOICE) @map("invoice_type")
+  recurrenceFrequency RecurrenceFrequency? @map("recurrence_frequency")
   invoiceNumber  String        @map("invoice_number")
   invoiceDate    DateTime      @map("invoice_date")
   dueDate        DateTime      @map("due_date")
@@ -685,6 +703,8 @@ model SalesInvoice {
   igstAmount     Decimal       @default(0) @map("igst_amount") @db.Decimal(15, 2)
   totalTax       Decimal       @default(0) @map("total_tax") @db.Decimal(15, 2)
   discountAmount Decimal       @default(0) @map("discount_amount") @db.Decimal(15, 2)
+  additionalCharges Decimal    @default(0) @map("additional_charges") @db.Decimal(15, 2)
+  pricesIncludeTax Boolean     @default(false) @map("prices_include_tax")
   roundOff       Decimal       @default(0) @map("round_off") @db.Decimal(15, 2)
   grandTotal     Decimal       @default(0) @map("grand_total") @db.Decimal(15, 2)
   paidAmount     Decimal       @default(0) @map("paid_amount") @db.Decimal(15, 2)
@@ -696,9 +716,12 @@ model SalesInvoice {
   branch       Branch              @relation(fields: [branchId], references: [id], onDelete: Cascade)
   customer     Customer            @relation(fields: [customerId], references: [id])
   journalEntry JournalEntry?       @relation(fields: [journalEntryId], references: [id])
+  relatedInvoice SalesInvoice?     @relation("SalesInvoiceAdjustments", fields: [relatedInvoiceId], references: [id])
+  adjustments SalesInvoice[]       @relation("SalesInvoiceAdjustments")
   items        SalesInvoiceItem[]
   allocations  PaymentAllocation[]
 
+  @@index([relatedInvoiceId])
   @@unique([branchId, invoiceNumber])
   @@map("sales_invoices")
 }
@@ -708,6 +731,7 @@ model SalesInvoiceItem {
   salesInvoiceId String  @map("sales_invoice_id") @db.Uuid
   variantId      String  @map("variant_id") @db.Uuid
   description    String?
+  unitName       String?  @map("unit_name")
   quantity       Decimal @db.Decimal(15, 2)
   unitPrice      Decimal @map("unit_price") @db.Decimal(15, 2)
   discountAmount Decimal @default(0) @map("discount_amount") @db.Decimal(15, 2)

@@ -50,7 +50,12 @@ export async function apiFetch<T = any>(endpoint: string, options: RequestOption
       throw new Error(errorMsg);
     }
 
-    // Unpack data if wrapped in ApiResponse envelope
+    // Keep paginated envelopes intact so callers can access both data and meta.
+    if (data?.meta !== undefined && data?.data !== undefined) {
+      return data;
+    }
+
+    // Unpack non-paginated ApiResponse envelopes.
     return data?.data !== undefined ? data.data : data;
   } catch (err: any) {
     throw new Error(err.message || 'Network error occurred');

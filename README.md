@@ -21,7 +21,7 @@
 | Group | Module Name | Route | Key Features |
 |:---|:---|:---|:---|
 | **Commercial** | **Dashboard** | `/dashboard` | Executive KPIs, MTD sales, receivables, cash/bank balance |
-| **Commercial** | **Sales & Billing** | `/sales` | Tax invoices, GST calculations (CGST/SGST/IGST), cancellations |
+| **Commercial** | **Sales & Billing** | `/sales` | Sales document types, GST inclusive/exclusive pricing, payment tracking, returns, audited cancellations |
 | **Commercial** | **POS Checkout** | `/pos` | Barcode scanning, instant cart, Cash/Card/UPI tenders, thermal slip |
 | **Commercial** | **Purchases & GRN** | `/purchases` | Vendor bills, stock intake, Input Tax Credit (ITC) tracking |
 | **Operations** | **Inventory & Stock** | `/inventory` | Stock balances, HSN codes, UOM units, low-stock reorder alerts |
@@ -42,8 +42,11 @@ business. A role cannot be deleted while it is assigned to users.
 
 The permission catalog is stored in the database and includes view, create,
 edit, delete, approve, cancel, export, print, and access-reports actions.
-Implemented sensitive actions, including invoice cancellation, manual journal
-posting, and opening-stock entry, are checked by the API.
+Manual sales invoice numbering additionally requires
+`sales_invoice:manual_number`; the billing migration grants it to business
+owners and business administrators. Implemented sensitive actions, including
+invoice cancellation, manual journal posting, and opening-stock entry, are
+checked by the API.
 
 ---
 
@@ -58,6 +61,14 @@ npm run dev:frontend
 
 # Or run both concurrently from root:
 npm run dev
+```
+
+Before using the expanded sales and billing workflow, apply
+`backend/prisma/migrations/20261123154500_sales_billing_features/migration.sql`
+once to each application database, then regenerate Prisma Client:
+
+```bash
+npm run prisma:generate
 ```
 
 ### Prisma Database Migrations

@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
-import { PaginationParams } from '@nirvagam/shared';
+import { InvoiceStatus, InvoiceType, PaginationParams } from '@nirvagam/shared';
 
 @Injectable()
 export class PartnersService {
@@ -35,7 +35,20 @@ export class PartnersService {
         take: limit,
         include: {
           salesInvoices: {
-            where: { status: { not: 'CANCELLED' } },
+            where: {
+              status: { notIn: [InvoiceStatus.CANCELLED, InvoiceStatus.DRAFT] },
+              invoiceType: {
+                in: [
+                  InvoiceType.TAX_INVOICE,
+                  InvoiceType.BILL_OF_SUPPLY,
+                  InvoiceType.NON_GST,
+                  InvoiceType.POS_RECEIPT,
+                  InvoiceType.CREDIT_NOTE,
+                  InvoiceType.DEBIT_NOTE,
+                  InvoiceType.SALES_RETURN,
+                ],
+              },
+            },
             select: { grandTotal: true, paidAmount: true },
           },
         },
