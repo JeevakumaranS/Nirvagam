@@ -95,6 +95,7 @@ export interface JwtPayload {
   roles: string[];
   permissions: string[];
   platformAdmin?: boolean;
+  mustChangePassword?: boolean;
 }
 
 export interface AuthUser {
@@ -108,12 +109,19 @@ export interface AuthUser {
   roles: string[];
   permissions: string[];
   platformAdmin?: boolean;
+  mustChangePassword?: boolean;
 }
 
 export interface PaginationParams {
   page?: number | string;
   limit?: number | string;
   search?: string;
+}
+
+export interface GstCalculationOptions {
+  pricesIncludeTax?: boolean;
+  sellerRegisteredForGst?: boolean;
+  otherCharges?: number;
 }
 
 export interface ApiResponse<T> {
@@ -148,16 +156,41 @@ export enum InvoiceType {
   BILL_OF_SUPPLY = 'BILL_OF_SUPPLY',
   NON_GST = 'NON_GST',
   PROFORMA = 'PROFORMA',
+  QUOTATION = 'QUOTATION',
+  ESTIMATE = 'ESTIMATE',
+  SALES_ORDER = 'SALES_ORDER',
+  DELIVERY_CHALLAN = 'DELIVERY_CHALLAN',
+  CREDIT_NOTE = 'CREDIT_NOTE',
+  DEBIT_NOTE = 'DEBIT_NOTE',
+  SALES_RETURN = 'SALES_RETURN',
+  RECURRING_INVOICE = 'RECURRING_INVOICE',
   POS_RECEIPT = 'POS_RECEIPT',
 }
 
 export enum InvoiceStatus {
   DRAFT = 'DRAFT',
   POSTED = 'POSTED',
+  UNPAID = 'UNPAID',
   PARTIALLY_PAID = 'PARTIALLY_PAID',
   PAID = 'PAID',
   OVERDUE = 'OVERDUE',
   CANCELLED = 'CANCELLED',
+}
+
+export enum PaymentMode {
+  CASH = 'CASH',
+  BANK_TRANSFER = 'BANK_TRANSFER',
+  UPI = 'UPI',
+  CARD = 'CARD',
+  CHEQUE = 'CHEQUE',
+  CREDIT = 'CREDIT',
+}
+
+export enum RecurrenceFrequency {
+  WEEKLY = 'WEEKLY',
+  MONTHLY = 'MONTHLY',
+  QUARTERLY = 'QUARTERLY',
+  YEARLY = 'YEARLY',
 }
 
 
@@ -198,34 +231,47 @@ export function calculateGstInvoice(
   businessStateCode: string,
   customerStateCode: string,
   items: GstTaxCalculationItem[],
-  invoiceDiscount = 0
+  invoiceDiscount = 0,
+  options: GstCalculationOptions = {}
 ): GstCalculationResult {
   const isInterState = businessStateCode.trim().toUpperCase() !== customerStateCode.trim().toUpperCase();
+  const roundMoney = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+  const sellerRegistered = options.sellerRegisteredForGst !== false;
+  const lines = items.map((item) => {
+    const discount = Math.max(0, item.discountAmount || 0);
+    const rate = sellerRegistered ? Math.max(0, item.gstRate) : 0;
+    const discountedPrice = Math.max(0, item.quantity * item.unitPrice - discount);
+    const taxableValue =
+      options.pricesIncludeTax && rate > 0
+        ? roundMoney(discountedPrice / (1 + rate / 100))
+        : roundMoney(discountedPrice);
 
+    return { item, rate, taxableValue };
+  });
+  const taxableBeforeInvoiceDiscount = lines.reduce((sum, line) => sum + line.taxableValue, 0);
+  const appliedInvoiceDiscount = Math.min(Math.max(0, invoiceDiscount), taxableBeforeInvoiceDiscount);
   let totalTaxable = 0;
   let totalCgst = 0;
   let totalSgst = 0;
   let totalIgst = 0;
+  let allocatedInvoiceDiscount = 0;
 
-  const calculatedItems = items.map((item) => {
-    const gross = item.quantity * item.unitPrice;
-    const discount = item.discountAmount || 0;
-    const taxableValue = Math.round((gross - discount) * 100) / 100;
-    const totalItemTax = Math.round(((taxableValue * item.gstRate) / 100) * 100) / 100;
-
-    let cgstRate = 0, cgstAmount = 0;
-    let sgstRate = 0, sgstAmount = 0;
-    let igstRate = 0, igstAmount = 0;
-
-    if (isInterState) {
-      igstRate = item.gstRate;
-      igstAmount = totalItemTax;
-    } else {
-      cgstRate = item.gstRate / 2;
-      sgstRate = item.gstRate / 2;
-      cgstAmount = Math.round((totalItemTax / 2) * 100) / 100;
-      sgstAmount = totalItemTax - cgstAmount;
-    }
+  const calculatedItems = lines.map(({ item, rate, taxableValue: initialTaxableValue }, index) => {
+    const allocatedDiscount =
+      index === lines.length - 1
+        ? roundMoney(appliedInvoiceDiscount - allocatedInvoiceDiscount)
+        : taxableBeforeInvoiceDiscount > 0
+        ? roundMoney((appliedInvoiceDiscount * initialTaxableValue) / taxableBeforeInvoiceDiscount)
+        : 0;
+    allocatedInvoiceDiscount += allocatedDiscount;
+    const taxableValue = roundMoney(Math.max(0, initialTaxableValue - allocatedDiscount));
+    const totalItemTax = roundMoney((taxableValue * rate) / 100);
+    const cgstRate = isInterState ? 0 : rate / 2;
+    const sgstRate = isInterState ? 0 : rate / 2;
+    const igstRate = isInterState ? rate : 0;
+    const cgstAmount = isInterState ? 0 : roundMoney(totalItemTax / 2);
+    const sgstAmount = isInterState ? 0 : roundMoney(totalItemTax - cgstAmount);
+    const igstAmount = isInterState ? totalItemTax : 0;
 
     totalTaxable += taxableValue;
     totalCgst += cgstAmount;
@@ -241,21 +287,26 @@ export function calculateGstInvoice(
       sgstAmount,
       igstRate,
       igstAmount,
-      totalAmount: Math.round((taxableValue + totalItemTax) * 100) / 100,
+      totalAmount: roundMoney(taxableValue + totalItemTax),
     };
   });
 
-  const rawTotal = totalTaxable - invoiceDiscount + totalCgst + totalSgst + totalIgst;
+  totalTaxable = roundMoney(totalTaxable);
+  totalCgst = roundMoney(totalCgst);
+  totalSgst = roundMoney(totalSgst);
+  totalIgst = roundMoney(totalIgst);
+  const rawTotal =
+    totalTaxable + totalCgst + totalSgst + totalIgst + Math.max(0, options.otherCharges || 0);
   const roundedNetTotal = Math.round(rawTotal);
-  const roundOffAmount = Math.round((roundedNetTotal - rawTotal) * 100) / 100;
+  const roundOffAmount = roundMoney(roundedNetTotal - rawTotal);
 
   return {
     isInterState,
-    totalTaxable: Math.round(totalTaxable * 100) / 100,
-    totalCgst: Math.round(totalCgst * 100) / 100,
-    totalSgst: Math.round(totalSgst * 100) / 100,
-    totalIgst: Math.round(totalIgst * 100) / 100,
-    totalTax: Math.round((totalCgst + totalSgst + totalIgst) * 100) / 100,
+    totalTaxable,
+    totalCgst,
+    totalSgst,
+    totalIgst,
+    totalTax: roundMoney(totalCgst + totalSgst + totalIgst),
     roundOffAmount,
     netTotal: roundedNetTotal,
     items: calculatedItems,

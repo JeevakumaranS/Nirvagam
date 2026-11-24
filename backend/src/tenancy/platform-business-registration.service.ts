@@ -1,4 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BusinessType as PrismaBusinessType, IndustryType as PrismaIndustryType } from '@prisma/client';
+import * as bcrypt from 'bcryptjs';
+import { PrismaService } from '../prisma/prisma.service';
 import { TenantDatabaseService, TenantTx } from './tenant-database.service';
 import { SaveBusinessProfileDto, SUPPORTED_BUSINESS_MODULES } from './dto/save-business-profile.dto';
 
@@ -21,10 +24,13 @@ const DEFAULT_MODULES: Record<string, string[]> = {
 
 @Injectable()
 export class PlatformBusinessRegistrationService {
-  constructor(private readonly tenantDb: TenantDatabaseService) {}
+  constructor(
+    private readonly tenantDb: TenantDatabaseService,
+    private readonly prisma: PrismaService
+  ) {}
 
   async getWorkspace() {
-    return this.tenantDb.withPlatform(async (tx) => {
+    const workspace = await this.tenantDb.withPlatform(async (tx) => {
       const tenants = await tx.query(
         `SELECT t.id, t.slug, t.display_name AS "displayName", t.status,
                 t.plan_id AS "planId", p.name AS "planName"
@@ -80,9 +86,39 @@ export class PlatformBusinessRegistrationService {
         })),
       };
     });
+
+    const tenantIds = workspace.profiles.map((profile) => profile.tenantId);
+    const ownerUsers = tenantIds.length
+      ? await this.prisma.$queryRaw<Array<{
+          tenantId: string;
+          email: string;
+          mustChangePassword: boolean;
+        }>>`
+          SELECT u.tenant_id AS "tenantId", u.email,
+                 u.must_change_password AS "mustChangePassword"
+          FROM users u
+          JOIN user_roles ur ON ur.user_id = u.id
+          JOIN roles r ON r.id = ur.role_id
+          WHERE u.tenant_id = ANY(${tenantIds}::uuid[])
+            AND r.name = 'BUSINESS_OWNER';
+        `
+      : [];
+
+    return {
+      ...workspace,
+      profiles: workspace.profiles.map((profile) => ({
+        ...profile,
+        username: ownerUsers.find((owner) => owner.tenantId === profile.tenantId)?.email || null,
+        requirePasswordChange:
+          ownerUsers.find((owner) => owner.tenantId === profile.tenantId)?.mustChangePassword ?? true,
+      })),
+    };
   }
 
   async create(dto: SaveBusinessProfileDto) {
+    if (!dto.username || !dto.temporaryPassword) {
+      throw new BadRequestException('Owner username and temporary password are required for new business registration');
+    }
     this.validateImage(dto.logoUrl, 'Logo');
     this.validateImage(dto.digitalSignatureUrl, 'Digital signature');
     this.validateFinancialYear(dto);
@@ -129,6 +165,7 @@ export class PlatformBusinessRegistrationService {
       if (dto.planId !== undefined && dto.planId) {
         await this.updateTenantPlan(tx, tenantId!, dto.planId);
       }
+      await this.syncOwnerAccount(tx, profile!.id, tenantId!, dto, true);
 
       return { id: profile!.id };
     });
@@ -170,6 +207,7 @@ export class PlatformBusinessRegistrationService {
       if (dto.planId !== undefined) {
         await this.updateTenantPlan(tx, dto.tenantId, dto.planId);
       }
+      await this.syncOwnerAccount(tx, profileId, dto.tenantId, dto, false);
 
       return { id: profileId };
     });
@@ -215,6 +253,228 @@ export class PlatformBusinessRegistrationService {
       dto.digitalSignatureUrl || null,
       JSON.stringify(dto.enabledModules || DEFAULT_MODULES[dto.industry] || SUPPORTED_BUSINESS_MODULES),
     ];
+  }
+
+  private async syncOwnerAccount(
+    tx: TenantTx,
+    profileId: string,
+    tenantId: string,
+    dto: SaveBusinessProfileDto,
+    isNewProfile: boolean
+  ) {
+    const tenantRecord = await tx.queryOne<{ slug: string }>(
+      'SELECT slug FROM platform.tenants WHERE id = $1;',
+      [tenantId]
+    );
+    if (!tenantRecord) {
+      throw new NotFoundException('Tenant not found');
+    }
+
+    const username = dto.username?.trim().toLowerCase();
+    if (!username && dto.temporaryPassword) {
+      throw new BadRequestException('A username is required when setting a temporary password');
+    }
+    if (isNewProfile && !username) {
+      throw new BadRequestException('Owner username is required');
+    }
+
+    const branches = dto.branches?.length
+      ? dto.branches
+      : [{
+          code: 'HQ',
+          name: 'Head Office',
+          isHeadOffice: true,
+          gstin: dto.gstin,
+          addressLine1: dto.addressLine1,
+          addressLine2: dto.addressLine2,
+          city: dto.city,
+          state: dto.state,
+          stateCode: dto.stateCode,
+          pincode: dto.pincode,
+        }];
+
+    await this.prisma.$transaction(async (prismaTx) => {
+      const currentTenant = await prismaTx.tenant.findUnique({ where: { id: tenantId } });
+      if (!currentTenant) {
+        const slugConflict = await prismaTx.tenant.findUnique({ where: { slug: tenantRecord.slug } });
+        if (slugConflict) {
+          throw new ConflictException('The platform tenant slug is already assigned to a different application tenant');
+        }
+        await prismaTx.tenant.create({
+          data: { id: tenantId, slug: tenantRecord.slug, name: dto.tradeName.trim() },
+        });
+      } else {
+        await prismaTx.tenant.update({
+          where: { id: tenantId },
+          data: { name: dto.tradeName.trim() },
+        });
+      }
+
+      const businessData = {
+        tenantId,
+        legalName: dto.legalName.trim(),
+        tradeName: dto.tradeName.trim(),
+        businessType: dto.businessType as PrismaBusinessType,
+        industry: dto.industry as PrismaIndustryType,
+        pan: dto.pan?.trim().toUpperCase() || null,
+        logoUrl: dto.logoUrl || null,
+        signatureUrl: dto.digitalSignatureUrl || null,
+        currency: dto.currency.trim().toUpperCase(),
+        addressLine1: dto.addressLine1.trim(),
+        addressLine2: dto.addressLine2?.trim() || null,
+        city: dto.city.trim(),
+        state: dto.state.trim(),
+        stateCode: dto.stateCode.trim(),
+        pincode: dto.pincode.trim(),
+        enabledModules: dto.enabledModules || [],
+      };
+      const existingBusiness = await prismaTx.business.findUnique({ where: { id: profileId } });
+      if (existingBusiness && existingBusiness.tenantId !== tenantId) {
+        throw new ConflictException('This profile ID is already associated with a different tenant business');
+      }
+      if (existingBusiness) {
+        await prismaTx.business.update({ where: { id: profileId }, data: businessData });
+      } else {
+        await prismaTx.business.create({ data: { id: profileId, ...businessData } });
+      }
+
+      const createdBranches = [];
+      for (const [index, branch] of branches.entries()) {
+        const code = branch.code.trim().toUpperCase();
+        const existingBranch = await prismaTx.branch.findUnique({
+          where: { businessId_code: { businessId: profileId, code } },
+        });
+        if (existingBranch) {
+          createdBranches.push(await prismaTx.branch.update({
+            where: { id: existingBranch.id },
+            data: {
+              name: branch.name.trim(),
+              isHeadOffice: branch.isHeadOffice || index === 0,
+              gstin: branch.gstin?.trim().toUpperCase() || null,
+              addressLine1: branch.addressLine1.trim(),
+              addressLine2: branch.addressLine2?.trim() || null,
+              city: branch.city.trim(),
+              state: branch.state.trim(),
+              stateCode: branch.stateCode.trim(),
+              pincode: branch.pincode.trim(),
+            },
+          }));
+          continue;
+        }
+        createdBranches.push(await prismaTx.branch.create({
+          data: {
+            businessId: profileId,
+            code,
+            name: branch.name.trim(),
+            isHeadOffice: branch.isHeadOffice || index === 0,
+            gstin: branch.gstin?.trim().toUpperCase() || null,
+            addressLine1: branch.addressLine1.trim(),
+            addressLine2: branch.addressLine2?.trim() || null,
+            city: branch.city.trim(),
+            state: branch.state.trim(),
+            stateCode: branch.stateCode.trim(),
+            pincode: branch.pincode.trim(),
+          },
+        }));
+      }
+      const ownerBranch = createdBranches.find((branch) => branch.isHeadOffice) || createdBranches[0];
+      if (!ownerBranch) {
+        throw new BadRequestException('At least one business branch is required to create the owner account');
+      }
+
+      const ownerRole = await prismaTx.role.findFirst({
+        where: { name: 'BUSINESS_OWNER', businessId: null },
+      });
+      if (!ownerRole) {
+        throw new BadRequestException('Business Owner role is not initialized; seed the system roles before registration');
+      }
+
+      const existingOwner = await prismaTx.user.findFirst({
+        where: {
+          tenantId,
+          userRoles: { some: { role: { name: 'BUSINESS_OWNER' } } },
+        },
+      });
+      if (!username) {
+        if (isNewProfile) {
+          throw new BadRequestException('Owner username is required');
+        }
+        if (existingOwner && dto.requirePasswordChange !== undefined) {
+          await prismaTx.$executeRaw`
+            UPDATE users
+            SET must_change_password = ${dto.requirePasswordChange}
+            WHERE id = ${existingOwner.id}::uuid;
+          `;
+        }
+        return;
+      }
+
+      const usernameOwner = await prismaTx.user.findUnique({ where: { email: username } });
+      if (usernameOwner && usernameOwner.id !== existingOwner?.id) {
+        throw new ConflictException('This username is already in use');
+      }
+      if (!existingOwner && !dto.temporaryPassword) {
+        throw new BadRequestException('A temporary password is required when creating the owner account');
+      }
+
+      const passwordHash = dto.temporaryPassword
+        ? await bcrypt.hash(dto.temporaryPassword, 12)
+        : undefined;
+      const owner = existingOwner
+        ? await prismaTx.user.update({
+            where: { id: existingOwner.id },
+            data: {
+              email: username,
+              ...(passwordHash ? { passwordHash } : {}),
+            },
+          })
+        : await prismaTx.user.create({
+            data: {
+              tenantId,
+              email: username,
+              passwordHash: passwordHash!,
+              firstName: dto.tradeName.trim(),
+              lastName: 'Owner',
+            },
+          });
+
+      if (dto.requirePasswordChange !== undefined || passwordHash) {
+        await prismaTx.$executeRaw`
+          UPDATE users
+          SET must_change_password = ${dto.requirePasswordChange ?? true}
+          WHERE id = ${owner.id}::uuid;
+        `;
+      }
+
+      for (const branch of createdBranches) {
+        const warehouse = await prismaTx.warehouse.findFirst({ where: { branchId: branch.id } });
+        if (!warehouse) {
+          await prismaTx.warehouse.create({
+            data: {
+              branchId: branch.id,
+              name: `${branch.name} Warehouse`,
+              code: `WH-${branch.code}`,
+              isDefault: true,
+            },
+          });
+        }
+      }
+
+      await prismaTx.userRole.upsert({
+        where: { userId_roleId: { userId: owner.id, roleId: ownerRole.id } },
+        create: { userId: owner.id, roleId: ownerRole.id },
+        update: {},
+      });
+      await prismaTx.userBranchAssignment.updateMany({
+        where: { userId: owner.id, isDefault: true },
+        data: { isDefault: false },
+      });
+      await prismaTx.userBranchAssignment.upsert({
+        where: { userId_branchId: { userId: owner.id, branchId: ownerBranch.id } },
+        create: { userId: owner.id, branchId: ownerBranch.id, isDefault: true },
+        update: { isDefault: true },
+      });
+    });
   }
 
   private async replaceBranches(tx: TenantTx, profileId: string, branches: SaveBusinessProfileDto['branches']) {

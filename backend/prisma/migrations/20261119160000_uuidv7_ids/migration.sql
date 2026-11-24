@@ -11,16 +11,20 @@ BEGIN
   IF EXISTS (
     SELECT 1
     FROM pg_constraint AS pk
+    JOIN pg_class AS relation ON relation.oid = pk.conrelid
+    JOIN pg_namespace AS schema_info ON schema_info.oid = relation.relnamespace
     JOIN pg_attribute AS id_column
       ON id_column.attrelid = pk.conrelid
      AND id_column.attnum = pk.conkey[1]
     WHERE pk.contype = 'p'
       AND pk.connamespace = 'public'::regnamespace
+      AND schema_info.nspname = 'public'
+      AND relation.relname <> '_prisma_migrations'
       AND cardinality(pk.conkey) = 1
       AND id_column.attname = 'id'
-      AND id_column.atttypid <> 'text'::regtype
+      AND id_column.atttypid NOT IN ('text'::regtype, 'uuid'::regtype)
   ) THEN
-    RAISE EXCEPTION 'Expected all id primary-key columns to have text type before migration';
+    RAISE EXCEPTION 'Expected all id primary-key columns to have text or uuid type';
   END IF;
 
   IF EXISTS (
@@ -30,12 +34,13 @@ BEGIN
     JOIN pg_namespace AS schema_info ON schema_info.oid = relation.relnamespace
     WHERE schema_info.nspname = 'public'
       AND relation.relkind IN ('r', 'p')
+      AND relation.relname <> '_prisma_migrations'
       AND column_info.attnum > 0
       AND NOT column_info.attisdropped
       AND right(column_info.attname, 3) = '_id'
-      AND column_info.atttypid <> 'text'::regtype
+      AND column_info.atttypid NOT IN ('text'::regtype, 'uuid'::regtype)
   ) THEN
-    RAISE EXCEPTION 'Expected all *_id columns to have text type before migration';
+    RAISE EXCEPTION 'Expected all *_id columns to have text or uuid type';
   END IF;
 
   IF EXISTS (
@@ -67,6 +72,7 @@ BEGIN
     JOIN pg_namespace AS schema_info ON schema_info.oid = relation.relnamespace
     WHERE schema_info.nspname = 'public'
       AND relation.relkind IN ('r', 'p')
+      AND relation.relname <> '_prisma_migrations'
     ORDER BY relation.oid
   LOOP
     EXECUTE format(
@@ -95,7 +101,8 @@ JOIN pg_attribute AS id_column
  AND id_column.attnum = primary_key.conkey[1]
  AND id_column.attname = 'id'
 WHERE schema_info.nspname = 'public'
-  AND relation.relkind IN ('r', 'p');
+  AND relation.relkind IN ('r', 'p')
+  AND relation.relname <> '_prisma_migrations';
 
 CREATE TEMP TABLE uuidv7_id_map (
   table_oid oid NOT NULL,
@@ -108,9 +115,10 @@ CREATE TEMP TABLE uuidv7_id_map (
 DO $$
 DECLARE
   table_info record;
+  new_id_expression text;
 BEGIN
   FOR table_info IN
-    SELECT schema_info.nspname, relation.relname, relation.oid
+    SELECT schema_info.nspname, relation.relname, relation.oid, id_column.atttypid AS id_type
     FROM pg_class AS relation
     JOIN pg_namespace AS schema_info ON schema_info.oid = relation.relnamespace
     JOIN pg_constraint AS primary_key
@@ -123,12 +131,19 @@ BEGIN
      AND id_column.attname = 'id'
     WHERE schema_info.nspname = 'public'
       AND relation.relkind IN ('r', 'p')
+      AND relation.relname <> '_prisma_migrations'
     ORDER BY relation.oid
   LOOP
+    new_id_expression := CASE
+      WHEN table_info.id_type = 'uuid'::regtype
+        THEN 'CASE WHEN substring(id::text FROM 15 FOR 1) = ''7'' THEN id ELSE uuidv7() END'
+      ELSE 'uuidv7()'
+    END;
     EXECUTE format(
       'INSERT INTO pg_temp.uuidv7_id_map (table_oid, old_id, new_id) '
-      'SELECT %L::oid, id::text, uuidv7() FROM %I.%I',
+      'SELECT %L::oid, id::text, %s FROM %I.%I',
       table_info.oid,
+      new_id_expression,
       table_info.nspname,
       table_info.relname
     );
@@ -138,7 +153,7 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_temp.uuidv7_id_map) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_temp.uuidv7_id_tables) THEN
     RAISE EXCEPTION 'No id primary-key tables were found';
   END IF;
 
@@ -172,17 +187,20 @@ CREATE TEMP TABLE uuidv7_foreign_key_columns (
   table_oid oid NOT NULL,
   column_name name NOT NULL,
   referenced_table_oid oid NOT NULL,
+  column_type oid NOT NULL,
   PRIMARY KEY (table_oid, column_name, referenced_table_oid)
 ) ON COMMIT DROP;
 
 INSERT INTO pg_temp.uuidv7_foreign_key_columns (
   table_oid,
   column_name,
-  referenced_table_oid
+  referenced_table_oid,
+  column_type
 )
 SELECT foreign_key.conrelid,
        child_column.attname,
-       foreign_key.confrelid
+       foreign_key.confrelid,
+       child_column.atttypid
 FROM pg_constraint AS foreign_key
 CROSS JOIN LATERAL unnest(foreign_key.conkey) WITH ORDINALITY AS child_key(attnum, position)
 CROSS JOIN LATERAL unnest(foreign_key.confkey) WITH ORDINALITY AS parent_key(attnum, position)
@@ -220,37 +238,53 @@ DECLARE
   id_column record;
 BEGIN
   FOR id_column IN
-    SELECT table_oid, column_name, referenced_table_oid
+    SELECT table_oid, column_name, referenced_table_oid, column_type
     FROM pg_temp.uuidv7_foreign_key_columns
     ORDER BY table_oid, column_name
   LOOP
-    EXECUTE format(
-      'UPDATE %s AS child '
-      'SET %I = id_map.new_id::text '
-      'FROM pg_temp.uuidv7_id_map AS id_map '
-      'WHERE id_map.table_oid = %L::oid '
-      'AND child.%I::text = id_map.old_id',
-      id_column.table_oid::regclass,
-      id_column.column_name,
-      id_column.referenced_table_oid,
-      id_column.column_name
-    );
+    IF id_column.column_type = 'uuid'::regtype THEN
+      EXECUTE format(
+        'UPDATE %s AS child '
+        'SET %I = id_map.new_id '
+        'FROM pg_temp.uuidv7_id_map AS id_map '
+        'WHERE id_map.table_oid = %L::oid '
+        'AND child.%I::text = id_map.old_id',
+        id_column.table_oid::regclass,
+        id_column.column_name,
+        id_column.referenced_table_oid,
+        id_column.column_name
+      );
+    ELSE
+      EXECUTE format(
+        'UPDATE %s AS child '
+        'SET %I = id_map.new_id::text '
+        'FROM pg_temp.uuidv7_id_map AS id_map '
+        'WHERE id_map.table_oid = %L::oid '
+        'AND child.%I::text = id_map.old_id',
+        id_column.table_oid::regclass,
+        id_column.column_name,
+        id_column.referenced_table_oid,
+        id_column.column_name
+      );
+    END IF;
   END LOOP;
 
   FOR id_column IN
     SELECT schema_info.nspname,
            relation.relname,
            relation.oid AS table_oid,
-           column_info.attname AS column_name
+           column_info.attname AS column_name,
+           column_info.atttypid AS column_type
     FROM pg_attribute AS column_info
     JOIN pg_class AS relation ON relation.oid = column_info.attrelid
     JOIN pg_namespace AS schema_info ON schema_info.oid = relation.relnamespace
     WHERE schema_info.nspname = 'public'
       AND relation.relkind IN ('r', 'p')
+      AND relation.relname <> '_prisma_migrations'
       AND column_info.attnum > 0
       AND NOT column_info.attisdropped
       AND right(column_info.attname, 3) = '_id'
-      AND column_info.atttypid = 'text'::regtype
+      AND column_info.atttypid IN ('text'::regtype, 'uuid'::regtype)
       AND NOT EXISTS (
         SELECT 1
         FROM pg_temp.uuidv7_foreign_key_columns AS foreign_key_column
@@ -259,16 +293,29 @@ BEGIN
       )
     ORDER BY relation.oid, column_info.attnum
   LOOP
-    EXECUTE format(
-      'UPDATE %I.%I AS child '
-      'SET %I = id_map.new_id::text '
-      'FROM pg_temp.uuidv7_id_map AS id_map '
-      'WHERE child.%I::text = id_map.old_id',
-      id_column.nspname,
-      id_column.relname,
-      id_column.column_name,
-      id_column.column_name
-    );
+    IF id_column.column_type = 'uuid'::regtype THEN
+      EXECUTE format(
+        'UPDATE %I.%I AS child '
+        'SET %I = id_map.new_id '
+        'FROM pg_temp.uuidv7_id_map AS id_map '
+        'WHERE child.%I::text = id_map.old_id',
+        id_column.nspname,
+        id_column.relname,
+        id_column.column_name,
+        id_column.column_name
+      );
+    ELSE
+      EXECUTE format(
+        'UPDATE %I.%I AS child '
+        'SET %I = id_map.new_id::text '
+        'FROM pg_temp.uuidv7_id_map AS id_map '
+        'WHERE child.%I::text = id_map.old_id',
+        id_column.nspname,
+        id_column.relname,
+        id_column.column_name,
+        id_column.column_name
+      );
+    END IF;
   END LOOP;
 END
 $$;
@@ -278,22 +325,43 @@ DECLARE
   table_info record;
 BEGIN
   FOR table_info IN
-    SELECT DISTINCT schema_info.nspname, relation.relname, relation.oid
+    SELECT DISTINCT schema_info.nspname,
+                    relation.relname,
+                    relation.oid,
+                    id_column.atttypid AS id_type
     FROM pg_temp.uuidv7_id_map AS id_map
     JOIN pg_class AS relation ON relation.oid = id_map.table_oid
     JOIN pg_namespace AS schema_info ON schema_info.oid = relation.relnamespace
+    JOIN pg_attribute AS id_column
+      ON id_column.attrelid = relation.oid
+     AND id_column.attname = 'id'
+     AND id_column.attnum > 0
+     AND NOT id_column.attisdropped
     ORDER BY relation.oid
   LOOP
-    EXECUTE format(
-      'UPDATE %I.%I AS parent '
-      'SET id = id_map.new_id::text '
-      'FROM pg_temp.uuidv7_id_map AS id_map '
-      'WHERE id_map.table_oid = %L::oid '
-      'AND parent.id::text = id_map.old_id',
-      table_info.nspname,
-      table_info.relname,
-      table_info.oid
-    );
+    IF table_info.id_type = 'uuid'::regtype THEN
+      EXECUTE format(
+        'UPDATE %I.%I AS parent '
+        'SET id = id_map.new_id '
+        'FROM pg_temp.uuidv7_id_map AS id_map '
+        'WHERE id_map.table_oid = %L::oid '
+        'AND parent.id::text = id_map.old_id',
+        table_info.nspname,
+        table_info.relname,
+        table_info.oid
+      );
+    ELSE
+      EXECUTE format(
+        'UPDATE %I.%I AS parent '
+        'SET id = id_map.new_id::text '
+        'FROM pg_temp.uuidv7_id_map AS id_map '
+        'WHERE id_map.table_oid = %L::oid '
+        'AND parent.id::text = id_map.old_id',
+        table_info.nspname,
+        table_info.relname,
+        table_info.oid
+      );
+    END IF;
   END LOOP;
 END
 $$;
@@ -305,25 +373,29 @@ BEGIN
   FOR id_column IN
     SELECT schema_info.nspname,
            relation.relname,
-           column_info.attname AS column_name
+           column_info.attname AS column_name,
+           column_info.atttypid AS column_type
     FROM pg_attribute AS column_info
     JOIN pg_class AS relation ON relation.oid = column_info.attrelid
     JOIN pg_namespace AS schema_info ON schema_info.oid = relation.relnamespace
     JOIN pg_temp.uuidv7_id_tables AS id_table ON id_table.table_oid = relation.oid
     WHERE schema_info.nspname = 'public'
       AND relation.relkind IN ('r', 'p')
+      AND relation.relname <> '_prisma_migrations'
       AND column_info.attnum > 0
       AND NOT column_info.attisdropped
       AND column_info.attname = 'id'
     ORDER BY relation.oid
   LOOP
-    EXECUTE format(
-      'ALTER TABLE %I.%I ALTER COLUMN %I TYPE uuid USING %I::uuid',
-      id_column.nspname,
-      id_column.relname,
-      id_column.column_name,
-      id_column.column_name
-    );
+    IF id_column.column_type = 'text'::regtype THEN
+      EXECUTE format(
+        'ALTER TABLE %I.%I ALTER COLUMN %I TYPE uuid USING %I::uuid',
+        id_column.nspname,
+        id_column.relname,
+        id_column.column_name,
+        id_column.column_name
+      );
+    END IF;
     EXECUTE format(
       'ALTER TABLE %I.%I ALTER COLUMN %I SET DEFAULT uuidv7()',
       id_column.nspname,
@@ -341,6 +413,7 @@ BEGIN
     JOIN pg_namespace AS schema_info ON schema_info.oid = relation.relnamespace
     WHERE schema_info.nspname = 'public'
       AND relation.relkind IN ('r', 'p')
+      AND relation.relname <> '_prisma_migrations'
       AND column_info.attnum > 0
       AND NOT column_info.attisdropped
       AND right(column_info.attname, 3) = '_id'
@@ -409,6 +482,7 @@ BEGIN
     JOIN pg_namespace AS schema_info ON schema_info.oid = relation.relnamespace
     WHERE schema_info.nspname = 'public'
       AND relation.relkind IN ('r', 'p')
+      AND relation.relname <> '_prisma_migrations'
       AND column_info.attnum > 0
       AND NOT column_info.attisdropped
       AND right(column_info.attname, 3) = '_id'

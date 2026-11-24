@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { clsx } from 'clsx';
 import { X } from 'lucide-react';
 
@@ -42,7 +43,7 @@ export function Modal({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
-  if (!isOpen && !mounted) return null;
+  if (!mounted || typeof document === 'undefined') return null;
 
   const maxWidths = {
     sm: 'max-w-sm',
@@ -52,13 +53,13 @@ export function Modal({
     '2xl': 'max-w-2xl',
   };
 
-  return (
+  return createPortal(
     <div
       className={clsx(
         'fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-[200ms]',
         isOpen
-          ? 'bg-black/35 backdrop-blur-md opacity-100 pointer-events-auto'
-          : 'bg-black/0 backdrop-blur-none opacity-0 pointer-events-none'
+          ? 'bg-black/35 opacity-100 pointer-events-auto'
+          : 'bg-black/0 opacity-0 pointer-events-none'
       )}
       onClick={onClose}
     >
@@ -88,6 +89,7 @@ export function Modal({
         </div>
         <div className="p-5">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

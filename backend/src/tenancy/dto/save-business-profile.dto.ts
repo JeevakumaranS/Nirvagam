@@ -4,12 +4,15 @@ import {
   ArrayUnique,
   IsArray,
   IsDateString,
+  IsBoolean,
+  IsEmail,
   IsEnum,
   IsIn,
   IsNotEmpty,
+  IsString,
+  MinLength,
   IsObject,
   IsOptional,
-  IsString,
   IsUUID,
   MaxLength,
   ValidateNested,
@@ -163,4 +166,20 @@ export class SaveBusinessProfileDto {
   @IsUUID()
   @IsOptional()
   planId?: string | null;
+
+  @ApiPropertyOptional({ description: 'Owner login username (email address)' })
+  @IsEmail()
+  @IsOptional()
+  username?: string;
+
+  @ApiPropertyOptional({ minLength: 8, description: 'One-time password for owner account creation or reset' })
+  @IsString()
+  @MinLength(8)
+  @IsOptional()
+  temporaryPassword?: string;
+
+  @ApiPropertyOptional({ default: true })
+  @IsBoolean()
+  @IsOptional()
+  requirePasswordChange?: boolean;
 }
