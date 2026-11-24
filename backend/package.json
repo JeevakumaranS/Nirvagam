@@ -16,7 +16,6 @@
     "tenant:provision": "ts-node src/cli/tenant-cli.ts provision",
     "tenant:migrate": "ts-node src/cli/tenant-cli.ts migrate",
     "super-admin:create": "ts-node src/account-creation/create-super-admin.ts",
-    "platform:seed:demo": "ts-node src/cli/platform-demo-seed.ts",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage"

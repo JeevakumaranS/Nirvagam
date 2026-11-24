@@ -3,7 +3,7 @@ import { AuthService } from './auth.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { TenantDatabaseService } from '../../tenancy/tenant-database.service';
 import * as bcrypt from 'bcryptjs';
 
@@ -108,74 +108,8 @@ describe('AuthService', () => {
   });
 
   describe('register', () => {
-    it('should throw ConflictException if slug already exists', async () => {
-      mockPrismaService.tenant.findUnique.mockResolvedValueOnce({ id: 'tenant-1' });
-
-      await expect(
-        service.register({
-          companyName: 'Test Corp',
-          slug: 'testcorp',
-          email: 'admin@testcorp.com',
-          password: 'Password@123',
-          firstName: 'John',
-          lastName: 'Doe',
-        })
-      ).rejects.toThrow(ConflictException);
-    });
-
-    it('should throw ConflictException if user email already exists', async () => {
-      mockPrismaService.tenant.findUnique.mockResolvedValueOnce(null);
-      mockPrismaService.user.findUnique.mockResolvedValueOnce({ id: 'user-1' });
-
-      await expect(
-        service.register({
-          companyName: 'Test Corp',
-          slug: 'testcorp',
-          email: 'admin@testcorp.com',
-          password: 'Password@123',
-          firstName: 'John',
-          lastName: 'Doe',
-        })
-      ).rejects.toThrow(ConflictException);
-    });
-
-    it('should successfully register a new organization and return tokens', async () => {
-      mockPrismaService.tenant.findUnique.mockResolvedValueOnce(null);
-      mockPrismaService.user.findUnique.mockResolvedValueOnce(null);
-      mockPrismaService.tenant.create.mockResolvedValueOnce({
-        id: 'new-tenant-id',
-        slug: 'testcorp',
-        name: 'Test Corp',
-      });
-      mockPrismaService.plan.findUnique.mockResolvedValueOnce({ id: 'plan-business' });
-      mockPrismaService.business.create.mockResolvedValueOnce({
-        id: 'new-business-id',
-        legalName: 'Test Corp',
-      });
-      mockPrismaService.branch.create.mockResolvedValueOnce({
-        id: 'new-branch-id',
-        name: 'Head Office',
-      });
-      mockPrismaService.role.findFirst.mockResolvedValueOnce({ id: 'role-owner' });
-      mockPrismaService.user.create.mockResolvedValueOnce({
-        id: 'new-user-id',
-        email: 'admin@testcorp.com',
-        firstName: 'John',
-        lastName: 'Doe',
-      });
-
-      const result = await service.register({
-        companyName: 'Test Corp',
-        slug: 'testcorp',
-        email: 'admin@testcorp.com',
-        password: 'Password@123',
-        firstName: 'John',
-        lastName: 'Doe',
-      });
-
-      expect(result.tenant.id).toBe('new-tenant-id');
-      expect(result.user.email).toBe('admin@testcorp.com');
-      expect(result.accessToken).toBe('mock_token');
+    it('rejects public workspace registration', async () => {
+      await expect(service.register()).rejects.toThrow(ForbiddenException);
     });
   });
 

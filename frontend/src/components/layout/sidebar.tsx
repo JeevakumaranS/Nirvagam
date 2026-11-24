@@ -106,7 +106,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
             ) : (
               <>
                 <Store className="w-3 h-3 shrink-0 stroke-[1.5]" />
-                <span className="truncate">{activeBusiness?.branchName || 'Head Office'}</span>
+                <span className="truncate">{activeBusiness?.branchName || 'No branch selected'}</span>
               </>
             )}
           </div>

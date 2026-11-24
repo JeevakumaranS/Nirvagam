@@ -1559,7 +1559,7 @@ export default function UsersSettingsPage() {
               onChange={(e) =>
                 setFormData({ ...formData, email: e.target.value })
               }
-              placeholder="ramesh@durozen.com"
+              placeholder="name@company.com"
               prefixIcon={<Mail className="w-3.5 h-3.5" />}
               autoComplete="email"
               required

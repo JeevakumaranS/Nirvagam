@@ -9,7 +9,6 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
-import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -23,11 +22,10 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('register')
-  @ApiOperation({ summary: 'Register a new business organization, admin user and initialize workspace' })
-  @ApiResponse({ status: 201, description: 'Organization registered successfully with JWT tokens' })
-  @ApiResponse({ status: 409, description: 'Slug or Email already registered' })
-  async register(@Body() dto: RegisterDto) {
-    return this.authService.register(dto);
+  @ApiOperation({ summary: 'Public registration is disabled; workspaces are created by platform administrators' })
+  @ApiResponse({ status: 403, description: 'Contact a platform administrator to create a workspace' })
+  async register() {
+    return this.authService.register();
   }
 
   @Post('login')

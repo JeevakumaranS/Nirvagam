@@ -122,6 +122,13 @@ interface Workspace {
   moduleDefaults: Record<string, string[]>;
 }
 
+interface RegistrationReceipt {
+  tenantId: string;
+  tenantSlug: string;
+  ownerEmail: string;
+  temporaryPassword: string;
+}
+
 const businessTypes: Array<{ value: BusinessType; label: string }> = [
   { value: BusinessType.PROPRIETORSHIP, label: 'Proprietorship' },
   { value: BusinessType.PARTNERSHIP, label: 'Partnership' },
@@ -233,6 +240,7 @@ export default function PlatformBusinessRegistrationPage() {
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('ALL');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [viewingProfile, setViewingProfile] = useState<Profile | null>(null);
+  const [registrationReceipt, setRegistrationReceipt] = useState<RegistrationReceipt | null>(null);
   const [form, setForm] = useState<RegistrationForm>(() => emptyForm());
   const [activeFormTab, setActiveFormTab] = useState<'IDENTITY' | 'STATUTORY' | 'TAX_BRANDING' | 'BRANCHES' | 'MODULES' | 'SETTINGS'>('IDENTITY');
   const [pinLookupMessage, setPinLookupMessage] = useState('Enter a 6-digit PIN to auto-fill the location.');
@@ -530,7 +538,6 @@ export default function PlatformBusinessRegistrationPage() {
     }
     if (step === 'BRANCHES') {
       // Default state/state-code values do not mean that the admin started a new branch.
-      // An untouched draft is allowed once the minimum one branch has been added.
       const draftHasValues = [
         branchDraft.code,
         branchDraft.name,
@@ -543,8 +550,6 @@ export default function PlatformBusinessRegistrationPage() {
       ].some((value) => value.trim());
       if (draftHasValues && (!branchDraft.code.trim() || !branchDraft.name.trim() || !branchDraft.addressLine1.trim() || !branchDraft.city.trim() || !branchDraft.state.trim() || !/^\d{2}$/.test(branchDraft.stateCode) || !/^\d{6}$/.test(branchDraft.pincode))) {
         missing.push('Complete the branch details or clear the branch form');
-      } else if (form.branches.length === 0) {
-        missing.push('At least one branch');
       }
     }
     if (step === 'MODULES' && form.enabledModules.length === 0) missing.push('At least one module');
@@ -637,11 +642,20 @@ export default function PlatformBusinessRegistrationPage() {
         });
         toast({ type: 'success', title: 'Updated', message: 'Business registration updated successfully.' });
       } else {
-        await apiFetch('/platform/business-registration', {
+        const created = await apiFetch<{
+          tenantId: string;
+          tenantSlug: string;
+          ownerEmail: string;
+        }>('/platform/business-registration', {
           method: 'POST',
           body: JSON.stringify(payload),
         });
-        toast({ type: 'success', title: 'Registered', message: 'New business profile registered successfully.' });
+        setRegistrationReceipt({
+          ...created,
+          temporaryPassword: form.temporaryPassword,
+        });
+        setForm((current) => ({ ...current, temporaryPassword: '' }));
+        toast({ type: 'success', title: 'Registered', message: 'Tenant account created successfully.' });
       }
 
       setIsModalOpen(false);
@@ -1394,7 +1408,7 @@ export default function PlatformBusinessRegistrationPage() {
                   {/* List of existing branches */}
                   {form.branches.length === 0 ? (
                     <div className="p-4 rounded-lg border border-dashed border-border text-center text-xs text-text-secondary">
-                      No branches added yet. Configure your primary head office branch below.
+                      No branches added. You can add branches here or later in tenant settings.
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -1574,7 +1588,7 @@ export default function PlatformBusinessRegistrationPage() {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <Input
-                      label={`Username (email address)${form.profileId ? '' : ' *'}`}
+                      label={`Owner email${form.profileId ? '' : ' *'}`}
                       type="email"
                       autoComplete="username"
                       placeholder="owner@company.com"
@@ -1632,6 +1646,40 @@ export default function PlatformBusinessRegistrationPage() {
         </div>,
         document.body
       )}
+      <Modal
+        isOpen={Boolean(registrationReceipt)}
+        onClose={() => setRegistrationReceipt(null)}
+        title="Business workspace created"
+        description="Share the owner email and temporary password with the business owner."
+        maxWidth="md"
+      >
+        {registrationReceipt && (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-border bg-surface-secondary/30 p-3 text-sm">
+              <p className="text-xs text-text-tertiary">Owner email</p>
+              <p className="mt-1 break-all font-medium text-text-primary">{registrationReceipt.ownerEmail}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-surface-secondary/30 p-3 text-sm">
+              <p className="text-xs text-text-tertiary">Temporary password</p>
+              <p className="mt-1 break-all font-mono text-text-primary">{registrationReceipt.temporaryPassword}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-surface-secondary/30 p-3 text-sm">
+              <p className="text-xs text-text-tertiary">Tenant ID</p>
+              <p className="mt-1 break-all font-mono text-text-primary">{registrationReceipt.tenantId}</p>
+              <p className="mt-2 text-xs text-text-tertiary">Workspace: {registrationReceipt.tenantSlug}</p>
+            </div>
+            <p className="text-xs text-text-secondary">
+              The owner signs in with the email and temporary password above, then changes the password
+              at first sign-in. Tenant ID is for reference; it is not required at login.
+            </p>
+            <div className="flex justify-end">
+              <Button variant="primary" onClick={() => setRegistrationReceipt(null)}>
+                Done
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

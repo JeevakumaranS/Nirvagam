@@ -656,8 +656,9 @@ export class PlatformController {
     @Body() body: { email: string; password?: string; firstName?: string; lastName?: string; role: string },
     @CurrentUser() actor: AuthUser
   ) {
-    if (!body.email || !body.role) {
-      throw new HttpException('Email and role are required', HttpStatus.BAD_REQUEST);
+    const password = body.password;
+    if (!body.email || !password || !body.role) {
+      throw new HttpException('Email, password and role are required', HttpStatus.BAD_REQUEST);
     }
     const email = body.email.toLowerCase().trim();
     const isSuperAdmin = body.role === 'PLATFORM_SUPER_ADMIN' || body.role === 'SUPER_ADMIN';
@@ -681,7 +682,7 @@ export class PlatformController {
         throw new HttpException('An identity with this email already exists', HttpStatus.CONFLICT);
       }
 
-      const passwordHash = await bcrypt.hash(body.password || 'Password@123', 10);
+      const passwordHash = await bcrypt.hash(password, 10);
       const identity = await tx.queryOne<{ id: string }>(
         `INSERT INTO platform.identities (email, password_hash, first_name, last_name, status)
          VALUES ($1, $2, $3, $4, 'ACTIVE')

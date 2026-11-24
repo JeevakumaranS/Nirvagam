@@ -1,14 +1,13 @@
 'use client';
 
 import React, { useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 import { useAuth } from '@/lib/auth-context';
 import { useToast } from '@/components/ui/toast';
-import { Lock, Mail, ArrowRight, ShieldCheck, Sparkles } from 'lucide-react';
+import { Lock, Mail, ArrowRight, ShieldCheck } from 'lucide-react';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -50,18 +49,6 @@ export default function LoginPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const fillTenantAdminCredentials = () => {
-    setEmail('admin@nirvagam.com');
-    setPassword('Password@123');
-    setError(null);
-  };
-
-  const fillSuperAdminCredentials = () => {
-    setEmail('superadmin@nirvagam.com');
-    setPassword('Password@123');
-    setError(null);
   };
 
   return (
@@ -106,37 +93,8 @@ export default function LoginPage() {
           </Button>
         </form>
 
-        {/* 1-Click Demo Login Helpers */}
-        <div className="mt-4 pt-4 border-t border-border space-y-2">
-          <p className="text-[11px] font-medium text-text-secondary uppercase tracking-wider text-center">Quick Demo Credentials</p>
-          <div className="grid grid-cols-2 gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={fillTenantAdminCredentials}
-              className="w-full text-xs"
-              icon={<Sparkles className="w-3.5 h-3.5 text-accent" />}
-            >
-              Tenant Admin
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={fillSuperAdminCredentials}
-              className="w-full text-xs"
-              icon={<ShieldCheck className="w-3.5 h-3.5 text-accent" />}
-            >
-              Super Admin
-            </Button>
-          </div>
-        </div>
-
-        {/* Footer Link */}
         <p className="text-center text-xs text-text-tertiary mt-5">
-          New business?{' '}
-          <Link href="/register" className="text-accent hover:underline font-medium">
-            Register workspace
-          </Link>
+          New workspaces are created by a platform administrator.
         </p>
       </div>
 

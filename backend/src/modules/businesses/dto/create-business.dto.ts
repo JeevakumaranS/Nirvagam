@@ -28,7 +28,7 @@ export class CreateBusinessDto {
   @IsOptional()
   pan?: string;
 
-  @ApiProperty({ example: 'contact@durozen.com', required: false })
+  @ApiProperty({ required: false })
   @IsString()
   @IsOptional()
   email?: string;

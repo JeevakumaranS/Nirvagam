@@ -80,31 +80,6 @@ export class BusinessesService {
         },
       });
 
-      // Automatically create default Head Office Branch
-      const branch = await tx.branch.create({
-        data: {
-          businessId: business.id,
-          name: 'Head Office',
-          code: 'HQ',
-          isHeadOffice: true,
-          addressLine1: dto.addressLine1,
-          city: dto.city,
-          state: dto.state,
-          stateCode: dto.stateCode,
-          pincode: dto.pincode,
-        },
-      });
-
-      // Default warehouse
-      await tx.warehouse.create({
-        data: {
-          branchId: branch.id,
-          name: 'HQ Central Warehouse',
-          code: 'WH-HQ',
-          isDefault: true,
-        },
-      });
-
       return business;
     });
   }

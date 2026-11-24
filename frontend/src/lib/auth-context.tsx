@@ -37,7 +37,6 @@ interface AuthContextType {
   loading: boolean;
   theme: 'light' | 'dark';
   login: (credentials: any) => Promise<any>;
-  register: (payload: any) => Promise<void>;
   logout: () => void;
   toggleTheme: () => void;
 }
@@ -125,30 +124,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return data;
   };
 
-  const register = async (payload: any) => {
-    const data = await apiFetch('/auth/register', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-
-    localStorage.setItem('nirvagam_access_token', data.accessToken);
-    localStorage.setItem('nirvagam_refresh_token', data.refreshToken);
-    setToken(data.accessToken);
-    setUser({
-      ...data.user,
-      roles: ['BUSINESS_OWNER'],
-      permissions: ['*:*'],
-    });
-    setTenant(data.tenant);
-    setActiveBusiness({
-      id: data.business.id,
-      legalName: data.business.legalName,
-      tradeName: data.business.legalName,
-      branchId: data.branch.id,
-      branchName: data.branch.name,
-    });
-  };
-
   const logout = () => {
     localStorage.removeItem('nirvagam_access_token');
     localStorage.removeItem('nirvagam_refresh_token');
@@ -169,7 +144,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loading,
         theme,
         login,
-        register,
         logout,
         toggleTheme,
       }}

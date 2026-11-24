@@ -4,6 +4,14 @@ import { TenantProvisioningService } from '../tenancy/tenant-provisioning.servic
 import { TenantMigrationService } from '../tenancy/tenant-migration.service';
 import { TenantDatabaseService } from '../tenancy/tenant-database.service';
 
+function requiredOption(args: string[], name: string) {
+  const value = args.find((argument) => argument.startsWith(`--${name}=`))?.slice(name.length + 3).trim();
+  if (!value) {
+    throw new Error(`Missing required option --${name}`);
+  }
+  return value;
+}
+
 async function bootstrap() {
   const app = await NestFactory.createApplicationContext(AppModule, { logger: ['error', 'warn', 'log'] });
   const provisioningService = app.get(TenantProvisioningService);
@@ -15,16 +23,29 @@ async function bootstrap() {
 
   try {
     if (command === 'provision') {
-      const slug = args.find((a) => a.startsWith('--slug='))?.split('=')[1] || `tenant-${Date.now()}`;
-      const name = args.find((a) => a.startsWith('--name='))?.split('=')[1] || 'Demo Enterprise';
-      const email = args.find((a) => a.startsWith('--email='))?.split('=')[1] || `${slug}@nirvagam.com`;
+      const slug = requiredOption(args, 'slug');
+      const name = requiredOption(args, 'name');
+      const email = requiredOption(args, 'email');
+      const firstName = requiredOption(args, 'first-name');
+      const lastName = requiredOption(args, 'last-name');
+      const password = process.env.TENANT_OWNER_PASSWORD;
+      if (!password) {
+        throw new Error('Set TENANT_OWNER_PASSWORD before provisioning a tenant');
+      }
 
       console.log(`\n🚀 Provisioning Tenant: [slug=${slug}, name=${name}, email=${email}]`);
       const result = await provisioningService.provision({
         slug,
         displayName: name,
         ownerEmail: email,
-        ownerPassword: 'Password@123',
+        ownerPassword: password,
+        ownerFirstName: firstName,
+        ownerLastName: lastName,
+        addressLine1: requiredOption(args, 'address-line1'),
+        city: requiredOption(args, 'city'),
+        state: requiredOption(args, 'state'),
+        stateCode: requiredOption(args, 'state-code'),
+        pincode: requiredOption(args, 'pincode'),
       });
 
       console.log(`\n✅ Provisioning Complete!`);
@@ -55,7 +76,7 @@ async function bootstrap() {
     } else {
       console.log(`
 Usage:
-  ts-node src/cli/tenant-cli.ts provision --slug=<slug> --name=<name> --email=<email>
+  TENANT_OWNER_PASSWORD=<temporary-password> ts-node src/cli/tenant-cli.ts provision --slug=<slug> --name=<name> --email=<email> --first-name=<name> --last-name=<name> --address-line1=<address> --city=<city> --state=<state> --state-code=<code> --pincode=<postal-code>
   ts-node src/cli/tenant-cli.ts migrate [--tenant=<id|slug>] [--concurrency=N] [--dry-run]
       `);
     }

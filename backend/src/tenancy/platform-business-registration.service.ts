@@ -1,5 +1,10 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { BusinessType as PrismaBusinessType, IndustryType as PrismaIndustryType } from '@prisma/client';
+import {
+  AccountGroup,
+  BusinessType as PrismaBusinessType,
+  IndustryType as PrismaIndustryType,
+  Prisma,
+} from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { TenantDatabaseService, TenantTx } from './tenant-database.service';
@@ -125,28 +130,14 @@ export class PlatformBusinessRegistrationService {
     this.validateFinancialYear(dto);
 
     return this.tenantDb.withPlatform(async (tx) => {
-      let tenantId = dto.tenantId;
-      if (tenantId) {
-        const tenant = await tx.queryOne<{ id: string }>(
-          'SELECT id FROM platform.tenants WHERE id = $1;',
-          [tenantId]
-        );
-        if (!tenant) {
-          throw new NotFoundException('Tenant not found');
-        }
-      } else {
-        // Every platform business registration gets its own tenant record.
-        // Reusing the oldest tenant would merge unrelated businesses and break
-        // the tenant boundary required by the future Tenant Admin integration.
-        const newTenant = await tx.queryOne<{ id: string }>(
-          `INSERT INTO platform.tenants (slug, display_name, schema_name, status, metadata)
-           VALUES ('org-' || substr(gen_random_uuid()::text, 1, 8), $1,
-             't_' || substr(gen_random_uuid()::text, 1, 8), 'active', $2::jsonb)
-           RETURNING id;`,
-          [dto.tradeName.trim(), JSON.stringify({ source: 'platform_business_registration' })]
-        );
-        tenantId = newTenant!.id;
-      }
+      const newTenant = await tx.queryOne<{ id: string; slug: string }>(
+        `INSERT INTO platform.tenants (slug, display_name, schema_name, status, metadata)
+         VALUES ('org-' || substr(gen_random_uuid()::text, 1, 8), $1,
+           't_' || substr(gen_random_uuid()::text, 1, 8), 'active', $2::jsonb)
+         RETURNING id, slug;`,
+        [dto.tradeName.trim(), JSON.stringify({ source: 'platform_business_registration' })]
+      );
+      const tenantId = newTenant!.id;
 
       const profile = await tx.queryOne<{ id: string }>(
         `INSERT INTO platform.business_profiles (
@@ -163,14 +154,19 @@ export class PlatformBusinessRegistrationService {
 
       await this.replaceBranches(tx, profile!.id, dto.branches || []);
       if (dto.planId !== undefined && dto.planId) {
-        await this.updateTenantPlan(tx, tenantId!, dto.planId);
+        await this.updateTenantPlan(tx, tenantId, dto.planId);
       }
-      await this.syncOwnerAccount(tx, profile!.id, tenantId!, dto, true);
+      await this.syncOwnerAccount(tx, profile!.id, tenantId, dto, true);
       await tx.execute(`INSERT INTO platform.platform_audit_log (actor_id, action, target_type, target_id, metadata)
         VALUES ($1, 'BUSINESS_REGISTERED', 'TENANT', $2, $3)`,
         [actor?.id || null, tenantId, JSON.stringify({ profileId: profile!.id, tradeName: dto.tradeName })]);
 
-      return { id: profile!.id };
+      return {
+        id: profile!.id,
+        tenantId,
+        tenantSlug: newTenant!.slug,
+        ownerEmail: dto.username!.trim().toLowerCase(),
+      };
     });
   }
 
@@ -288,20 +284,7 @@ export class PlatformBusinessRegistrationService {
       throw new BadRequestException('Owner username is required');
     }
 
-    const branches = dto.branches?.length
-      ? dto.branches
-      : [{
-          code: 'HQ',
-          name: 'Head Office',
-          isHeadOffice: true,
-          gstin: dto.gstin,
-          addressLine1: dto.addressLine1,
-          addressLine2: dto.addressLine2,
-          city: dto.city,
-          state: dto.state,
-          stateCode: dto.stateCode,
-          pincode: dto.pincode,
-        }];
+    const branches = dto.branches || [];
 
     await this.prisma.$transaction(async (prismaTx) => {
       const currentTenant = await prismaTx.tenant.findUnique({ where: { id: tenantId } });
@@ -389,9 +372,6 @@ export class PlatformBusinessRegistrationService {
         }));
       }
       const ownerBranch = createdBranches.find((branch) => branch.isHeadOffice) || createdBranches[0];
-      if (!ownerBranch) {
-        throw new BadRequestException('At least one business branch is required to create the owner account');
-      }
 
       const ownerRole = await prismaTx.role.findFirst({
         where: { name: 'BUSINESS_OWNER', businessId: null },
@@ -471,21 +451,125 @@ export class PlatformBusinessRegistrationService {
         }
       }
 
+      if (isNewProfile) {
+        await this.initializeBusinessDefaults(prismaTx, profileId, ownerBranch?.id, dto);
+      }
+
       await prismaTx.userRole.upsert({
         where: { userId_roleId: { userId: owner.id, roleId: ownerRole.id } },
         create: { userId: owner.id, roleId: ownerRole.id },
         update: {},
       });
-      await prismaTx.userBranchAssignment.updateMany({
-        where: { userId: owner.id, isDefault: true },
-        data: { isDefault: false },
-      });
-      await prismaTx.userBranchAssignment.upsert({
-        where: { userId_branchId: { userId: owner.id, branchId: ownerBranch.id } },
-        create: { userId: owner.id, branchId: ownerBranch.id, isDefault: true },
-        update: { isDefault: true },
-      });
+      if (ownerBranch) {
+        await prismaTx.userBranchAssignment.updateMany({
+          where: { userId: owner.id, isDefault: true },
+          data: { isDefault: false },
+        });
+        await prismaTx.userBranchAssignment.upsert({
+          where: { userId_branchId: { userId: owner.id, branchId: ownerBranch.id } },
+          create: { userId: owner.id, branchId: ownerBranch.id, isDefault: true },
+          update: { isDefault: true },
+        });
+      }
     });
+  }
+
+  private async initializeBusinessDefaults(
+    prismaTx: Prisma.TransactionClient,
+    businessId: string,
+    branchId: string | undefined,
+    dto: SaveBusinessProfileDto
+  ) {
+    const taxRates = [
+      { name: 'GST 0% (Nil Rated)', rate: 0, cgstRate: 0, sgstRate: 0, igstRate: 0 },
+      { name: 'GST 5%', rate: 5, cgstRate: 2.5, sgstRate: 2.5, igstRate: 5 },
+      { name: 'GST 12%', rate: 12, cgstRate: 6, sgstRate: 6, igstRate: 12 },
+      { name: 'GST 18%', rate: 18, cgstRate: 9, sgstRate: 9, igstRate: 18, isDefault: true },
+      { name: 'GST 28%', rate: 28, cgstRate: 14, sgstRate: 14, igstRate: 28 },
+    ];
+    await prismaTx.taxRate.createMany({
+      data: taxRates.map((taxRate) => ({ businessId, ...taxRate })),
+    });
+
+    const units = [
+      { name: 'Pieces', symbol: 'PCS', decimalPlaces: 0, isDefault: true },
+      { name: 'Box', symbol: 'BOX', decimalPlaces: 0, isDefault: false },
+      { name: 'Kilogram', symbol: 'KG', decimalPlaces: 3, isDefault: false },
+    ];
+    for (const unit of units) {
+      await prismaTx.unit.upsert({
+        where: { businessId_symbol: { businessId, symbol: unit.symbol } },
+        create: { businessId, ...unit },
+        update: {},
+      });
+    }
+
+    const accounts = [
+      { code: '1010', name: 'Cash in Hand', group: AccountGroup.ASSET, subGroup: 'Cash' },
+      { code: '1020', name: 'Operating Bank Account', group: AccountGroup.ASSET, subGroup: 'Bank' },
+      { code: '1030', name: 'Accounts Receivable (Debtors)', group: AccountGroup.ASSET, subGroup: 'Accounts Receivable' },
+      { code: '1040', name: 'Merchandise Inventory', group: AccountGroup.ASSET, subGroup: 'Inventory' },
+      { code: '1051', name: 'Input CGST', group: AccountGroup.ASSET, subGroup: 'Tax Receivable' },
+      { code: '1052', name: 'Input SGST', group: AccountGroup.ASSET, subGroup: 'Tax Receivable' },
+      { code: '1053', name: 'Input IGST', group: AccountGroup.ASSET, subGroup: 'Tax Receivable' },
+      { code: '2010', name: 'Accounts Payable (Creditors)', group: AccountGroup.LIABILITY, subGroup: 'Accounts Payable' },
+      { code: '2021', name: 'Output CGST', group: AccountGroup.LIABILITY, subGroup: 'Tax Payable' },
+      { code: '2022', name: 'Output SGST', group: AccountGroup.LIABILITY, subGroup: 'Tax Payable' },
+      { code: '2023', name: 'Output IGST', group: AccountGroup.LIABILITY, subGroup: 'Tax Payable' },
+      { code: '3010', name: 'Capital Account', group: AccountGroup.EQUITY, subGroup: 'Equity' },
+      { code: '4010', name: 'Sales Revenue', group: AccountGroup.INCOME, subGroup: 'Operating Revenue' },
+      { code: '5010', name: 'Cost of Goods Sold (COGS)', group: AccountGroup.EXPENSE, subGroup: 'Direct Expense' },
+      { code: '5020', name: 'Purchase Expenses', group: AccountGroup.EXPENSE, subGroup: 'Direct Expense' },
+      { code: '5090', name: 'Round-off Account', group: AccountGroup.EXPENSE, subGroup: 'Adjustment' },
+    ];
+    for (const account of accounts) {
+      await prismaTx.chartOfAccount.upsert({
+        where: { businessId_code: { businessId, code: account.code } },
+        create: { businessId, ...account, isSystem: true },
+        update: {},
+      });
+    }
+
+    const financialYearStart = new Date(dto.financialYearStart);
+    const financialYearEnd = new Date(dto.financialYearEnd);
+    await prismaTx.fiscalPeriod.upsert({
+      where: {
+        businessId_name: {
+          businessId,
+          name: `FY ${financialYearStart.getUTCFullYear()}-${financialYearEnd.getUTCFullYear()}`,
+        },
+      },
+      create: {
+        businessId,
+        name: `FY ${financialYearStart.getUTCFullYear()}-${financialYearEnd.getUTCFullYear()}`,
+        startDate: financialYearStart,
+        endDate: financialYearEnd,
+        isActive: true,
+      },
+      update: {},
+    });
+
+    if (branchId) {
+      const sequences = [
+        { documentType: 'TAX_INVOICE', prefix: dto.invoicePrefix.trim() },
+        { documentType: 'POS_RECEIPT', prefix: 'POS-' },
+        { documentType: 'PURCHASE_INVOICE', prefix: 'PUR-' },
+        { documentType: 'QUOTATION', prefix: 'QUO-' },
+      ];
+      for (const sequence of sequences) {
+        await prismaTx.documentSequence.upsert({
+          where: {
+            businessId_branchId_documentType: {
+              businessId,
+              branchId,
+              documentType: sequence.documentType,
+            },
+          },
+          create: { businessId, branchId, ...sequence, nextNumber: 1, padding: 4 },
+          update: {},
+        });
+      }
+    }
   }
 
   private async replaceBranches(tx: TenantTx, profileId: string, branches: SaveBusinessProfileDto['branches']) {

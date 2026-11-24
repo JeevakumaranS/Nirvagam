@@ -28,7 +28,7 @@ const initialInvite = {
   email: '',
   firstName: '',
   lastName: '',
-  password: 'Password@123',
+  password: '',
   role: 'PLATFORM_SUPPORT_ADMIN',
 };
 

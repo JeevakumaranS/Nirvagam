@@ -117,6 +117,16 @@ The CLI prompts for a new identity's password without echoing it. Existing activ
 identities are promoted without changing their password. For non-interactive use,
 provide `SUPER_ADMIN_PASSWORD` through the environment.
 
-### Default Demo Credentials
-- **Email:** `admin@nirvagam.com`
-- **Password:** `Password@123`
+### Business Onboarding
+
+From `backend`, run `npm run prisma:seed` after applying the database migrations.
+This initializes only shared plans, permissions, and system roles; it does not
+create a tenant, business, administrator, or sample transactions.
+
+Sign in as the platform super admin and register the business from the platform
+business-registration page. Set the owner's email and temporary password there.
+The owner signs in from `/login` with those credentials and is prompted to change
+the password on first sign-in. Public self-registration is disabled.
+
+Existing installations may still contain accounts or sample records created by
+older seed scripts. The new seed does not recreate or overwrite those records.

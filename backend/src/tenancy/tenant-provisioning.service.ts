@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -28,6 +28,25 @@ export class TenantProvisioningService {
    * Main Provisioning State Machine
    */
   async provision(input: ProvisionTenantInput): Promise<TenantProvisionResult> {
+    const requiredFields = [
+      input?.slug,
+      input?.displayName,
+      input?.ownerEmail,
+      input?.ownerPassword,
+      input?.ownerFirstName,
+      input?.ownerLastName,
+      input?.addressLine1,
+      input?.city,
+      input?.state,
+      input?.stateCode,
+      input?.pincode,
+    ];
+    if (requiredFields.some((value) => typeof value !== 'string' || !value.trim())) {
+      throw new BadRequestException(
+        'Workspace, owner credentials, and business address details are required for tenant provisioning',
+      );
+    }
+
     const startTime = Date.now();
     this.logger.log(`Beginning provisioning state machine for tenant slug [${input.slug}]...`);
 
@@ -223,7 +242,7 @@ export class TenantProvisioningService {
         return existing.id;
       }
 
-      const passwordHash = await bcrypt.hash(input.ownerPassword || 'Nirvagam@2026', 10);
+      const passwordHash = await bcrypt.hash(input.ownerPassword, 10);
       const inserted = await tx.queryOne<{ id: string }>(
         `INSERT INTO platform.identities (
           email, password_hash, first_name, last_name, phone, status
@@ -268,7 +287,7 @@ export class TenantProvisioningService {
     schemaName: string,
     input: ProvisionTenantInput,
     ownerIdentityId: string
-  ): Promise<{ branchId: string; rolesCount: number; permissionsCount: number; coaCount: number }> {
+  ): Promise<{ branchId: string | null; rolesCount: number; permissionsCount: number; coaCount: number }> {
     const pool = this.tenantDb.getPool();
     const client = await pool.connect();
 
@@ -276,24 +295,26 @@ export class TenantProvisioningService {
       await client.query('BEGIN;');
       await client.query(`SET LOCAL search_path TO ${quoteIdent(schemaName)}, public;`);
 
-      // 1. Business Profile & Head Office Branch
-      const branchRes = await client.query(
-        `INSERT INTO branches (
-          branch_code, name, is_head_office, address, city, state, state_code, pincode, is_active
-        ) VALUES ('HO-01', 'Head Office - ' || $1, true, '100 Commercial Street', 'Namakkal', 'Tamil Nadu', '33', '637001', true)
-        RETURNING id;`,
-        [input.displayName]
-      );
-      const branchId = branchRes.rows[0].id;
-
+      // Business Profile
       await client.query(
         `INSERT INTO business_profile (
-          legal_name, trade_name, gstin, pan, email, phone, city, state, state_code, pincode
-        ) VALUES ($1, $1, '33AAAAA0000A1Z5', 'AAAAA0000A', $2, $3, 'Namakkal', 'Tamil Nadu', '33', '637001');`,
-        [input.displayName, input.ownerEmail, input.ownerPhone || '9876543210']
+          legal_name, trade_name, gstin, pan, email, phone, address, city, state, state_code, pincode
+        ) VALUES ($1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10);`,
+        [
+          input.displayName,
+          input.gstin || '',
+          input.pan || '',
+          input.ownerEmail,
+          input.ownerPhone || null,
+          input.addressLine1,
+          input.city,
+          input.state,
+          input.stateCode,
+          input.pincode,
+        ]
       );
 
-      // 2. Financial Year (Current Apr-Mar)
+      // Financial Year (Current Apr-Mar)
       const currentYear = new Date().getFullYear();
       await client.query(
         `INSERT INTO financial_years (
@@ -308,7 +329,7 @@ export class TenantProvisioningService {
         ]
       );
 
-      // 3. Numbering Series
+      // Numbering Series
       const series = [
         ['INVOICE', 'INV-'],
         ['QUOTE', 'QT-'],
@@ -326,14 +347,7 @@ export class TenantProvisioningService {
         );
       }
 
-      // 4. Warehouse
-      await client.query(
-        `INSERT INTO warehouses (branch_id, code, name, is_default, is_active)
-         VALUES ($1, 'WH-MAIN', 'Main Central Warehouse', true, true);`,
-        [branchId]
-      );
-
-      // 5. Tenant User (Owner) soft reference
+      // Tenant User (Owner) soft reference
       const userRes = await client.query(
         `INSERT INTO tenant_users (identity_id, email, first_name, last_name, is_active)
          VALUES ($1, $2, $3, $4, true)
@@ -341,13 +355,13 @@ export class TenantProvisioningService {
         [
           ownerIdentityId,
           input.ownerEmail,
-          input.ownerFirstName || 'Business',
-          input.ownerLastName || 'Owner',
+          input.ownerFirstName,
+          input.ownerLastName,
         ]
       );
       const tenantUserId = userRes.rows[0].id;
 
-      // 6. Permissions Catalog (Module x Action)
+      // Permissions Catalog (Module x Action)
       const modules = [
         'Accounting',
         'Branch',
@@ -390,7 +404,7 @@ export class TenantProvisioningService {
         }
       }
 
-      // 7. System Roles
+      // System Roles
       const systemRoles = [
         { name: 'BUSINESS_OWNER', desc: 'Complete enterprise ownership and administration' },
         { name: 'BUSINESS_ADMIN', desc: 'Administrative management across commercial modules' },
@@ -500,15 +514,7 @@ export class TenantProvisioningService {
         [tenantUserId, roleIdMap.get('BUSINESS_OWNER')]
       );
 
-      // Grant owner branch access
-      await client.query(
-        `INSERT INTO user_branch_access (user_id, branch_id, is_default)
-         VALUES ($1, $2, true)
-         ON CONFLICT DO NOTHING;`,
-        [tenantUserId, branchId]
-      );
-
-      // 8. Indian Chart of Accounts (COA) Template
+      // Indian Chart of Accounts (COA) Template
       const coaAccounts = [
         // Assets
         { code: '1000', name: 'Current Assets', group: 'ASSETS', parent: null },
@@ -566,7 +572,7 @@ export class TenantProvisioningService {
       await client.query('COMMIT;');
 
       return {
-        branchId,
+        branchId: null,
         rolesCount: systemRoles.length,
         permissionsCount: permIdMap.size,
         coaCount: coaAccounts.length,
