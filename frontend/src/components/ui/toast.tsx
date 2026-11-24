@@ -49,13 +49,13 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={{ toast }}>
       {children}
-      <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none select-none">
+      <div className="pointer-events-none fixed right-6 top-6 z-[2147483647] flex w-[min(420px,calc(100vw-3rem))] flex-col gap-2 select-none">
         {toasts.map((t) => (
           <div
             key={t.id}
             className={clsx(
               'pointer-events-auto relative overflow-hidden flex items-start gap-3 p-3.5',
-              'bg-surface/90 backdrop-blur-xl border border-border rounded-lg shadow-modal',
+              'bg-background border-2 border-accent/35 rounded-lg shadow-2xl',
               'animate-in slide-in-from-top-2 fade-in duration-base ease-spring'
             )}
           >

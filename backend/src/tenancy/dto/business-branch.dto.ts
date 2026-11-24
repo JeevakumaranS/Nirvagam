@@ -43,6 +43,12 @@ export class BusinessBranchDto {
   @MaxLength(100)
   city!: string;
 
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  district?: string;
+
   @ApiProperty()
   @IsString()
   @IsNotEmpty()
