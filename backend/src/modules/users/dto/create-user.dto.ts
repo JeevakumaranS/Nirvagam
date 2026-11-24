@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsArray, IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsArray, IsEmail, IsIn, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CreateUserDto {
   @ApiProperty({ example: 'staff@durozen.com' })
@@ -33,4 +33,35 @@ export class CreateUserDto {
   @ApiProperty({ example: ['branch-id-1'], description: 'List of assigned branch IDs' })
   @IsArray()
   branchIds!: string[];
+
+  @ApiProperty({ example: 'manager-user-id', required: false })
+  @IsString()
+  @IsOptional()
+  reportsToId?: string;
+
+  @ApiProperty({ example: 'Engineering', required: false })
+  @IsString()
+  @IsOptional()
+  team?: string;
+
+  @ApiProperty({ example: 'Developer', required: false })
+  @IsString()
+  @IsOptional()
+  designation?: string;
+
+  @ApiProperty({ example: 'EMPLOYEE', enum: ['OWNER', 'MANAGER', 'EMPLOYEE'], required: false })
+  @IsString()
+  @IsIn(['OWNER', 'MANAGER', 'EMPLOYEE'])
+  @IsOptional()
+  memberType?: string;
+
+  @ApiProperty({ example: 'ACTIVE', required: false })
+  @IsString()
+  @IsOptional()
+  status?: string;
+
+  @ApiProperty({ example: '2024-01-15', required: false })
+  @IsString()
+  @IsOptional()
+  joiningDate?: string;
 }

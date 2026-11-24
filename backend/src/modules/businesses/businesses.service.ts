@@ -1,8 +1,14 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBusinessDto } from './dto/create-business.dto';
 import { UpdateBusinessDto } from './dto/update-business.dto';
 import { CreateBranchDto } from './dto/create-branch.dto';
+import { UpdateBranchDto } from './dto/update-branch.dto';
 
 @Injectable()
 export class BusinessesService {
@@ -48,6 +54,8 @@ export class BusinessesService {
   }
 
   async create(tenantId: string, dto: CreateBusinessDto) {
+    this.validateImage(dto.logoUrl, 'Logo');
+    this.validateImage(dto.signatureUrl, 'Digital signature');
     return this.prisma.$transaction(async (tx) => {
       const business = await tx.business.create({
         data: {
@@ -59,6 +67,9 @@ export class BusinessesService {
           pan: dto.pan,
           email: dto.email,
           phone: dto.phone,
+          logoUrl: dto.logoUrl,
+          signatureUrl: dto.signatureUrl,
+          taxSettings: dto.taxSettings || {},
           addressLine1: dto.addressLine1,
           addressLine2: dto.addressLine2,
           city: dto.city,
@@ -105,6 +116,8 @@ export class BusinessesService {
     if (!exists) {
       throw new NotFoundException('Business entity not found');
     }
+    this.validateImage(dto.logoUrl, 'Logo');
+    this.validateImage(dto.signatureUrl, 'Digital signature');
 
     return this.prisma.business.update({
       where: { id: businessId },
@@ -146,6 +159,12 @@ export class BusinessesService {
     }
 
     return this.prisma.$transaction(async (tx) => {
+      if (dto.isHeadOffice) {
+        await tx.branch.updateMany({
+          where: { businessId, isHeadOffice: true },
+          data: { isHeadOffice: false },
+        });
+      }
       const branch = await tx.branch.create({
         data: {
           businessId,
@@ -174,5 +193,52 @@ export class BusinessesService {
 
       return branch;
     });
+  }
+
+  async updateBranch(
+    tenantId: string,
+    businessId: string,
+    branchId: string,
+    dto: UpdateBranchDto
+  ) {
+    await this.findOne(tenantId, businessId);
+    const branch = await this.prisma.branch.findFirst({
+      where: { id: branchId, businessId, isActive: true },
+    });
+    if (!branch) {
+      throw new NotFoundException('Branch not found');
+    }
+
+    const code = dto.code?.trim().toUpperCase();
+    if (code && code !== branch.code) {
+      const existingCode = await this.prisma.branch.findUnique({
+        where: { businessId_code: { businessId, code } },
+      });
+      if (existingCode) {
+        throw new ConflictException(`Branch code "${code}" already exists in this business`);
+      }
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      if (dto.isHeadOffice) {
+        await tx.branch.updateMany({
+          where: { businessId, isHeadOffice: true, id: { not: branchId } },
+          data: { isHeadOffice: false },
+        });
+      }
+      return tx.branch.update({
+        where: { id: branchId },
+        data: { ...dto, ...(code ? { code } : {}) },
+      });
+    });
+  }
+
+  private validateImage(value: string | null | undefined, label: string) {
+    if (!value) return;
+    const isDataImage = /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value);
+    const isHttpsUrl = /^https:\/\/[^\s]+$/i.test(value);
+    if (!isDataImage && !isHttpsUrl) {
+      throw new BadRequestException(`${label} must be a PNG, JPEG, or WebP upload, or an HTTPS URL`);
+    }
   }
 }

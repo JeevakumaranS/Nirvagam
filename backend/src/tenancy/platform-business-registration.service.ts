@@ -320,6 +320,7 @@ export class PlatformBusinessRegistrationService {
         logoUrl: dto.logoUrl || null,
         signatureUrl: dto.digitalSignatureUrl || null,
         currency: dto.currency.trim().toUpperCase(),
+        taxSettings: JSON.parse(JSON.stringify(dto.taxSettings || {})),
         addressLine1: dto.addressLine1.trim(),
         addressLine2: dto.addressLine2?.trim() || null,
         city: dto.city.trim(),
