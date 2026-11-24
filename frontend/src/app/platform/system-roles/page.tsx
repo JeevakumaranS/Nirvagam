@@ -1,69 +1,214 @@
 'use client';
 
-import React, { useEffect,useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '@/lib/api';
 import { useToast } from '@/components/ui/toast';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Check, ChevronRight, CreditCard, Headphones, Shield } from 'lucide-react';
+import {
+  ShieldCheck,
+  Headphones,
+  CreditCard,
+  Plus,
+  Users,
+  Search,
+  CheckCircle2,
+  AlertTriangle,
+  X,
+  Trash2,
+  Check,
+  Lock,
+} from 'lucide-react';
 
-type Role = { id: string; key: string; name: string; description: string; assignedCount: number };
-type Permission = { id: string; key: string; category: string; label: string };
+interface SystemRole {
+  key: string;
+  name: string;
+  responsibilities: string;
+  description: string;
+}
 
-const roleMeta: Record<string, { icon: any; color: string }> = {
-  PLATFORM_SUPPORT_ADMIN: { icon: Headphones, color: 'text-blue-500' },
-  PLATFORM_FINANCE_ADMIN: { icon: CreditCard, color: 'text-emerald-500' },
+interface PlatformUser {
+  id: string;
+  identityId: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  role: string;
+  isSuperAdmin: boolean;
+  status: string;
+  createdAt: string;
+}
+
+const ROLE_METADATA: Record<
+  string,
+  { icon: any; variant: 'accent' | 'secondary' | 'outline'; color: string; badge: string }
+> = {
+  PLATFORM_SUPER_ADMIN: {
+    icon: ShieldCheck,
+    variant: 'accent',
+    color: 'text-accent',
+    badge: 'Full SaaS Control',
+  },
+  SUPER_ADMIN: {
+    icon: ShieldCheck,
+    variant: 'accent',
+    color: 'text-accent',
+    badge: 'Full SaaS Control',
+  },
+  PLATFORM_SUPPORT_ADMIN: {
+    icon: Headphones,
+    variant: 'secondary',
+    color: 'text-blue-500',
+    badge: 'Troubleshooting & Logs',
+  },
+  PLATFORM_FINANCE_ADMIN: {
+    icon: CreditCard,
+    variant: 'secondary',
+    color: 'text-emerald-500',
+    badge: 'Billing & Subscriptions',
+  },
 };
 
+const SYSTEM_ROLES_DEFAULT: SystemRole[] = [
+  {
+    key: 'PLATFORM_SUPER_ADMIN',
+    name: 'Platform Super Admin',
+    responsibilities: 'Manage entire SaaS platform',
+    description: 'Full administrative governance over tenant organizations, schema provisioning, business profiles, and global platform security.',
+  },
+  {
+    key: 'PLATFORM_SUPPORT_ADMIN',
+    name: 'Platform Support Admin',
+    responsibilities: 'Customer support and troubleshooting',
+    description: 'Operational troubleshooting, tenant health inspections, error diagnosis, and user incident resolution without financial alterations.',
+  },
+  {
+    key: 'PLATFORM_FINANCE_ADMIN',
+    name: 'Platform Finance Admin',
+    responsibilities: 'Subscription and payment management',
+    description: 'Monitors platform revenue, billing transactions, subscription renewals, invoices, and payment provider integrations.',
+  },
+];
+
 export default function SystemRolesPage() {
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [permissions, setPermissions] = useState<Permission[]>([]);
-  const [rolePermissions, setRolePermissions] = useState<Record<string, string[]>>({});
-  const [selectedRole, setSelectedRole] = useState<Role | null>(null);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [roles, setRoles] = useState<SystemRole[]>(SYSTEM_ROLES_DEFAULT);
+  const [users, setUsers] = useState<PlatformUser[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Invite modal form state
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteFirstName, setInviteFirstName] = useState('');
+  const [inviteLastName, setInviteLastName] = useState('');
+  const [invitePassword, setInvitePassword] = useState('Password@123');
+  const [inviteRole, setInviteRole] = useState('PLATFORM_SUPER_ADMIN');
+
   const { toast } = useToast();
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const data = await apiFetch<{ roles: Role[]; permissions: Permission[]; rolePermissions: { key: string; permissionId: string }[] }>('/platform/system-roles');
-        const mapped: Record<string, string[]> = {};
-        (data.roles || []).forEach((role) => { mapped[role.key] = []; });
-        (data.rolePermissions || []).forEach((item) => { (mapped[item.key] ||= []).push(item.permissionId); });
-        setRoles(data.roles || []); setPermissions(data.permissions || []); setRolePermissions(mapped);
-        const first = data.roles?.[0] || null;
-        setSelectedRole(first); setSelectedIds(first ? mapped[first.key] || [] : []);
-        setExpanded(Object.fromEntries((data.permissions || []).map((permission) => [permission.category, false])));
-      } catch (err: any) { toast({ type: 'error', title: 'Could not load system roles', message: err.message }); }
-      finally { setLoading(false); }
-    }
-    load();
-  }, [toast]);
-
-  const categories = useMemo(() => permissions.reduce<Record<string, Permission[]>>((all, permission) => { (all[permission.category] ||= []).push(permission); return all; }, {}), [permissions]);
-  const dirty = selectedRole ? JSON.stringify(selectedIds.slice().sort()) !== JSON.stringify((rolePermissions[selectedRole.key] || []).slice().sort()) : false;
-  const selectRole = (role: Role) => { setSelectedRole(role); setSelectedIds(rolePermissions[role.key] || []); };
-  const savePermissions = async () => {
-    if (!selectedRole) return;
+  const loadData = async () => {
     try {
-      setSaving(true);
-      await apiFetch(`/platform/system-roles/${selectedRole.key}/permissions`, { method: 'PUT', body: JSON.stringify({ permissionIds: selectedIds }) });
-      setRolePermissions((current) => ({ ...current, [selectedRole.key]: selectedIds }));
-      toast({ type: 'success', title: 'Role access updated', message: `${selectedRole.name} permissions were saved.` });
-    } catch (err: any) { toast({ type: 'error', title: 'Unable to save access', message: err.message }); }
-    finally { setSaving(false); }
+      setLoading(true);
+      const res = await apiFetch<{ roles: SystemRole[]; users: PlatformUser[] }>('/platform/system-roles');
+      if (res.roles?.length) setRoles(res.roles);
+      if (res.users) setUsers(res.users);
+    } catch (err: any) {
+      toast({
+        type: 'error',
+        title: 'Could not load system roles',
+        message: err.message || 'Failed to fetch platform user directory',
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  if (loading) return <div className="p-8 text-sm text-text-secondary">Loading system roles...</div>;
-  return <div className="h-full min-h-0 flex flex-col space-y-6">
-    <div className="shrink-0"><div className="flex items-center gap-2"><Shield className="w-5 h-5 text-accent" /><h1 className="text-[17px] font-semibold text-text-primary">System-Level Roles & Access</h1><Badge variant="accent" size="sm">Platform Super Admin</Badge></div><p className="text-[12px] text-text-secondary mt-1">Configure platform role access using the tenant role-and-permission workflow.</p></div>
-    <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-4 gap-6 overflow-hidden">
-      <div className="min-h-0 flex flex-col gap-2"><div className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">Configurable roles ({roles.length})</div><div className="space-y-1 overflow-y-auto">{roles.map((role) => { const Icon = roleMeta[role.key]?.icon || Shield; const isSelected = selectedRole?.key === role.key; return <button key={role.key} onClick={() => selectRole(role)} className={`w-full text-left px-3 py-2.5 rounded-lg border transition-all duration-[120ms] ease-[cubic-bezier(0.2,0,0,1)] ${isSelected ? 'bg-accent-subtle border-accent/30 text-accent shadow-none font-medium' : 'bg-transparent border-transparent text-text-primary hover:bg-black/5 dark:hover:bg-white/5 active:scale-[0.99]'}`}><div className="flex min-w-0 items-center justify-between gap-2"><span className="flex min-w-0 flex-1 items-center gap-2 text-[13px] font-medium"><Icon className={`w-4 h-4 shrink-0 ${roleMeta[role.key]?.color || 'text-accent'}`} /><span className="truncate">{role.name}</span></span><span className="shrink-0 whitespace-nowrap text-right text-[11px] text-text-tertiary">{role.assignedCount} assigned</span></div><p className="mt-1 truncate text-[11px] text-text-secondary">{role.description}</p></button>; })}</div></div>
-      <div key={selectedRole?.key} className="lg:col-span-3 min-h-0 flex flex-col gap-4 animate-matrix-in"><div className="macos-vibrancy p-4 rounded-xl border border-border/80 flex items-center justify-between gap-4"><div><h2 className="text-[15px] font-semibold text-text-primary">{selectedRole?.name || 'Select a role'}</h2><p className="text-[12px] text-text-secondary mt-0.5">Assign platform-specific permissions to this role.</p></div><div className="flex items-center gap-2">{dirty && <Button size="sm" variant="secondary" onClick={() => selectedRole && setSelectedIds(rolePermissions[selectedRole.key] || [])}>Cancel</Button>}{dirty && <Button size="sm" variant="primary" loading={saving} onClick={savePermissions}>Save changes</Button>}</div></div><div className="flex-1 min-h-0 space-y-3 overflow-y-auto pr-1">{Object.entries(categories).map(([category, items]) => { const granted = items.filter((permission) => selectedIds.includes(permission.id)).length; const open = expanded[category]; return <div key={category} className="bg-surface border border-border/80 rounded-[10px] overflow-hidden"><button className="w-full flex items-center justify-between px-4 py-3 text-left" onClick={() => setExpanded((current) => ({ ...current, [category]: !current[category] }))}><span className="flex items-center gap-2 text-[13px] font-semibold text-text-primary"><ChevronRight className={`w-4 h-4 transition-transform ${open ? 'rotate-90' : ''}`} />{category}</span><span className="text-[11px] font-mono text-text-secondary">{granted} / {items.length} granted</span></button>{open && <div className="p-4 border-t border-border/60 grid grid-cols-2 sm:grid-cols-3 gap-2">{items.map((permission) => { const active = selectedIds.includes(permission.id); return <button key={permission.id} disabled={!selectedRole || saving} onClick={() => setSelectedIds((ids) => active ? ids.filter((id) => id !== permission.id) : [...ids, permission.id])} className={`flex items-center justify-between px-3 py-2 rounded-md text-[12px] border ${active ? 'bg-accent/10 text-accent border-accent/25' : 'text-text-secondary border-border/60'}`}>{permission.label}<span className={`w-4 h-4 rounded-full flex items-center justify-center ${active ? 'bg-accent text-white' : 'border border-border'}`}>{active && <Check className="w-2.5 h-2.5" />}</span></button>; })}</div>}</div>; })}</div></div>
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inviteEmail.trim()) {
+      toast({ type: 'warning', title: 'Email required', message: 'Enter a valid email address.' });
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      await apiFetch('/platform/system-roles/users', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: inviteEmail.trim(),
+          firstName: inviteFirstName.trim(),
+          lastName: inviteLastName.trim(),
+          password: invitePassword,
+          role: inviteRole,
+        }),
+      });
+      toast({
+        type: 'success',
+        title: 'Platform Administrator Added',
+        message: `${inviteEmail} assigned role ${inviteRole}.`,
+      });
+      setIsModalOpen(false);
+      setInviteEmail('');
+      setInviteFirstName('');
+      setInviteLastName('');
+      setInvitePassword('Password@123');
+      await loadData();
+    } catch (err: any) {
+      toast({
+        type: 'error',
+        title: 'Operation failed',
+        message: err.message || 'Could not create platform user',
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleUpdateStatus = async (user: PlatformUser) => {
+    const nextStatus = user.status === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE';
+    try {
+      await apiFetch(`/platform/system-roles/users/${user.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      toast({
+        type: 'success',
+        title: 'Status Updated',
+        message: `${user.email} is now ${nextStatus}.`,
+      });
+      await loadData();
+    } catch (err: any) {
+      toast({ type: 'error', title: 'Update failed', message: err.message });
+    }
+  };
+
+  const handleDeleteUser = async (user: PlatformUser) => {
+    if (!window.confirm(`Are you sure you want to remove platform administrator "${user.email}"?`)) {
+      return;
+    }
+    try {
+      await apiFetch(`/platform/system-roles/users/${user.id}`, {
+        method: 'DELETE',
+      });
+      toast({
+        type: 'success',
+        title: 'Admin Removed',
+        message: `${user.email} removed from platform administration.`,
+      });
+      await loadData();
+    } catch (err: any) {
+      toast({ type: 'error', title: 'Delete failed', message: err.message });
+    }
+  };
+
   const filteredUsers = users.filter((u) => {
     const q = searchQuery.toLowerCase();
     return (
@@ -380,5 +525,5 @@ export default function SystemRolesPage() {
         document.body
       )}
     </div>
-  </div>;
+  );
 }
