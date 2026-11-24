@@ -3,6 +3,7 @@
 import React from 'react';
 import { clsx } from 'clsx';
 import { ChevronDown } from 'lucide-react';
+import { FieldLabel } from './field-label';
 
 export interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
   label?: string;
@@ -18,9 +19,11 @@ export const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
     return (
       <div className="w-full flex flex-col gap-1 text-left">
         {label && (
-          <label htmlFor={selectId} className="text-xs font-medium text-text-secondary select-none tracking-tight">
-            {label}
-          </label>
+          <FieldLabel
+            htmlFor={selectId}
+            label={label}
+            className="text-xs font-medium text-text-secondary select-none tracking-tight"
+          />
         )}
         <div className="relative flex items-center">
           <select

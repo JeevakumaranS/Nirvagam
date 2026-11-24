@@ -4,6 +4,7 @@ import { BusinessesService } from './businesses.service';
 import { CreateBusinessDto } from './dto/create-business.dto';
 import { UpdateBusinessDto } from './dto/update-business.dto';
 import { CreateBranchDto } from './dto/create-branch.dto';
+import { UpdateBranchDto } from './dto/update-branch.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthUser } from '@nirvagam/shared';
@@ -71,5 +72,18 @@ export class BusinessesController {
     @Body() dto: CreateBranchDto
   ) {
     return this.businessesService.createBranch(user.tenantId, id, dto);
+  }
+
+  @Put(':id/branches/:branchId')
+  @RequirePermissions('branch:edit')
+  @ApiOperation({ summary: 'Update a branch configuration' })
+  @ApiResponse({ status: 200, description: 'Branch updated' })
+  async updateBranch(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('branchId') branchId: string,
+    @Body() dto: UpdateBranchDto
+  ) {
+    return this.businessesService.updateBranch(user.tenantId, id, branchId, dto);
   }
 }

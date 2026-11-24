@@ -134,6 +134,7 @@ model Business {
   pincode        String
   country        String       @default("India")
   enabledModules Json         @default("[\"sales\", \"purchase\", \"inventory\", \"accounting\", \"pos\", \"gst\"]") @map("enabled_modules")
+  taxSettings    Json         @default("{}") @map("tax_settings")
   isActive       Boolean      @default(true) @map("is_active")
   createdAt      DateTime     @default(now()) @map("created_at")
   updatedAt      DateTime     @updatedAt @map("updated_at")
@@ -173,10 +174,12 @@ model Branch {
   state        String
   stateCode    String   @map("state_code")
   pincode      String
+  ownerId      String?  @map("owner_id") @db.Uuid
   isActive     Boolean  @default(true) @map("is_active")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
+  owner            User?                  @relation("BranchOwner", fields: [ownerId], references: [id])
   business         Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
   warehouses       Warehouse[]
   userAssignments  UserBranchAssignment[]
@@ -255,10 +258,19 @@ model User {
   phone        String?
   avatarUrl    String?  @map("avatar_url")
   isActive     Boolean  @default(true) @map("is_active")
+  team         String?  @map("team")
+  designation  String?  @map("designation")
+  memberType   String   @default("EMPLOYEE") @map("member_type")
+  status       String   @default("ACTIVE") @map("status")
+  joiningDate  DateTime? @default(now()) @map("joining_date")
+  reportsToId  String?  @map("reports_to_id") @db.Uuid
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   tenant            Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  reportsTo         User?                  @relation("UserHierarchy", fields: [reportsToId], references: [id])
+  subordinates      User[]                 @relation("UserHierarchy")
+  ownedBranches     Branch[]               @relation("BranchOwner")
   userRoles         UserRole[]
   branchAssignments UserBranchAssignment[]
   auditLogs         AuditLog[]

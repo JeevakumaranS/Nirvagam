@@ -31,4 +31,34 @@ export class UpdateUserDto {
   @IsArray()
   @IsOptional()
   branchIds?: string[];
+
+  @ApiProperty({ example: 'manager-user-id', required: false })
+  @IsString()
+  @IsOptional()
+  reportsToId?: string;
+
+  @ApiProperty({ example: 'Engineering', required: false })
+  @IsString()
+  @IsOptional()
+  team?: string;
+
+  @ApiProperty({ example: 'Developer', required: false })
+  @IsString()
+  @IsOptional()
+  designation?: string;
+
+  @ApiProperty({ example: 'EMPLOYEE', enum: ['MANAGER', 'EMPLOYEE'], required: false })
+  @IsString()
+  @IsOptional()
+  memberType?: string;
+
+  @ApiProperty({ example: 'ACTIVE', required: false })
+  @IsString()
+  @IsOptional()
+  status?: string;
+
+  @ApiProperty({ example: '2024-01-15', required: false })
+  @IsString()
+  @IsOptional()
+  joiningDate?: string;
 }

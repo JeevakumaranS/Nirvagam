@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsEnum, IsNotEmpty, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
 import { BusinessType, IndustryType } from '@nirvagam/shared';
 
 export class CreateBusinessDto {
@@ -37,6 +37,23 @@ export class CreateBusinessDto {
   @IsString()
   @IsOptional()
   phone?: string;
+
+  @ApiProperty({ required: false, type: Object })
+  @IsObject()
+  @IsOptional()
+  taxSettings?: Record<string, boolean>;
+
+  @ApiProperty({ required: false, maxLength: 1400000 })
+  @IsString()
+  @MaxLength(1400000)
+  @IsOptional()
+  logoUrl?: string | null;
+
+  @ApiProperty({ required: false, maxLength: 1400000 })
+  @IsString()
+  @MaxLength(1400000)
+  @IsOptional()
+  signatureUrl?: string | null;
 
   @ApiProperty({ example: 'Su. Masan Complex, Second Floor' })
   @IsString()

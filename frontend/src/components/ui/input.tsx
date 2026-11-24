@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { clsx } from 'clsx';
+import { FieldLabel } from './field-label';
 
 export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
@@ -18,9 +19,11 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
     return (
       <div className="w-full flex flex-col gap-1 text-left">
         {label && (
-          <label htmlFor={inputId} className="text-xs font-medium text-text-secondary select-none tracking-tight">
-            {label}
-          </label>
+          <FieldLabel
+            htmlFor={inputId}
+            label={label}
+            className="text-xs font-medium text-text-secondary select-none tracking-tight"
+          />
         )}
         <div className="relative flex items-center">
           {prefixIcon && (

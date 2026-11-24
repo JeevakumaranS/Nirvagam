@@ -1,38 +1,102 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { apiFetch } from '@/lib/api';
 import { useToast } from '@/components/ui/toast';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Modal } from '@/components/ui/modal';
-import { Check, ChevronRight, CreditCard, Headphones, Plus, Shield, Trash2 } from 'lucide-react';
+import { Select } from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
+import {
+  ShieldCheck,
+  Headphones,
+  CreditCard,
+  Plus,
+  Users,
+  Search,
+  CheckCircle2,
+  AlertTriangle,
+  X,
+  Trash2,
+  Check,
+  Lock,
+} from 'lucide-react';
 
-type Role = {
-  id: string;
+interface SystemRole {
   key: string;
   name: string;
-  description: string | null;
-  assignedCount: number;
-  isCustom: boolean;
-};
-type Permission = { id: string; key: string; category: string; label: string };
+  responsibilities: string;
+  description: string;
+}
 
-const roleMeta: Record<string, { icon: any; color: string }> = {
-  PLATFORM_SUPPORT_ADMIN: { icon: Headphones, color: 'text-blue-500' },
-  PLATFORM_FINANCE_ADMIN: { icon: CreditCard, color: 'text-emerald-500' },
+interface PlatformUser {
+  id: string;
+  identityId: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  role: string;
+  isSuperAdmin: boolean;
+  status: string;
+  createdAt: string;
+}
+
+const ROLE_METADATA: Record<
+  string,
+  { icon: any; variant: 'accent' | 'secondary' | 'outline'; color: string; badge: string }
+> = {
+  PLATFORM_SUPER_ADMIN: {
+    icon: ShieldCheck,
+    variant: 'accent',
+    color: 'text-accent',
+    badge: 'Full SaaS Control',
+  },
+  SUPER_ADMIN: {
+    icon: ShieldCheck,
+    variant: 'accent',
+    color: 'text-accent',
+    badge: 'Full SaaS Control',
+  },
+  PLATFORM_SUPPORT_ADMIN: {
+    icon: Headphones,
+    variant: 'secondary',
+    color: 'text-blue-500',
+    badge: 'Troubleshooting & Logs',
+  },
+  PLATFORM_FINANCE_ADMIN: {
+    icon: CreditCard,
+    variant: 'secondary',
+    color: 'text-emerald-500',
+    badge: 'Billing & Subscriptions',
+  },
 };
 
-const PROTECTED_PLATFORM_ROLES = new Set(['SUPER_ADMIN', 'PLATFORM_SUPER_ADMIN']);
+const SYSTEM_ROLES_DEFAULT: SystemRole[] = [
+  {
+    key: 'PLATFORM_SUPER_ADMIN',
+    name: 'Platform Super Admin',
+    responsibilities: 'Manage entire SaaS platform',
+    description: 'Full administrative governance over tenant organizations, schema provisioning, business profiles, and global platform security.',
+  },
+  {
+    key: 'PLATFORM_SUPPORT_ADMIN',
+    name: 'Platform Support Admin',
+    responsibilities: 'Customer support and troubleshooting',
+    description: 'Operational troubleshooting, tenant health inspections, error diagnosis, and user incident resolution without financial alterations.',
+  },
+  {
+    key: 'PLATFORM_FINANCE_ADMIN',
+    name: 'Platform Finance Admin',
+    responsibilities: 'Subscription and payment management',
+    description: 'Monitors platform revenue, billing transactions, subscription renewals, invoices, and payment provider integrations.',
+  },
+];
 
 export default function SystemRolesPage() {
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [permissions, setPermissions] = useState<Permission[]>([]);
-  const [rolePermissions, setRolePermissions] = useState<Record<string, string[]>>({});
-  const [selectedRole, setSelectedRole] = useState<Role | null>(null);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [roles, setRoles] = useState<SystemRole[]>(SYSTEM_ROLES_DEFAULT);
+  const [users, setUsers] = useState<PlatformUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [customRolesOpen, setCustomRolesOpen] = useState(false);
@@ -40,6 +104,23 @@ export default function SystemRolesPage() {
   const [roleFormSaving, setRoleFormSaving] = useState(false);
   const [roleForm, setRoleForm] = useState({ name: '', description: '' });
   const { toast } = useToast();
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const res = await apiFetch<{ roles: SystemRole[]; users: PlatformUser[] }>('/platform/system-roles');
+      if (res.roles?.length) setRoles(res.roles);
+      if (res.users) setUsers(res.users);
+    } catch (err: any) {
+      toast({
+        type: 'error',
+        title: 'Could not load system roles',
+        message: err.message || 'Failed to fetch platform user directory',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     async function load() {

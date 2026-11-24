@@ -42,6 +42,14 @@ export class UsersController {
     return this.usersService.create(user.tenantId, user.businessId, dto);
   }
 
+  @Get('hierarchy')
+  @RequirePermissions('user:view')
+  @ApiOperation({ summary: 'Get branch-based team member hierarchy tree' })
+  @ApiResponse({ status: 200, description: 'Hierarchical branch tree with teams, managers, and employees' })
+  async getHierarchy(@CurrentUser() user: AuthUser) {
+    return this.usersService.getBranchHierarchy(user.tenantId);
+  }
+
   @Get(':id')
   @RequirePermissions('user:view')
   @ApiOperation({ summary: 'Get user details by ID' })
