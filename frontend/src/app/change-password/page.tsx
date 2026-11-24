@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/lib/auth-context';
 import { apiFetch } from '@/lib/api';
@@ -62,27 +62,27 @@ export default function ChangePasswordPage() {
         </div>
 
         {!user?.mustChangePassword && (
-          <Input
+          <PasswordInput
             label="Current password"
-            type="password"
+            placeholder="Enter your current password"
             autoComplete="current-password"
             value={currentPassword}
             required
             onChange={(event) => setCurrentPassword(event.target.value)}
           />
         )}
-        <Input
+        <PasswordInput
           label="New password"
-          type="password"
+          placeholder="Enter a new password"
           autoComplete="new-password"
           minLength={8}
           required
           value={newPassword}
           onChange={(event) => setNewPassword(event.target.value)}
         />
-        <Input
+        <PasswordInput
           label="Confirm new password"
-          type="password"
+          placeholder="Re-enter the new password"
           autoComplete="new-password"
           minLength={8}
           required

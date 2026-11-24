@@ -7,6 +7,7 @@ import { clsx } from 'clsx';
 import {
   LayoutDashboard,
   Receipt,
+  CreditCard,
   ShoppingCart,
   Package,
   Layers,
@@ -17,11 +18,16 @@ import {
   Building2,
   Store,
   SlidersHorizontal,
-  ClipboardList,
+  ScrollText,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 
-export function Sidebar() {
+type SidebarProps = {
+  mobileOpen: boolean;
+  onMobileClose: () => void;
+};
+
+export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
   const pathname = usePathname();
   const { tenant, activeBusiness, user } = useAuth();
 
@@ -54,51 +60,48 @@ export function Sidebar() {
       ],
     },
   ];
-  // Platform superadmins have tenant ERP sections removed and manage platform portals.
-  // Tenant admins (BUSINESS_OWNER, BUSINESS_ADMIN, etc.) and tenant users have ALL tenant ERP sections intact.
-  const isPlatformSuperAdmin = Boolean(
+  const isPlatformAdmin = Boolean(
     user?.platformAdmin ||
-    user?.roles?.some((r) => r === 'SUPER_ADMIN' || r.startsWith('PLATFORM_'))
+      user?.roles?.some((role) => role === 'SUPER_ADMIN' || role.startsWith('PLATFORM_'))
   );
-
+  const isSuperAdmin = Boolean(
+    user?.roles?.some((role) => role === 'SUPER_ADMIN' || role === 'PLATFORM_SUPER_ADMIN')
+  );
+  const can = (permission: string) =>
+    isSuperAdmin || user?.permissions?.includes(permission);
   const platformNavGroups = [
     {
       title: 'PLATFORM MANAGEMENT',
       items: [
-        {
-          label: 'Business Registration',
-          href: '/platform/business-registration',
-          icon: Building2,
-        },
-        {
-          label: 'System-Level Roles',
-          href: '/platform/system-roles',
-          icon: ShieldCheck,
-        },
-        {
-          label: 'Platform Administrators',
-          href: '/platform/administrators',
-          icon: Users2,
-        },
+        { label: 'Dashboard', href: '/platform/dashboard', icon: LayoutDashboard, permission: 'platform_dashboard:view' },
+        { label: 'Business Registration', href: '/platform/business-registration', icon: Building2, permission: 'platform_tenants:view' },
+        { label: 'Support Requests', href: '/platform/support', icon: Users2, permission: 'support_requests:view' },
+        { label: 'Subscriptions', href: '/platform/subscriptions', icon: Receipt, permission: 'subscriptions:view' },
+        { label: 'Payments & Revenue', href: '/platform/finance', icon: CreditCard, permission: 'payments:view' },
+        { label: 'Activity Logs', href: '/platform/audit-logs', icon: ScrollText, permission: 'activity_logs:view' },
+        ...(isSuperAdmin ? [
+          { label: 'System-Level Roles', href: '/platform/system-roles', icon: ShieldCheck, permission: 'platform_roles:view' },
+          { label: 'Platform Administrators', href: '/platform/administrators', icon: Users2, permission: 'platform_users:manage' },
+        ] : []),
       ],
     },
   ];
+  const navGroups = isPlatformAdmin ? platformNavGroups : tenantNavGroups;
 
-  const navGroups = isPlatformSuperAdmin ? platformNavGroups : tenantNavGroups;
-
-  return (
-    <aside className="w-56 h-screen flex flex-col macos-vibrancy border-r border-border/80 shrink-0 select-none transition-colors duration-200">
-      {/* App Header / Workspace Switcher */}
-      <div className="h-12 px-3.5 flex items-center gap-2.5 border-b border-border/70">
+  const content = (
+    <>
+      <div className="h-12 px-3.5 flex items-center gap-2.5 border-b border-border/70 shrink-0">
         <div className="w-7 h-7 rounded-lg bg-accent text-white flex items-center justify-center font-bold text-xs shadow-sm">
-          {isPlatformSuperAdmin ? 'P' : 'N'}
+          {isPlatformAdmin ? 'P' : 'N'}
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-[13px] font-semibold text-text-primary truncate tracking-[-0.01em]">
-            {isPlatformSuperAdmin ? 'PLATFORM ADMIN' : (activeBusiness?.tradeName || tenant?.name || 'NIRVAGAM')}
+            {isPlatformAdmin
+              ? 'PLATFORM ADMIN'
+              : activeBusiness?.tradeName || tenant?.name || 'NIRVAGAM'}
           </p>
           <div className="flex items-center gap-1 text-[11px] text-text-secondary truncate">
-            {isPlatformSuperAdmin ? (
+            {isPlatformAdmin ? (
               <span className="truncate">SaaS Multi-Tenant Core</span>
             ) : (
               <>
@@ -110,29 +113,28 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Navigation Sections */}
       <div className="flex-1 overflow-y-auto px-2.5 py-3 space-y-4">
-        {navGroups.map((group, idx) => (
-          <div key={idx}>
+        {navGroups.map((group) => (
+          <div key={group.title}>
             <div className="px-2 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.04em] text-text-secondary">
               {group.title}
             </div>
             <div className="space-y-0.5">
-              {group.items.map((item) => {
+              {group.items.filter((item: any) => !item.permission || can(item.permission)).map((item) => {
                 const Icon = item.icon;
                 const isActive =
                   pathname === item.href ||
                   (item.href !== '/dashboard' && pathname.startsWith(item.href));
-
                 return (
                   <Link
                     key={item.label}
                     href={item.href}
+                    onClick={onMobileClose}
                     className={clsx(
-                      'flex items-center gap-2.5 px-2.5 h-8 rounded-lg text-[13px] transition-all duration-[120ms] ease-[cubic-bezier(0.2,0,0,1)]',
+                      'flex items-center gap-2.5 px-2.5 h-9 rounded-lg text-[13px] transition-all duration-[120ms] ease-[cubic-bezier(0.2,0,0,1)]',
                       isActive
                         ? 'bg-accent/12 text-accent font-medium shadow-none'
-                        : 'text-text-primary hover:text-text-primary hover:bg-black/5 dark:hover:bg-white/5 active:scale-[0.99]'
+                        : 'text-text-primary hover:bg-black/5 dark:hover:bg-white/5 active:scale-[0.99]'
                     )}
                   >
                     <Icon
@@ -150,8 +152,7 @@ export function Sidebar() {
         ))}
       </div>
 
-      {/* Workspace Footer Info */}
-      <div className="p-3 border-t border-border/70 bg-surface-secondary/30">
+      <div className="p-3 border-t border-border/70 bg-surface-secondary/30 shrink-0">
         <div className="flex items-center justify-between text-[11px] text-text-secondary">
           <span className="font-mono tracking-tight">v1.0.0-PROD</span>
           <span className="flex items-center gap-1.5 text-text-primary font-medium">
@@ -160,6 +161,27 @@ export function Sidebar() {
           </span>
         </div>
       </div>
-    </aside>
+    </>
+  );
+
+  return (
+    <>
+      <aside className="hidden lg:flex w-56 h-screen flex-col macos-vibrancy border-r border-border/80 shrink-0 select-none transition-colors duration-200">
+        {content}
+      </aside>
+      {mobileOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <button
+            type="button"
+            aria-label="Close navigation"
+            onClick={onMobileClose}
+            className="absolute inset-0 bg-black/40"
+          />
+          <aside className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col macos-vibrancy border-r border-border/80 shadow-2xl select-none">
+            {content}
+          </aside>
+        </div>
+      )}
+    </>
   );
 }

@@ -45,6 +45,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       }
 
       const roleName = identity.role || 'PLATFORM_SUPER_ADMIN';
+      const permissions = roleName === 'SUPER_ADMIN' || roleName === 'PLATFORM_SUPER_ADMIN'
+        ? ['*:*']
+        : await this.tenantDb.withPlatform(async (tx) => {
+            const rows = await tx.query<{ permission_key: string }>(
+              `SELECT p.permission_key
+               FROM platform.platform_role_permissions rpp
+               JOIN platform.platform_roles r ON r.id = rpp.role_id
+               JOIN platform.platform_permissions p ON p.id = rpp.permission_id
+               WHERE r.role_key = $1`,
+              [roleName],
+            );
+            return rows.map((row) => row.permission_key);
+          });
       return {
         id: identity.id,
         email: identity.email,
@@ -53,7 +66,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         tenantId: '',
         businessId: '',
         roles: [roleName],
-        permissions: ['*:*'],
+        permissions,
         platformAdmin: true,
       };
     }

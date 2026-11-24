@@ -12,6 +12,8 @@ import { PlatformController } from './platform.controller';
 import { PlatformBusinessRegistrationController } from './platform-business-registration.controller';
 import { PlatformBusinessRegistrationService } from './platform-business-registration.service';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { PlatformPermissionsGuard } from '../common/guards/platform-permissions.guard';
+import { PlatformSuperAdminGuard } from '../common/guards/platform-super-admin.guard';
 
 @Global()
 @Module({
@@ -28,6 +30,8 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
     TenantLoggerInterceptor,
     PlatformBusinessRegistrationService,
     PermissionsGuard,
+    PlatformPermissionsGuard,
+    PlatformSuperAdminGuard,
   ],
   exports: [
     TenantDatabaseService,
@@ -41,6 +45,8 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
     TenantLoggerInterceptor,
     PlatformBusinessRegistrationService,
     PermissionsGuard,
+    PlatformPermissionsGuard,
+    PlatformSuperAdminGuard,
   ],
 })
 export class TenancyModule {}

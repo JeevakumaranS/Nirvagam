@@ -72,7 +72,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               firstName: profile.firstName,
               lastName: profile.lastName,
               roles: profile.userRoles?.map((ur: any) => ur.role?.name || ur.role || ur) || [],
-              permissions: [],
+              permissions: profile.permissions || [],
               platformAdmin: Boolean(profile.platformAdmin),
               mustChangePassword: Boolean(profile.mustChangePassword),
             });

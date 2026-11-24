@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { useAuth } from '@/lib/auth-context';
 import { useToast } from '@/components/ui/toast';
 import { Lock, Mail, ArrowRight, ShieldCheck, Sparkles } from 'lucide-react';
@@ -92,12 +93,11 @@ export default function LoginPage() {
             autoFocus
           />
 
-          <Input
+          <PasswordInput
             label="Password"
-            type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••••••"
+            placeholder="Enter your Nirvagam account password"
             prefixIcon={<Lock className="w-3.5 h-3.5" />}
           />
 

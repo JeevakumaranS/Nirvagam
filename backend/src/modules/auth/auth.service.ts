@@ -305,9 +305,10 @@ export class AuthService {
         throw new UnauthorizedException('Invalid email or password');
       }
 
-      const roleName = platformAdmin.role || (platformAdmin.is_super_admin ? 'PLATFORM_SUPER_ADMIN' : 'PLATFORM_SUPPORT_ADMIN');
+      // Legacy super-admin identities may have a null role; preserve their Super Admin identity.
+      const roleName = platformAdmin.role || 'SUPER_ADMIN';
       const roles = [roleName];
-      const permissions = ['*:*'];
+      const permissions = await this.getPlatformPermissions(roleName, platformAdmin.is_super_admin);
       const payload: JwtPayload = {
         sub: platformAdmin.id,
         email: platformAdmin.email,
@@ -466,7 +467,7 @@ export class AuthService {
           tenantId: '',
           businessId: '',
           roles: [roleName],
-          permissions: ['*:*'],
+          permissions: await this.getPlatformPermissions(roleName, roleName === 'PLATFORM_SUPER_ADMIN'),
           platformAdmin: true,
         });
       }
@@ -580,6 +581,7 @@ export class AuthService {
       }
 
       const roleName = identity.role || 'PLATFORM_SUPER_ADMIN';
+      const permissions = await this.getPlatformPermissions(roleName, roleName === 'PLATFORM_SUPER_ADMIN');
       return {
         id: identity.id,
         email: identity.email,
@@ -589,6 +591,7 @@ export class AuthService {
         avatarUrl: null,
         tenant: null,
         userRoles: [{ role: { name: roleName } }],
+        permissions,
         branchAssignments: [],
         createdAt: identity.created_at,
         platformAdmin: true,
@@ -665,5 +668,16 @@ export class AuthService {
       tokenType: 'Bearer',
       expiresIn: 900, // 15 mins in seconds
     };
+  }
+
+  private async getPlatformPermissions(role: string, isSuperAdmin = false): Promise<string[]> {
+    if (isSuperAdmin || role === 'PLATFORM_SUPER_ADMIN' || role === 'SUPER_ADMIN') return ['*:*'];
+    const rows = await this.tenantDb.withPlatform((tx) => tx.query<{ permission_key: string }>(
+      `SELECT p.permission_key FROM platform.platform_role_permissions rpp
+       JOIN platform.platform_roles r ON r.id = rpp.role_id
+       JOIN platform.platform_permissions p ON p.id = rpp.permission_id
+       WHERE r.role_key = $1`, [role]
+    ));
+    return rows.map((row) => row.permission_key);
   }
 }

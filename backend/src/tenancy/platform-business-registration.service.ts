@@ -4,6 +4,7 @@ import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { TenantDatabaseService, TenantTx } from './tenant-database.service';
 import { SaveBusinessProfileDto, SUPPORTED_BUSINESS_MODULES } from './dto/save-business-profile.dto';
+import { AuthUser } from '@nirvagam/shared';
 
 const DEFAULT_MODULES: Record<string, string[]> = {
   RETAIL: ['sales', 'purchases', 'inventory', 'accounting', 'pos', 'gst', 'reports'],
@@ -43,7 +44,7 @@ export class PlatformBusinessRegistrationService {
                 t.slug AS "tenantSlug", bp.legal_name AS "legalName",
                 bp.trade_name AS "tradeName", bp.business_type AS "businessType",
                 bp.industry, bp.gstin, bp.pan, bp.address_line1 AS "addressLine1",
-                bp.address_line2 AS "addressLine2", bp.city, bp.state,
+                bp.address_line2 AS "addressLine2", bp.city, bp.district, bp.state,
                 bp.state_code AS "stateCode", bp.jurisdiction, bp.pincode,
                 bp.financial_year_start AS "financialYearStart",
                 bp.financial_year_end AS "financialYearEnd",
@@ -61,7 +62,7 @@ export class PlatformBusinessRegistrationService {
             `SELECT id, profile_id AS "profileId", code, name,
                     is_head_office AS "isHeadOffice", gstin,
                     address_line1 AS "addressLine1", address_line2 AS "addressLine2",
-                    city, state, state_code AS "stateCode", pincode
+                    city, district, state, state_code AS "stateCode", pincode
              FROM platform.business_branches
              WHERE profile_id = ANY($1::uuid[])
              ORDER BY is_head_office DESC, name;`,
@@ -115,7 +116,7 @@ export class PlatformBusinessRegistrationService {
     };
   }
 
-  async create(dto: SaveBusinessProfileDto) {
+  async create(dto: SaveBusinessProfileDto, actor?: AuthUser) {
     if (!dto.username || !dto.temporaryPassword) {
       throw new BadRequestException('Owner username and temporary password are required for new business registration');
     }
@@ -134,29 +135,28 @@ export class PlatformBusinessRegistrationService {
           throw new NotFoundException('Tenant not found');
         }
       } else {
-        const firstTenant = await tx.queryOne<{ id: string }>('SELECT id FROM platform.tenants ORDER BY created_at ASC LIMIT 1;');
-        if (firstTenant) {
-          tenantId = firstTenant.id;
-        } else {
-          const newTenant = await tx.queryOne<{ id: string }>(
-            `INSERT INTO platform.tenants (slug, display_name, schema_name, status)
-             VALUES ('org-' || substr(gen_random_uuid()::text, 1, 8), $1, 't_' || substr(gen_random_uuid()::text, 1, 8), 'active')
-             RETURNING id;`,
-            [dto.tradeName.trim()]
-          );
-          tenantId = newTenant!.id;
-        }
+        // Every platform business registration gets its own tenant record.
+        // Reusing the oldest tenant would merge unrelated businesses and break
+        // the tenant boundary required by the future Tenant Admin integration.
+        const newTenant = await tx.queryOne<{ id: string }>(
+          `INSERT INTO platform.tenants (slug, display_name, schema_name, status, metadata)
+           VALUES ('org-' || substr(gen_random_uuid()::text, 1, 8), $1,
+             't_' || substr(gen_random_uuid()::text, 1, 8), 'active', $2::jsonb)
+           RETURNING id;`,
+          [dto.tradeName.trim(), JSON.stringify({ source: 'platform_business_registration' })]
+        );
+        tenantId = newTenant!.id;
       }
 
       const profile = await tx.queryOne<{ id: string }>(
         `INSERT INTO platform.business_profiles (
           tenant_id, legal_name, trade_name, business_type, industry, gstin, pan,
-          address_line1, address_line2, city, state, state_code, jurisdiction, pincode,
+          address_line1, address_line2, city, district, state, state_code, jurisdiction, pincode,
           financial_year_start, financial_year_end, invoice_prefix, currency, tax_settings,
           logo_url, digital_signature_url, enabled_modules
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
-          $18, $19::jsonb, $20, $21, $22::jsonb
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
+          $19, $20::jsonb, $21, $22, $23::jsonb
         ) RETURNING id;`,
         this.profileValues({ ...dto, tenantId })
       );
@@ -166,12 +166,15 @@ export class PlatformBusinessRegistrationService {
         await this.updateTenantPlan(tx, tenantId!, dto.planId);
       }
       await this.syncOwnerAccount(tx, profile!.id, tenantId!, dto, true);
+      await tx.execute(`INSERT INTO platform.platform_audit_log (actor_id, action, target_type, target_id, metadata)
+        VALUES ($1, 'BUSINESS_REGISTERED', 'TENANT', $2, $3)`,
+        [actor?.id || null, tenantId, JSON.stringify({ profileId: profile!.id, tradeName: dto.tradeName })]);
 
       return { id: profile!.id };
     });
   }
 
-  async update(profileId: string, dto: SaveBusinessProfileDto) {
+  async update(profileId: string, dto: SaveBusinessProfileDto, actor?: AuthUser) {
     this.validateImage(dto.logoUrl, 'Logo');
     this.validateImage(dto.digitalSignatureUrl, 'Digital signature');
     this.validateFinancialYear(dto);
@@ -194,10 +197,10 @@ export class PlatformBusinessRegistrationService {
         `UPDATE platform.business_profiles SET
           legal_name = $2, trade_name = $3, business_type = $4, industry = $5,
           gstin = $6, pan = $7, address_line1 = $8, address_line2 = $9,
-          city = $10, state = $11, state_code = $12, jurisdiction = $13,
-          pincode = $14, financial_year_start = $15, financial_year_end = $16,
-          invoice_prefix = $17, currency = $18, tax_settings = $19::jsonb,
-          logo_url = $20, digital_signature_url = $21, enabled_modules = $22::jsonb,
+          city = $10, district = $11, state = $12, state_code = $13, jurisdiction = $14,
+          pincode = $15, financial_year_start = $16, financial_year_end = $17,
+          invoice_prefix = $18, currency = $19, tax_settings = $20::jsonb,
+          logo_url = $21, digital_signature_url = $22, enabled_modules = $23::jsonb,
           updated_at = NOW()
          WHERE id = $1;`,
         [profileId, ...this.profileValues(dto).slice(1)]
@@ -208,15 +211,18 @@ export class PlatformBusinessRegistrationService {
         await this.updateTenantPlan(tx, dto.tenantId, dto.planId);
       }
       await this.syncOwnerAccount(tx, profileId, dto.tenantId, dto, false);
+      await tx.execute(`INSERT INTO platform.platform_audit_log (actor_id, action, target_type, target_id, metadata)
+        VALUES ($1, 'BUSINESS_PROFILE_UPDATED', 'TENANT', $2, $3)`,
+        [actor?.id || null, dto.tenantId, JSON.stringify({ profileId })]);
 
       return { id: profileId };
     });
   }
 
-  async delete(profileId: string) {
+  async delete(profileId: string, actor?: AuthUser) {
     return this.tenantDb.withPlatform(async (tx) => {
-      const existing = await tx.queryOne<{ id: string }>(
-        'SELECT id FROM platform.business_profiles WHERE id = $1;',
+      const existing = await tx.queryOne<{ id: string; tenantId: string }>(
+        'SELECT id, tenant_id AS "tenantId" FROM platform.business_profiles WHERE id = $1;',
         [profileId]
       );
       if (!existing) {
@@ -224,6 +230,9 @@ export class PlatformBusinessRegistrationService {
       }
       await tx.execute('DELETE FROM platform.business_branches WHERE profile_id = $1;', [profileId]);
       await tx.execute('DELETE FROM platform.business_profiles WHERE id = $1;', [profileId]);
+      await tx.execute(`INSERT INTO platform.platform_audit_log (actor_id, action, target_type, target_id, metadata)
+        VALUES ($1, 'BUSINESS_PROFILE_DELETED', 'TENANT', $2, $3)`,
+        [actor?.id || null, existing.tenantId, JSON.stringify({ profileId })]);
       return { success: true };
     });
   }
@@ -240,6 +249,7 @@ export class PlatformBusinessRegistrationService {
       dto.addressLine1.trim(),
       dto.addressLine2?.trim() || null,
       dto.city.trim(),
+      dto.district?.trim() || null,
       dto.state.trim(),
       dto.stateCode.trim(),
       dto.jurisdiction?.trim() || null,
@@ -483,8 +493,8 @@ export class PlatformBusinessRegistrationService {
       await tx.execute(
         `INSERT INTO platform.business_branches (
           profile_id, code, name, is_head_office, gstin, address_line1, address_line2,
-          city, state, state_code, pincode
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);`,
+          city, district, state, state_code, pincode
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);`,
         [
           profileId,
           branch.code.trim().toUpperCase(),
@@ -494,6 +504,7 @@ export class PlatformBusinessRegistrationService {
           branch.addressLine1.trim(),
           branch.addressLine2?.trim() || null,
           branch.city.trim(),
+          branch.district?.trim() || null,
           branch.state.trim(),
           branch.stateCode.trim(),
           branch.pincode.trim(),
@@ -552,6 +563,10 @@ export class PlatformBusinessRegistrationService {
   }
 
   private validateFinancialYear(dto: SaveBusinessProfileDto) {
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+    if (!datePattern.test(dto.financialYearStart) || !datePattern.test(dto.financialYearEnd)) {
+      throw new BadRequestException('Financial year dates must use the YYYY-MM-DD format');
+    }
     if (new Date(dto.financialYearEnd) <= new Date(dto.financialYearStart)) {
       throw new BadRequestException('Financial year end must be after its start date');
     }

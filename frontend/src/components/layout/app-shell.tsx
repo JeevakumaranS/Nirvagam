@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { Sidebar } from './sidebar';
 import { Topbar } from './topbar';
@@ -11,6 +11,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { user, tenant, loading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const isAuthPage = pathname === '/login' || pathname === '/register';
   const isChangePasswordPage = pathname === '/change-password';
@@ -19,7 +20,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     user?.platformAdmin ||
     user?.roles?.some((r) => r === 'SUPER_ADMIN' || r.startsWith('PLATFORM_'))
   );
-  const platformHome = '/platform/business-registration';
+  const platformHome = user?.roles?.some((role) => role === 'SUPER_ADMIN' || role === 'PLATFORM_SUPER_ADMIN')
+    ? '/platform/dashboard'
+    : user?.permissions?.includes('support_requests:view')
+      ? '/platform/dashboard'
+      : user?.permissions?.some((permission) => ['payments:view', 'subscriptions:view'].includes(permission))
+        ? '/platform/finance'
+        : '/platform/business-registration';
+  const isPlatformSuperAdmin = Boolean(
+    user?.roles?.some((role) => role === 'SUPER_ADMIN' || role === 'PLATFORM_SUPER_ADMIN')
+  );
+  const platformPathPermission: Record<string, string> = {
+    '/platform/dashboard': 'platform_dashboard:view',
+    '/platform/business-registration': 'platform_tenants:view',
+    '/platform/support': 'support_requests:view',
+    '/platform/subscriptions': 'subscriptions:view',
+    '/platform/finance': 'payments:view',
+    '/platform/audit-logs': 'activity_logs:view',
+    '/platform/system-roles': 'platform_roles:view',
+    '/platform/administrators': 'platform_users:manage',
+  };
 
   useEffect(() => {
     if (!loading && !user && !isAuthPage) {
@@ -37,7 +57,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (!loading && user && !isPlatformAdmin && pathname.startsWith('/platform')) {
       router.replace('/dashboard');
     }
-  }, [loading, user, tenant, isAuthPage, isChangePasswordPage, isPlatformAdmin, pathname, router]);
+    if (!loading && isPlatformAdmin && pathname.startsWith('/platform')) {
+      const matched = Object.keys(platformPathPermission).find((path) => pathname === path || pathname.startsWith(`${path}/`));
+      const permission = matched ? platformPathPermission[matched] : undefined;
+      const superAdminOnly = matched === '/platform/system-roles' || matched === '/platform/administrators';
+      const hasAccess = superAdminOnly
+        ? isPlatformSuperAdmin
+        : !permission || isPlatformSuperAdmin || user?.permissions?.includes(permission);
+      if (!hasAccess) router.replace(platformHome);
+    }
+  }, [loading, user, tenant, isAuthPage, isChangePasswordPage, isPlatformAdmin, pathname, router, platformHome]);
 
   if (isAuthPage || isChangePasswordPage) {
     return <main className="min-h-screen bg-background">{children}</main>;
@@ -64,10 +93,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar />
+      <Sidebar
+        mobileOpen={mobileNavOpen}
+        onMobileClose={() => setMobileNavOpen(false)}
+      />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <Topbar />
-        <main className="flex-1 overflow-y-auto p-6 page-transition">
+        <Topbar onOpenMobileNav={() => setMobileNavOpen(true)} />
+        <main className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 lg:p-6 page-transition">
           {children}
         </main>
       </div>
