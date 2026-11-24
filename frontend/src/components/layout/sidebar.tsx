@@ -75,6 +75,11 @@ export function Sidebar() {
           href: '/platform/system-roles',
           icon: ShieldCheck,
         },
+        {
+          label: 'Platform Administrators',
+          href: '/platform/administrators',
+          icon: Users2,
+        },
       ],
     },
   ];

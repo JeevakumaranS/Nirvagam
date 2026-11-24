@@ -15,7 +15,7 @@
     "prisma:seed": "ts-node prisma/seed.ts",
     "tenant:provision": "ts-node src/cli/tenant-cli.ts provision",
     "tenant:migrate": "ts-node src/cli/tenant-cli.ts migrate",
-    "super-admin:create": "ts-node src/cli/create-super-admin.ts",
+    "super-admin:create": "ts-node src/account-creation/create-super-admin.ts",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage"
