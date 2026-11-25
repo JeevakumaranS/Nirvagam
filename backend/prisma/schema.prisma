@@ -434,7 +434,12 @@ model Product {
   purchasePrice  Decimal  @default(0) @map("purchase_price") @db.Decimal(15, 2)
   salesPrice     Decimal  @default(0) @map("sales_price") @db.Decimal(15, 2)
   mrp            Decimal  @default(0) @db.Decimal(15, 2)
+  wholesalePrice Decimal  @default(0) @map("wholesale_price") @db.Decimal(15, 2)
+  retailPrice    Decimal  @default(0) @map("retail_price") @db.Decimal(15, 2)
   minStockLevel  Decimal  @default(0) @map("min_stock_level") @db.Decimal(15, 2)
+  reorderLevel   Decimal  @default(0) @map("reorder_level") @db.Decimal(15, 2)
+  imageUrl       String?  @map("image_url")
+  trackingMode   String   @default("NONE") @map("tracking_mode")
   isTaxInclusive Boolean  @default(false) @map("is_tax_inclusive")
   isActive       Boolean  @default(true) @map("is_active")
   createdAt      DateTime @default(now()) @map("created_at")
@@ -571,6 +576,8 @@ model StockBalance {
 }
 
 enum StockMovementType {
+  MANUAL_IN
+  MANUAL_OUT
   IN_PURCHASE
   OUT_SALE
   IN_TRANSFER
@@ -591,6 +598,11 @@ model StockMovement {
   totalCost   Decimal           @map("total_cost") @db.Decimal(15, 2)
   referenceId String?           @map("reference_id") @db.Uuid // Invoice/Bill ID
   notes       String?
+  performedById String?         @map("performed_by_id") @db.Uuid
+  reason      String?
+  batchNumber String?           @map("batch_number")
+  expiryDate  DateTime?         @map("expiry_date")
+  serialNumber String?          @map("serial_number")
   createdAt   DateTime          @default(now()) @map("created_at")
 
   warehouse Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
