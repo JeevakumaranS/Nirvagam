@@ -54,6 +54,7 @@ describe('ReportsService', () => {
     expect(result).toMatchObject({
       salesMtd: 42,
       totalReceivables: 55,
+      customerCount: 1,
       stockValuation: 6,
       liquidCashAndBank: 75,
       recentInvoices: [{
@@ -78,6 +79,11 @@ describe('ReportsService', () => {
       where: expect.objectContaining({ branchId: 'branch-id' }),
       take: 5,
     }));
+    expect(prisma.customer.aggregate).toHaveBeenCalledWith({
+      where: { businessId: 'business-id', isActive: true },
+      _sum: { openingBalance: true },
+      _count: { id: true },
+    });
     expect(prisma.stockBalance.findMany).toHaveBeenCalledWith({
       where: { warehouse: { branchId: 'branch-id' } },
       select: { quantity: true, averageCost: true },

@@ -1,10 +1,11 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsNotEmpty, IsNumber, IsOptional, IsString, Length, Matches, MaxLength, ValidateIf } from 'class-validator';
 
 export class CreateCustomerDto {
   @ApiProperty({ example: 'Kavitha Silks & Textiles' })
   @IsString()
   @IsNotEmpty()
+  @MaxLength(50)
   name!: string;
 
   @ApiProperty({ example: 'Kavitha Silks Pvt Ltd', required: false })
@@ -17,14 +18,18 @@ export class CreateCustomerDto {
   @IsOptional()
   email?: string;
 
-  @ApiProperty({ example: '+91 9842109876' })
+  @ApiProperty({ example: '9842109876' })
   @IsString()
   @IsNotEmpty()
+  @Length(10, 10)
+  @Matches(/^\d{10}$/)
   phone!: string;
 
   @ApiProperty({ example: '33AABCK1234F1Z9', required: false })
   @IsString()
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined && value !== null && value !== '')
+  @Length(15, 15)
+  @Matches(/^[A-Z0-9]{15}$/i)
   gstin?: string;
 
   @ApiProperty({ example: 'AABCK1234F', required: false })
@@ -32,30 +37,31 @@ export class CreateCustomerDto {
   @IsOptional()
   pan?: string;
 
-  @ApiProperty({ example: 'Cross Cut Road' })
+  @ApiProperty({ example: 'Cross Cut Road', required: false })
   @IsString()
-  @IsNotEmpty()
-  billingStreet!: string;
+  @IsOptional()
+  billingStreet?: string;
 
-  @ApiProperty({ example: 'Coimbatore' })
+  @ApiProperty({ example: 'Coimbatore', required: false })
   @IsString()
-  @IsNotEmpty()
-  billingCity!: string;
+  @IsOptional()
+  @MaxLength(30)
+  billingCity?: string;
 
-  @ApiProperty({ example: 'Tamil Nadu' })
+  @ApiProperty({ example: 'Tamil Nadu', required: false })
   @IsString()
-  @IsNotEmpty()
-  billingState!: string;
+  @IsOptional()
+  billingState?: string;
 
-  @ApiProperty({ example: '33' })
+  @ApiProperty({ example: '33', required: false })
   @IsString()
-  @IsNotEmpty()
-  billingStateCode!: string;
+  @IsOptional()
+  billingStateCode?: string;
 
-  @ApiProperty({ example: '641012' })
+  @ApiProperty({ example: '641012', required: false })
   @IsString()
-  @IsNotEmpty()
-  billingPincode!: string;
+  @IsOptional()
+  billingPincode?: string;
 
   @ApiProperty({ example: 100000.0, required: false })
   @IsNumber()

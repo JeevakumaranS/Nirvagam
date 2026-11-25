@@ -99,6 +99,8 @@ describe('AuthService', () => {
     get: jest.fn((key: string) => {
       if (key === 'JWT_SECRET') return 'test_jwt_secret';
       if (key === 'JWT_REFRESH_SECRET') return 'test_jwt_refresh_secret';
+      if (key === 'JWT_EXPIRES_IN') return '168';
+      if (key === 'JWT_REFRESH_EXPIRES_IN') return '7d';
       return null;
     }),
   };
@@ -178,7 +180,7 @@ describe('AuthService', () => {
       expect(mockJwtService.signAsync).toHaveBeenNthCalledWith(
         1,
         expect.any(Object),
-        expect.objectContaining({ expiresIn: '7d' })
+        expect.objectContaining({ expiresIn: 604800 })
       );
       expect(result).toHaveProperty('expiresIn', 604800);
     });

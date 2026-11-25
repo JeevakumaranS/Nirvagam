@@ -19,6 +19,7 @@ import {
   AuthUser,
 } from '@nirvagam/shared';
 import { TenantContext } from '../../tenancy/tenancy.types';
+import { jwtExpirySecondsFromHours } from './jwt-expiry';
 
 interface LoginTenantRecord {
   id: string;
@@ -456,15 +457,20 @@ export class AuthService {
   private async generateTokens(payload: JwtPayload) {
     const accessSecret = this.configService.get<string>('JWT_SECRET') || 'nirvagam_jwt_super_secret_key_production_grade_at_least_32_characters';
     const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET') || 'nirvagam_jwt_refresh_super_secret_key_at_least_32_characters';
+    const expiresIn = jwtExpirySecondsFromHours(this.configService.get<string>('JWT_EXPIRES_IN'));
+    const refreshExpiresIn = this.configService.get<string>('JWT_REFRESH_EXPIRES_IN');
+    if (!refreshExpiresIn) {
+      throw new Error('JWT_REFRESH_EXPIRES_IN must be configured');
+    }
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwtService.signAsync(payload, {
         secret: accessSecret,
-        expiresIn: this.configService.get<string>('JWT_EXPIRES_IN') || '7d',
+        expiresIn,
       }),
       this.jwtService.signAsync(payload, {
         secret: refreshSecret,
-        expiresIn: this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d',
+        expiresIn: refreshExpiresIn,
       }),
     ]);
 
@@ -472,7 +478,7 @@ export class AuthService {
       accessToken,
       refreshToken,
       tokenType: 'Bearer',
-      expiresIn: 604800,
+      expiresIn,
     };
   }
 

@@ -304,7 +304,10 @@ export class SalesService {
     }
     const businessStateCode = branch.stateCode;
     const customerStateCode =
-      dto.placeOfSupplyCode || customer.shippingStateCode || customer.billingStateCode;
+      dto.placeOfSupplyCode ||
+      customer.shippingStateCode ||
+      customer.billingStateCode ||
+      businessStateCode;
     const additionalCharges = dto.additionalCharges || 0;
     const discountableSubtotal = dto.items.reduce((total, item) => {
       const lineTotal = item.quantity * item.unitPrice;

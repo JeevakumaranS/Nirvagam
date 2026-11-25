@@ -56,7 +56,7 @@ export class ReportsService {
         _count: { id: true },
       }),
       this.prisma.customer.aggregate({
-        where: { businessId },
+        where: { businessId, isActive: true },
         _sum: { openingBalance: true },
         _count: { id: true },
       }),

@@ -75,7 +75,8 @@ export class PurchasesService {
       throw new BadRequestException('Default warehouse required for stock intake');
     }
 
-    const isInterState = branch.stateCode !== supplier.stateCode;
+    const supplierStateCode = supplier.stateCode || branch.stateCode;
+    const isInterState = branch.stateCode !== supplierStateCode;
 
     // Calculate totals
     let taxableAmount = 0;
