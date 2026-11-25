@@ -1,324 +1,46 @@
 'use client';
-
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Modal } from '@/components/ui/modal';
 import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs } from '@/components/ui/tabs';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableEmptyState } from '@/components/ui/table';
 import { useToast } from '@/components/ui/toast';
-import { Layers, Plus, Search, RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { AlertTriangle, Boxes, ClipboardList, Package, Plus, RefreshCw } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 
+type Tab = 'overview' | 'products' | 'levels' | 'movements' | 'adjustments' | 'transfers' | 'warehouses' | 'batch' | 'reports';
+const tabs = ['overview','products','levels','movements','adjustments','transfers','warehouses','batch','reports'].map(id => ({ id, label: id === 'levels' ? 'Stock Levels' : id === 'batch' ? 'Batch & Expiry' : id[0].toUpperCase() + id.slice(1) }));
+const money = (n: any) => `₹ ${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 export default function InventoryPage() {
-  const [products, setProducts] = useState<any[]>([]);
-  const [units, setUnits] = useState<any[]>([]);
-  const [taxRates, setTaxRates] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-
-  const [formData, setFormData] = useState({
-    name: '',
-    sku: '',
-    barcode: '',
-    hsnCode: '',
-    purchasePrice: 0,
-    salesPrice: 0,
-    mrp: 0,
-    minStockLevel: 10,
-    openingStock: 0,
-    unitId: '',
-    taxRateId: '',
-  });
-
-  const { toast } = useToast();
-
-  const loadData = async () => {
-    try {
-      setLoading(true);
-      const [prodRes, unitRes, taxRes] = await Promise.all([
-        apiFetch('/products', { params: { search } }),
-        apiFetch('/products/meta/units'),
-        apiFetch('/products/meta/tax-rates'),
-      ]);
-
-      setProducts(prodRes?.data || []);
-      setUnits(unitRes || []);
-      setTaxRates(taxRes || []);
-
-      if (unitRes?.[0]?.id && !formData.unitId) {
-        setFormData((prev) => ({ ...prev, unitId: unitRes[0].id }));
-      }
-      if (taxRes?.[0]?.id && !formData.taxRateId) {
-        setFormData((prev) => ({ ...prev, taxRateId: taxRes[0].id }));
-      }
-    } catch (err: any) {
-      toast({ type: 'error', title: 'Error', message: err.message });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadData();
-  }, [search]);
-
-  const handleCreateProduct = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.name || !formData.sku) {
-      toast({ type: 'warning', title: 'Required Fields', message: 'Name and SKU are mandatory.' });
-      return;
-    }
-
-    try {
-      setSubmitting(true);
-      await apiFetch('/products', {
-        method: 'POST',
-        body: JSON.stringify({
-          ...formData,
-          purchasePrice: Number(formData.purchasePrice),
-          salesPrice: Number(formData.salesPrice),
-          mrp: Number(formData.mrp || formData.salesPrice),
-          minStockLevel: Number(formData.minStockLevel),
-          openingStock: Number(formData.openingStock),
-        }),
-      });
-
-      toast({ type: 'success', title: 'Product Added', message: `${formData.name} added to catalog.` });
-      setIsModalOpen(false);
-      setFormData({
-        name: '',
-        sku: '',
-        barcode: '',
-        hsnCode: '',
-        purchasePrice: 0,
-        salesPrice: 0,
-        mrp: 0,
-        minStockLevel: 10,
-        openingStock: 0,
-        unitId: units[0]?.id || '',
-        taxRateId: taxRates[0]?.id || '',
-      });
-      loadData();
-    } catch (err: any) {
-      toast({ type: 'error', title: 'Failed to create product', message: err.message });
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold text-text-primary">Inventory & Product Catalog</h2>
-          <p className="text-xs text-text-secondary mt-0.5">
-            Multi-branch stock balances, HSN codes, GST tax rates and low-stock reorder monitoring.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="secondary" onClick={loadData} icon={<RefreshCw className="w-3.5 h-3.5" />}>
-            Refresh
-          </Button>
-          <Button
-            size="sm"
-            variant="primary"
-            onClick={() => setIsModalOpen(true)}
-            icon={<Plus className="w-3.5 h-3.5" />}
-          >
-            Add Product
-          </Button>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-2 max-w-sm">
-        <Input
-          placeholder="Search by name, SKU or barcode..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          prefixIcon={<Search className="w-3.5 h-3.5" />}
-        />
-      </div>
-
-      {loading ? (
-        <div className="space-y-2">
-          <Skeleton className="h-9 w-full" />
-          <Skeleton className="h-12 w-full" />
-        </div>
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>SKU</TableHead>
-              <TableHead>Product Name</TableHead>
-              <TableHead>HSN Code</TableHead>
-              <TableHead>GST Slab</TableHead>
-              <TableHead className="text-right">Cost Price</TableHead>
-              <TableHead className="text-right">Sales Price</TableHead>
-              <TableHead className="text-right">Available Stock</TableHead>
-              <TableHead className="text-center">Stock Status</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {products.length === 0 ? (
-              <TableEmptyState message="No products in catalog. Click 'Add Product' to create your first stock item." />
-            ) : (
-              products.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell className="font-mono text-accent font-semibold">{p.sku}</TableCell>
-                  <TableCell className="font-medium text-text-primary">{p.name}</TableCell>
-                  <TableCell className="font-mono text-text-secondary">{p.hsnCode || '-'}</TableCell>
-                  <TableCell>
-                    <Badge size="sm" variant="neutral">{p.taxRate?.name || '18%'}</Badge>
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-xs text-text-secondary">
-                    ₹ {Number(p.purchasePrice).toFixed(2)}
-                  </TableCell>
-                  <TableCell className="text-right font-mono font-semibold text-text-primary">
-                    ₹ {Number(p.salesPrice).toFixed(2)}
-                  </TableCell>
-                  <TableCell className="text-right font-mono font-semibold">
-                    {p.totalStock} {p.unit?.symbol || 'PCS'}
-                  </TableCell>
-                  <TableCell className="text-center">
-                    {p.totalStock <= 0 ? (
-                      <Badge size="sm" variant="danger">Out of Stock</Badge>
-                    ) : p.isLowStock ? (
-                      <Badge size="sm" variant="warning">Low Stock</Badge>
-                    ) : (
-                      <Badge size="sm" variant="success">Healthy</Badge>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      )}
-
-      {/* Add Product Modal */}
-      <Modal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title="Add New Catalog Product"
-        description="Creates product variant and initializes warehouse stock balance."
-      >
-        <form onSubmit={handleCreateProduct} className="space-y-3">
-          <Input
-            label="Product Name *"
-            value={formData.name}
-            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-            placeholder="e.g. Slim Fit Denim Jeans"
-            required
-          />
-
-          <div className="grid grid-cols-2 gap-2.5">
-            <Input
-              label="SKU (Unique) *"
-              value={formData.sku}
-              onChange={(e) => setFormData({ ...formData, sku: e.target.value.toUpperCase() })}
-              placeholder="e.g. JEANS-SLIM-01"
-              required
-            />
-            <Input
-              label="Barcode / EAN"
-              value={formData.barcode}
-              onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
-              placeholder="e.g. 890123456789"
-            />
-          </div>
-
-          <div className="grid grid-cols-3 gap-2.5">
-            <Input
-              label="HSN Code"
-              value={formData.hsnCode}
-              onChange={(e) => setFormData({ ...formData, hsnCode: e.target.value })}
-              placeholder="e.g. 6203"
-            />
-            <Select
-              label="UOM Unit"
-              value={formData.unitId}
-              onChange={(e) => setFormData({ ...formData, unitId: e.target.value })}
-            >
-              {units.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name} ({u.symbol})
-                </option>
-              ))}
-            </Select>
-            <Select
-              label="GST Slab"
-              value={formData.taxRateId}
-              onChange={(e) => setFormData({ ...formData, taxRateId: e.target.value })}
-            >
-              {taxRates.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </Select>
-          </div>
-
-          <div className="grid grid-cols-3 gap-2.5">
-            <Input
-              label="Purchase Price (₹) *"
-              type="number"
-              step="0.01"
-              value={formData.purchasePrice || ''}
-              onChange={(e) => setFormData({ ...formData, purchasePrice: Number(e.target.value) })}
-              placeholder="0.00"
-              required
-            />
-            <Input
-              label="Sales Price (₹) *"
-              type="number"
-              step="0.01"
-              value={formData.salesPrice || ''}
-              onChange={(e) => setFormData({ ...formData, salesPrice: Number(e.target.value) })}
-              placeholder="0.00"
-              required
-            />
-            <Input
-              label="MRP (₹)"
-              type="number"
-              step="0.01"
-              value={formData.mrp || ''}
-              onChange={(e) => setFormData({ ...formData, mrp: Number(e.target.value) })}
-              placeholder="0.00"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-2.5">
-            <Input
-              label="Min Stock Warning Level"
-              type="number"
-              value={formData.minStockLevel || ''}
-              onChange={(e) => setFormData({ ...formData, minStockLevel: Number(e.target.value) })}
-              placeholder="10"
-            />
-            <Input
-              label="Initial Opening Stock"
-              type="number"
-              value={formData.openingStock || ''}
-              onChange={(e) => setFormData({ ...formData, openingStock: Number(e.target.value) })}
-              placeholder="0"
-            />
-          </div>
-
-          <div className="pt-3 flex justify-end gap-2 border-t border-border">
-            <Button type="button" variant="secondary" onClick={() => setIsModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" loading={submitting}>
-              Save Product
-            </Button>
-          </div>
-        </form>
-      </Modal>
-    </div>
-  );
+  const [tab, setTab] = useState<Tab>('overview'); const [products,setProducts]=useState<any[]>([]); const [balances,setBalances]=useState<any[]>([]); const [movements,setMovements]=useState<any[]>([]); const [warehouses,setWarehouses]=useState<any[]>([]); const [overview,setOverview]=useState<any>({}); const [loading,setLoading]=useState(true); const [search,setSearch]=useState(''); const [modal,setModal]=useState<'product'|'operation'|'transfer'|null>(null); const [submitting,setSubmitting]=useState(false); const [units,setUnits]=useState<any[]>([]); const [taxRates,setTaxRates]=useState<any[]>([]); const {toast}=useToast();
+  const [form,setForm]=useState<any>({name:'',sku:'',barcode:'',hsnCode:'',description:'',purchasePrice:'',mrp:'',retailPrice:'',minStockLevel:'',reorderLevel:'',openingStock:'',unitId:'',taxRateId:'',trackingMode:'NONE'}); const [operation,setOperation]=useState<any>({type:'IN',variantId:'',warehouseId:'',quantity:1,unitCost:0,reason:'',reference:'',batchNumber:'',expiryDate:''}); const [transfer,setTransfer]=useState<any>({variantId:'',fromWarehouseId:'',toWarehouseId:'',quantity:1,reason:''});
+  const load=async()=>{setLoading(true);try{const [p,o,b,m,w,u,t]=await Promise.all([apiFetch('/products',{params:{search,limit:100}}),apiFetch('/products/inventory/overview'),apiFetch('/products/inventory/balances',{params:{search}}),apiFetch('/products/inventory/movements',{params:{search}}),apiFetch('/products/inventory/warehouses'),apiFetch('/products/meta/units'),apiFetch('/products/meta/tax-rates')]);setProducts(p?.data||[]);setOverview(o||{});setBalances(b||[]);setMovements(m||[]);setWarehouses(w||[]);setUnits(u||[]);setTaxRates(t||[]);if(!form.unitId)setForm((x:any)=>({...x,unitId:u?.[0]?.id||'',taxRateId:t?.[0]?.id||''}));}catch(e:any){toast({type:'error',title:'Inventory failed to load',message:e.message});}finally{setLoading(false);}}; useEffect(()=>{load()},[search]);
+  const variants=products.flatMap(p=>(p.variants||[]).map((v:any)=>({...v,productName:p.name}))); const submit=async(url:string,body:any,title:string)=>{try{setSubmitting(true);await apiFetch(url,{method:'POST',body:JSON.stringify(body)});toast({type:'success',title,message:'Balances and movement history updated.'});if(url==='/products')setForm({name:'',sku:'',barcode:'',hsnCode:'',description:'',purchasePrice:'',mrp:'',retailPrice:'',minStockLevel:'',reorderLevel:'',openingStock:'',unitId:units[0]?.id||'',taxRateId:taxRates[0]?.id||'',trackingMode:'NONE'});setModal(null);load()}catch(e:any){toast({type:'error',title:'Operation failed',message:e.message})}finally{setSubmitting(false)}};
+  const numberValue=(value:any,fallback=0)=>value===''||value===undefined||value===null?fallback:Number(value);
+  const create=(e:any)=>{e.preventDefault();if(!form.name.trim()||!form.sku.trim())return toast({type:'warning',title:'Required fields',message:'Product name and SKU are required.'});if(!form.unitId||!form.taxRateId)return toast({type:'warning',title:'Metadata required',message:'Select a unit and GST rate before saving.'});submit('/products',{...form,purchasePrice:numberValue(form.purchasePrice),mrp:numberValue(form.mrp),retailPrice:numberValue(form.retailPrice),minStockLevel:numberValue(form.minStockLevel),reorderLevel:numberValue(form.reorderLevel),openingStock:numberValue(form.openingStock)},'Product created')};
+  const stat=(label:string,value:any,icon:any,tone='text-accent')=><Card><CardContent className="flex items-center gap-3"><div className={`w-9 h-9 rounded-md bg-accent-subtle flex items-center justify-center ${tone}`}>{icon}</div><div><div className="text-[11px] text-text-secondary">{label}</div><div className="text-lg font-semibold text-text-primary">{value}</div></div></CardContent></Card>;
+  return <div className="space-y-4"><div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3"><div><h2 className="text-base font-semibold text-text-primary">Inventory & Stock</h2><p className="text-xs text-text-secondary mt-0.5">Product masters, stock balances, movements and valuation.</p></div><div className="flex gap-2"><Button size="sm" variant="secondary" onClick={load} icon={<RefreshCw className="w-3.5 h-3.5"/>}>Refresh</Button><Button size="sm" variant="primary" onClick={()=>setModal('product')} icon={<Plus className="w-3.5 h-3.5"/>}>Add Product</Button></div></div><Tabs tabs={tabs} activeTab={tab} onChange={id=>setTab(id as Tab)} className="overflow-x-auto"/><div className="max-w-sm"><Input placeholder="Search products, SKU or barcode..." value={search} onChange={e=>setSearch(e.target.value)}/></div>{loading?<div className="space-y-2"><Skeleton className="h-20 w-full"/><Skeleton className="h-48 w-full"/></div>:<>
+    {tab==='overview'&&<div className="space-y-4"><div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{stat('Total products',overview.totalProducts||0,<Package className="w-4 h-4"/>)}{stat('Inventory valuation',money(overview.inventoryValuation),<Boxes className="w-4 h-4"/>)}{stat('Low-stock products',overview.lowStockProducts||0,<AlertTriangle className="w-4 h-4"/>,'text-warning')}{stat('Out of stock',overview.outOfStockProducts||0,<ClipboardList className="w-4 h-4"/>,'text-danger')}</div><Card><CardHeader><CardTitle>Recent stock movements</CardTitle></CardHeader><CardContent className="p-0"><MovementTable rows={overview.recentMovements||[]}/></CardContent></Card></div>}
+    {tab==='products'&&<Table><TableHeader><TableRow><TableHead>SKU</TableHead><TableHead>Product</TableHead><TableHead>GST</TableHead><TableHead className="text-right">Purchase</TableHead><TableHead className="text-right">Retail</TableHead><TableHead className="text-right">Stock</TableHead><TableHead>Status</TableHead></TableRow></TableHeader><TableBody>{products.length?products.map(p=><TableRow key={p.id}><TableCell className="font-mono text-accent">{p.sku}</TableCell><TableCell><div className="font-medium">{p.name}</div><div className="text-[11px] text-text-tertiary">{p.barcode||'No barcode'}</div></TableCell><TableCell>{p.taxRate?.name||'—'}</TableCell><TableCell className="text-right">{money(p.purchasePrice)}</TableCell><TableCell className="text-right">{money(p.retailPrice||p.salesPrice)}</TableCell><TableCell className="text-right font-mono">{Number(p.totalStock||0)} {p.unit?.symbol}</TableCell><TableCell>{p.totalStock<=0?<Badge size="sm" variant="danger">Out</Badge>:p.isLowStock?<Badge size="sm" variant="warning">Low</Badge>:<Badge size="sm" variant="success">Healthy</Badge>}</TableCell></TableRow>):<TableEmptyState message="No products found."/>}</TableBody></Table>}
+    {tab==='levels'&&<Table><TableHeader><TableRow><TableHead>Product</TableHead><TableHead>Branch</TableHead><TableHead>Warehouse</TableHead><TableHead className="text-right">Quantity</TableHead><TableHead className="text-right">Average cost</TableHead><TableHead className="text-right">Valuation</TableHead></TableRow></TableHeader><TableBody>{balances.length?balances.map(b=><TableRow key={b.id}><TableCell>{b.variant.product.name}<div className="text-[11px] text-text-tertiary">{b.variant.product.sku}</div></TableCell><TableCell>{b.warehouse.branch.name}</TableCell><TableCell>{b.warehouse.name}</TableCell><TableCell className="text-right font-mono">{Number(b.quantity)} {b.variant.product.unit?.symbol}</TableCell><TableCell className="text-right">{money(b.averageCost)}</TableCell><TableCell className="text-right font-semibold">{money(Number(b.quantity)*Number(b.averageCost))}</TableCell></TableRow>):<TableEmptyState message="No stock balances found."/>}</TableBody></Table>}
+    {(tab==='movements'||tab==='adjustments'||tab==='transfers'||tab==='batch')&&<div className="space-y-3"><div className="flex justify-end"><Button size="sm" variant="primary" onClick={()=>{if(tab==='transfers')setModal('transfer');else{setOperation({...operation,type:tab==='adjustments'?'ADJUSTMENT':'IN'});setModal('operation')}}} icon={<Plus className="w-3.5 h-3.5"/>}>{tab==='transfers'?'Transfer stock':tab==='adjustments'?'Record adjustment':'Record movement'}</Button></div><MovementTable rows={tab==='transfers'?movements.filter(m=>String(m.type).includes('TRANSFER')):tab==='batch'?movements.filter(m=>m.batchNumber||m.expiryDate||m.serialNumber):movements}/></div>}
+    {tab==='warehouses'&&<Table><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Code</TableHead><TableHead>Branch</TableHead><TableHead>Status</TableHead></TableRow></TableHeader><TableBody>{warehouses.length?warehouses.map(w=><TableRow key={w.id}><TableCell className="font-medium">{w.name}</TableCell><TableCell className="font-mono">{w.code}</TableCell><TableCell>{w.branch.name}</TableCell><TableCell><Badge size="sm" variant={w.isDefault?'success':'neutral'}>{w.isDefault?'Default':'Active'}</Badge></TableCell></TableRow>):<TableEmptyState message="No warehouses configured."/>}</TableBody></Table>}
+    {tab==='reports'&&<div className="grid md:grid-cols-2 gap-3"><Report title="Stock summary & valuation" kind="summary"/><Report title="Low stock report" kind="low-stock"/><Report title="Expiry stock (90 days)" kind="expiry"/><Report title="Dead stock" kind="dead-stock"/></div>}
+  </>}<ProductModal open={modal==='product'} close={()=>setModal(null)} form={form} setForm={setForm} units={units} taxes={taxRates} submit={create} submitting={submitting}/><OperationModal open={modal==='operation'} close={()=>setModal(null)} data={operation} setData={setOperation} variants={variants} warehouses={warehouses} submit={(e:any)=>{e.preventDefault();submit('/products/inventory/operations',operation,'Stock movement recorded')}} submitting={submitting}/><TransferModal open={modal==='transfer'} close={()=>setModal(null)} data={transfer} setData={setTransfer} variants={variants} warehouses={warehouses} submit={(e:any)=>{e.preventDefault();submit('/products/inventory/transfers',transfer,'Stock transferred')}} submitting={submitting}/></div>;
 }
+
+function MovementTable({rows}:{rows:any[]}){return <Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Product</TableHead><TableHead>Warehouse</TableHead><TableHead>Type</TableHead><TableHead className="text-right">Qty</TableHead><TableHead>Reason / reference</TableHead></TableRow></TableHeader><TableBody>{rows?.length?rows.map(m=><TableRow key={m.id}><TableCell>{new Date(m.createdAt).toLocaleString()}</TableCell><TableCell>{m.variant?.product?.name||'—'}</TableCell><TableCell>{m.warehouse?.name||'—'}</TableCell><TableCell><Badge size="sm" variant={String(m.type).includes('OUT')?'danger':'success'}>{m.type}</Badge></TableCell><TableCell className="text-right font-mono">{Number(m.quantity)}</TableCell><TableCell>{m.reason||m.notes||'—'}</TableCell></TableRow>):<TableEmptyState message="No stock movements found."/>}</TableBody></Table>}
+
+function Field({form,setForm,k,label,type='text'}:any){return <Input label={label} type={type} value={form[k]??''} onChange={(e:any)=>setForm({...form,[k]:type==='number'?(e.target.value===''?'':Number(e.target.value)):e.target.value})}/>}
+function ProductModal({open,close,form,setForm,units,taxes,submit,submitting}:any){return <Modal isOpen={open} onClose={close} title="Create inventory product" description="Product master and optional opening stock." maxWidth="2xl"><form onSubmit={submit} className="space-y-3"><Field form={form} setForm={setForm} k="name" label="Product name *"/><div className="grid grid-cols-2 gap-2"><Field form={form} setForm={setForm} k="sku" label="SKU *"/><Field form={form} setForm={setForm} k="barcode" label="Barcode"/></div><div className="grid grid-cols-3 gap-2"><Field form={form} setForm={setForm} k="hsnCode" label="HSN code"/><Select label="Unit *" value={form.unitId} disabled={!units.length} onChange={e=>setForm({...form,unitId:e.target.value})}><option value="">{units.length?'Select unit':'No units configured'}</option>{units.map((x:any)=><option key={x.id} value={x.id}>{x.name} ({x.symbol})</option>)}</Select><Select label="GST rate *" value={form.taxRateId} disabled={!taxes.length} onChange={e=>setForm({...form,taxRateId:e.target.value})}><option value="">{taxes.length?'Select GST rate':'No GST rates configured'}</option>{taxes.map((x:any)=><option key={x.id} value={x.id}>{x.name}</option>)}</Select></div><div className="grid grid-cols-3 gap-2"><Field form={form} setForm={setForm} k="purchasePrice" label="Purchase price" type="number"/><Field form={form} setForm={setForm} k="mrp" label="MRP" type="number"/><Field form={form} setForm={setForm} k="retailPrice" label="Retail price" type="number"/><Field form={form} setForm={setForm} k="reorderLevel" label="Reorder level" type="number"/></div><div className="grid grid-cols-2 gap-2"><Field form={form} setForm={setForm} k="minStockLevel" label="Minimum stock" type="number"/><Field form={form} setForm={setForm} k="openingStock" label="Opening stock" type="number"/></div><div className="grid grid-cols-2 gap-2"><Select label="Batch / expiry / serial tracking" value={form.trackingMode} onChange={e=>setForm({...form,trackingMode:e.target.value})}><option value="NONE">Not tracked</option><option value="BATCH">Batch</option><option value="EXPIRY">Batch & expiry</option><option value="SERIAL">Serial number</option></Select><Field form={form} setForm={setForm} k="imageUrl" label="Product image URL"/></div><Field form={form} setForm={setForm} k="description" label="Description"/><div className="flex justify-end gap-2 border-t border-border pt-3"><Button type="button" onClick={close}>Cancel</Button><Button type="submit" variant="primary" loading={submitting}>Save product</Button></div></form></Modal>}
+
+function OperationModal({open,close,data,setData,variants,warehouses,submit,submitting}:any){return <Modal isOpen={open} onClose={close} title="Record stock movement" description="Movement, balance and valuation update in one transaction."><form onSubmit={submit} className="space-y-3"><Select label="Operation" value={data.type} onChange={e=>setData({...data,type:e.target.value})}><option value="IN">Stock IN</option><option value="OUT">Stock OUT</option><option value="ADJUSTMENT">Adjustment add</option><option value="ADJUSTMENT_SUB">Adjustment subtract</option></Select><Select label="Product" value={data.variantId} onChange={e=>setData({...data,variantId:e.target.value})}><option value="">Select product</option>{variants.map((v:any)=><option key={v.id} value={v.id}>{v.productName} · {v.sku}</option>)}</Select><Select label="Warehouse" value={data.warehouseId} onChange={e=>setData({...data,warehouseId:e.target.value})}><option value="">Select warehouse</option>{warehouses.map((w:any)=><option key={w.id} value={w.id}>{w.name} · {w.branch.name}</option>)}</Select><div className="grid grid-cols-2 gap-2"><Input label="Quantity *" type="number" min="0.01" step="0.01" value={data.quantity} onChange={e=>setData({...data,quantity:Number(e.target.value)})}/><Input label="Unit cost" type="number" min="0" step="0.01" value={data.unitCost} onChange={e=>setData({...data,unitCost:Number(e.target.value)})}/></div><Input label="Reason (required for adjustments)" value={data.reason} onChange={e=>setData({...data,reason:e.target.value})}/><Input label="Reference" value={data.reference} onChange={e=>setData({...data,reference:e.target.value})}/><div className="grid grid-cols-2 gap-2"><Input label="Batch number" value={data.batchNumber} onChange={e=>setData({...data,batchNumber:e.target.value})}/><Input label="Expiry date" type="date" value={data.expiryDate} onChange={e=>setData({...data,expiryDate:e.target.value})}/></div><div className="flex justify-end gap-2"><Button type="button" onClick={close}>Cancel</Button><Button type="submit" variant="primary" loading={submitting}>Record movement</Button></div></form></Modal>}
+
+function TransferModal({open,close,data,setData,variants,warehouses,submit,submitting}:any){return <Modal isOpen={open} onClose={close} title="Transfer stock" description="Moves stock between warehouses without changing business-wide stock."><form onSubmit={submit} className="space-y-3"><Select label="Product" value={data.variantId} onChange={e=>setData({...data,variantId:e.target.value})}><option value="">Select product</option>{variants.map((v:any)=><option key={v.id} value={v.id}>{v.productName} · {v.sku}</option>)}</Select><div className="grid grid-cols-2 gap-2"><Select label="From warehouse" value={data.fromWarehouseId} onChange={e=>setData({...data,fromWarehouseId:e.target.value})}><option value="">Select</option>{warehouses.map((w:any)=><option key={w.id} value={w.id}>{w.name} · {w.branch.name}</option>)}</Select><Select label="To warehouse" value={data.toWarehouseId} onChange={e=>setData({...data,toWarehouseId:e.target.value})}><option value="">Select</option>{warehouses.map((w:any)=><option key={w.id} value={w.id}>{w.name} · {w.branch.name}</option>)}</Select></div><Input label="Quantity *" type="number" min="0.01" step="0.01" value={data.quantity} onChange={e=>setData({...data,quantity:Number(e.target.value)})}/><Input label="Reason / reference" value={data.reason} onChange={e=>setData({...data,reason:e.target.value})}/><div className="flex justify-end gap-2"><Button type="button" onClick={close}>Cancel</Button><Button type="submit" variant="primary" loading={submitting}>Transfer stock</Button></div></form></Modal>}
+function Report({title,kind}:{title:string;kind:string}){const [rows,setRows]=useState<any[]>([]);useEffect(()=>{apiFetch('/products/inventory/reports',{params:{kind}}).then(setRows).catch(()=>undefined)},[kind]);return <Card><CardHeader><CardTitle>{title}</CardTitle></CardHeader><CardContent><div className="text-2xl font-semibold text-text-primary">{rows.length}</div><p className="text-xs text-text-secondary mt-1">Live records from the inventory service.</p></CardContent></Card>}
