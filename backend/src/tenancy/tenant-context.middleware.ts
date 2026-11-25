@@ -8,7 +8,8 @@ import { TenantContext, TenantRecord } from './tenancy.types';
 export class TenantContextMiddleware implements NestMiddleware {
   constructor(private readonly tenantDb: TenantDatabaseService) {}
 
-  use(req: Request, _res: Response, next: NextFunction) {
+  use(req: Request, res: Response, next: NextFunction) {
+    res.setHeader('Cache-Control', 'private, no-store');
     const path = req.path.replace(/^\/api\/v\d+(?=\/)/, '');
     if (
       path.startsWith('/platform') ||

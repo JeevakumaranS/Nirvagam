@@ -27,16 +27,28 @@ export class ReportsService {
 
   async getDashboardKpis(businessId: string, branchId?: string) {
     const branchWhere = branchId ? { branchId } : { branch: { businessId } };
+    const now = new Date();
+    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const nextMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
 
-    const [sales, purchases, customers, suppliers, stockBalances, bankAccounts] = await Promise.all([
+    const salesWhere = {
+      ...branchWhere,
+      status: { notIn: [InvoiceStatus.CANCELLED, InvoiceStatus.DRAFT] },
+      invoiceType: { in: SALES_REPORT_DOCUMENT_TYPES },
+    };
+
+    const [sales, monthlySales, purchases, customers, suppliers, stockBalances, bankAccounts, recentInvoices] = await Promise.all([
       this.prisma.salesInvoice.aggregate({
-        where: {
-          ...branchWhere,
-          status: { notIn: [InvoiceStatus.CANCELLED, InvoiceStatus.DRAFT] },
-          invoiceType: { in: SALES_REPORT_DOCUMENT_TYPES },
-        },
+        where: salesWhere,
         _sum: { grandTotal: true, paidAmount: true, taxableAmount: true },
         _count: { id: true },
+      }),
+      this.prisma.salesInvoice.aggregate({
+        where: {
+          ...salesWhere,
+          invoiceDate: { gte: monthStart, lt: nextMonthStart },
+        },
+        _sum: { grandTotal: true },
       }),
       this.prisma.purchaseInvoice.aggregate({
         where: { ...branchWhere, status: { not: 'CANCELLED' } },
@@ -54,7 +66,11 @@ export class ReportsService {
         _count: { id: true },
       }),
       this.prisma.stockBalance.findMany({
-        where: { warehouse: { branch: { businessId } } },
+        where: {
+          warehouse: branchId
+            ? { branchId }
+            : { branch: { businessId } },
+        },
         select: { quantity: true, averageCost: true },
       }),
       this.prisma.chartOfAccount.findMany({
@@ -64,6 +80,19 @@ export class ReportsService {
         },
         include: {
           journalLines: { select: { debit: true, credit: true } },
+        },
+      }),
+      this.prisma.salesInvoice.findMany({
+        where: salesWhere,
+        orderBy: { invoiceDate: 'desc' },
+        take: 5,
+        select: {
+          id: true,
+          invoiceNumber: true,
+          invoiceDate: true,
+          grandTotal: true,
+          status: true,
+          customer: { select: { name: true } },
         },
       }),
     ]);
@@ -98,6 +127,7 @@ export class ReportsService {
 
     return {
       totalSales,
+      salesMtd: Number(monthlySales._sum.grandTotal || 0),
       totalPurchases,
       totalReceivables,
       totalPayables,
@@ -107,6 +137,14 @@ export class ReportsService {
       purchaseCount: purchases._count.id,
       customerCount: customers._count.id,
       supplierCount: suppliers._count.id,
+      recentInvoices: recentInvoices.map((invoice) => ({
+        id: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        invoiceDate: invoice.invoiceDate,
+        grandTotal: Number(invoice.grandTotal || 0),
+        status: invoice.status,
+        customerName: invoice.customer.name,
+      })),
     };
   }
 

@@ -1,215 +1,273 @@
 'use client';
 
-import React from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useAuth } from '@/lib/auth-context';
 import {
-  TrendingUp,
+  Building,
+  Clock,
   CreditCard,
   Package,
-  Wallet,
-  ArrowUpRight,
-  ArrowDownRight,
   Plus,
+  TrendingUp,
   Users,
-  Building,
-  ShieldAlert,
-  Clock,
+  Wallet,
 } from 'lucide-react';
+import { useAuth } from '@/lib/auth-context';
+import { apiFetch } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableEmptyState,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+
+interface DashboardInvoice {
+  id: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  grandTotal: number;
+  status: string;
+  customerName: string;
+}
+
+interface DashboardData {
+  salesMtd: number;
+  totalReceivables: number;
+  liquidCashAndBank: number;
+  stockValuation: number;
+  invoicesCount: number;
+  purchaseCount: number;
+  customerCount: number;
+  supplierCount: number;
+  recentInvoices: DashboardInvoice[];
+}
+
+const currencyFormatter = new Intl.NumberFormat('en-IN', {
+  style: 'currency',
+  currency: 'INR',
+  minimumFractionDigits: 2,
+});
+
+function formatCurrency(value: number) {
+  return currencyFormatter.format(Number(value) || 0);
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(value));
+}
+
+function statusVariant(status: string): 'success' | 'warning' | 'danger' | 'neutral' {
+  if (status === 'PAID') return 'success';
+  if (status === 'UNPAID' || status === 'PARTIALLY_PAID') return 'warning';
+  if (status === 'OVERDUE' || status === 'CANCELLED') return 'danger';
+  return 'neutral';
+}
 
 export default function DashboardPage() {
   const { user, tenant, activeBusiness } = useAuth();
+  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const kpis = [
-    {
-      title: 'TOTAL SALES (MTD)',
-      value: '₹ 2,45,800.00',
-      change: '+14.2%',
-      isPositive: true,
-      icon: TrendingUp,
-    },
-    {
-      title: 'ACCOUNTS RECEIVABLE',
-      value: '₹ 54,200.00',
-      change: '4 pending',
-      isPositive: false,
-      icon: CreditCard,
-    },
-    {
-      title: 'CASH & BANK BALANCE',
-      value: '₹ 1,82,450.00',
-      change: 'Reconciled',
-      isPositive: true,
-      icon: Wallet,
-    },
-    {
-      title: 'INVENTORY VALUATION',
-      value: '₹ 4,12,000.00',
-      change: '142 SKU items',
-      isPositive: true,
-      icon: Package,
-    },
-  ];
+  const loadDashboard = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await apiFetch<DashboardData>('/reports/dashboard');
+      setDashboard(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load tenant dashboard data.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  const recentInvoices = [
-    { id: 'INV-26/1001', customer: 'Kavitha Silks & Textiles', date: '19 Nov 2026', total: '₹ 18,450.00', status: 'PAID' },
-    { id: 'INV-26/1002', customer: 'Trichy Engineering Works', date: '19 Nov 2026', total: '₹ 32,800.00', status: 'PARTIALLY_PAID' },
-    { id: 'INV-26/1003', customer: 'Salem Agro Traders', date: '18 Nov 2026', total: '₹ 8,900.00', status: 'PAID' },
-    { id: 'INV-26/1004', customer: 'Kongu Hardware Store', date: '17 Nov 2026', total: '₹ 41,200.00', status: 'OVERDUE' },
-  ];
+  useEffect(() => {
+    void loadDashboard();
+  }, [loadDashboard]);
+
+  const kpis = dashboard
+    ? [
+        {
+          title: 'TOTAL SALES (MTD)',
+          value: formatCurrency(dashboard.salesMtd),
+          detail: 'Current calendar month',
+          icon: TrendingUp,
+        },
+        {
+          title: 'ACCOUNTS RECEIVABLE',
+          value: formatCurrency(dashboard.totalReceivables),
+          detail: `${dashboard.customerCount} customers`,
+          icon: CreditCard,
+        },
+        {
+          title: 'CASH & BANK BALANCE',
+          value: formatCurrency(dashboard.liquidCashAndBank),
+          detail: 'From this workspace ledger',
+          icon: Wallet,
+        },
+        {
+          title: 'INVENTORY VALUATION',
+          value: formatCurrency(dashboard.stockValuation),
+          detail: 'Current branch stock',
+          icon: Package,
+        },
+      ]
+    : [];
 
   return (
     <div className="space-y-5">
-      {/* Welcome Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-surface-secondary border border-border rounded-lg shadow-subtle">
+      <div className="flex flex-col justify-between gap-3 rounded-lg border border-border bg-surface-secondary p-4 shadow-subtle sm:flex-row sm:items-center">
         <div>
           <h2 className="text-base font-semibold text-text-primary">
             Welcome, {user?.firstName} {user?.lastName}
           </h2>
-          <p className="text-xs text-text-secondary mt-0.5">
-            Active Entity:{' '}
-            <span className="font-medium text-text-primary">
-              {activeBusiness?.legalName || 'Nirvagam Enterprise'}
-            </span>{' '}
-            • Branch: <span className="font-mono text-text-secondary">{activeBusiness?.branchName || 'HQ'}</span>
+          <p className="mt-0.5 text-xs text-text-secondary">
+            Business: <span className="font-medium text-text-primary">
+              {activeBusiness?.legalName || tenant?.name || 'Your workspace'}
+            </span>
+            {' · '}Branch: <span className="font-mono text-text-secondary">
+              {activeBusiness?.branchName || 'No branch assigned'}
+            </span>
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Link href="/settings/users">
-            <Button size="sm" variant="secondary" icon={<Users className="w-3.5 h-3.5" />}>
+            <Button size="sm" variant="secondary" icon={<Users className="h-3.5 w-3.5" />}>
               Team Members
             </Button>
           </Link>
           <Link href="/settings/business">
-            <Button size="sm" variant="secondary" icon={<Building className="w-3.5 h-3.5" />}>
+            <Button size="sm" variant="secondary" icon={<Building className="h-3.5 w-3.5" />}>
               Configure Entity
             </Button>
           </Link>
-          <Button size="sm" variant="primary" icon={<Plus className="w-3.5 h-3.5" />}>
-            New Tax Invoice
+          <Link href="/sales">
+            <Button size="sm" variant="primary" icon={<Plus className="h-3.5 w-3.5" />}>
+              New Tax Invoice
+            </Button>
+          </Link>
+        </div>
+      </div>
+
+      {error ? (
+        <div className="flex flex-col items-start justify-between gap-3 rounded-lg border border-danger/30 bg-danger/5 p-4 sm:flex-row sm:items-center">
+          <p className="text-sm text-text-primary">{error}</p>
+          <Button size="sm" variant="secondary" onClick={() => void loadDashboard()}>
+            Retry
           </Button>
         </div>
-      </div>
-
-      {/* KPI Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-        {kpis.map((kpi, idx) => {
-          const Icon = kpi.icon;
-          return (
-            <div
-              key={idx}
-              className="p-3.5 bg-background border border-border rounded-lg shadow-subtle hover:border-text-tertiary/40 transition-colors"
-            >
-              <div className="flex items-center justify-between text-text-tertiary">
-                <span className="text-[10px] font-semibold tracking-wider font-mono">
-                  {kpi.title}
-                </span>
-                <Icon className="w-4 h-4 text-text-tertiary" />
-              </div>
-              <div className="mt-2 flex items-baseline justify-between">
-                <span className="text-lg font-semibold text-text-primary font-mono tracking-tight">
-                  {kpi.value}
-                </span>
-              </div>
-              <div className="mt-1 flex items-center gap-1 text-[11px]">
-                {kpi.isPositive ? (
-                  <span className="flex items-center text-emerald-600 dark:text-emerald-400 font-medium">
-                    <ArrowUpRight className="w-3 h-3" />
-                    {kpi.change}
-                  </span>
-                ) : (
-                  <span className="flex items-center text-amber-600 dark:text-amber-400 font-medium">
-                    <Clock className="w-3 h-3" />
-                    {kpi.change}
-                  </span>
-                )}
-                <span className="text-text-tertiary">• vs last cycle</span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Two Column Layout: Recent Invoices & System Verification */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        {/* Recent Invoices Table */}
-        <div className="lg:col-span-2 space-y-2.5">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-semibold text-text-primary uppercase tracking-wider font-mono">
-              Recent Commercial Invoices
-            </h3>
-            <span className="text-xs text-accent hover:underline cursor-pointer">View all invoices</span>
+      ) : loading && !dashboard ? (
+        <div className="rounded-lg border border-border bg-surface p-5 text-sm text-text-secondary">
+          Loading workspace dashboard…
+        </div>
+      ) : dashboard && (
+        <>
+          <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
+            {kpis.map((kpi) => {
+              const Icon = kpi.icon;
+              return (
+                <div
+                  key={kpi.title}
+                  className="rounded-lg border border-border bg-background p-3.5 shadow-subtle transition-colors hover:border-text-tertiary/40"
+                >
+                  <div className="flex items-center justify-between text-text-tertiary">
+                    <span className="font-mono text-[10px] font-semibold tracking-wider">{kpi.title}</span>
+                    <Icon className="h-4 w-4" />
+                  </div>
+                  <p className="mt-2 font-mono text-lg font-semibold tracking-tight text-text-primary">
+                    {kpi.value}
+                  </p>
+                  <p className="mt-1 text-[11px] text-text-tertiary">{kpi.detail}</p>
+                </div>
+              );
+            })}
           </div>
 
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Invoice #</TableHead>
-                <TableHead>Customer</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead className="text-right">Grand Total</TableHead>
-                <TableHead className="text-center">Status</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {recentInvoices.map((inv) => (
-                <TableRow key={inv.id}>
-                  <TableCell className="font-mono text-accent font-medium">{inv.id}</TableCell>
-                  <TableCell className="font-medium">{inv.customer}</TableCell>
-                  <TableCell className="text-text-secondary">{inv.date}</TableCell>
-                  <TableCell className="text-right font-mono font-medium">{inv.total}</TableCell>
-                  <TableCell className="text-center">
-                    <Badge
-                      size="sm"
-                      variant={
-                        inv.status === 'PAID'
-                          ? 'success'
-                          : inv.status === 'PARTIALLY_PAID'
-                          ? 'warning'
-                          : 'danger'
-                      }
-                    >
-                      {inv.status}
-                    </Badge>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+            <div className="space-y-2.5 lg:col-span-2">
+              <div className="flex items-center justify-between">
+                <h3 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-primary">
+                  Recent Sales Invoices
+                </h3>
+                <Link href="/sales" className="text-xs text-accent hover:underline">
+                  View invoices
+                </Link>
+              </div>
 
-        {/* System & Architecture Integrity Card */}
-        <div className="space-y-2.5">
-          <h3 className="text-xs font-semibold text-text-primary uppercase tracking-wider font-mono">
-            System & Compliance Status
-          </h3>
-          <div className="p-4 bg-surface-secondary border border-border rounded-lg space-y-3 text-xs">
-            <div className="flex items-center justify-between pb-2 border-b border-border">
-              <span className="text-text-secondary">Double-Entry Ledger</span>
-              <Badge size="sm" variant="success">Balanced (Dr = Cr)</Badge>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Invoice #</TableHead>
+                    <TableHead>Customer</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead className="text-right">Grand Total</TableHead>
+                    <TableHead className="text-center">Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {dashboard.recentInvoices.length === 0 ? (
+                    <TableEmptyState message="No sales invoices in this workspace yet." />
+                  ) : dashboard.recentInvoices.map((invoice) => (
+                    <TableRow key={invoice.id}>
+                      <TableCell className="font-mono font-medium text-accent">
+                        {invoice.invoiceNumber}
+                      </TableCell>
+                      <TableCell className="font-medium">{invoice.customerName}</TableCell>
+                      <TableCell className="text-text-secondary">{formatDate(invoice.invoiceDate)}</TableCell>
+                      <TableCell className="text-right font-mono font-medium">
+                        {formatCurrency(invoice.grandTotal)}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <Badge size="sm" variant={statusVariant(invoice.status)}>
+                          {invoice.status.replaceAll('_', ' ')}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
-            <div className="flex items-center justify-between pb-2 border-b border-border">
-              <span className="text-text-secondary">GST Calculation</span>
-              <span className="font-mono text-text-primary">TN (33) Intra-state</span>
-            </div>
-            <div className="flex items-center justify-between pb-2 border-b border-border">
-              <span className="text-text-secondary">Multi-Tenant Isolation</span>
-              <Badge size="sm" variant="neutral">Discriminator Enforced</Badge>
-            </div>
-            <div className="flex items-center justify-between pb-2 border-b border-border">
-              <span className="text-text-secondary">Audit Trail Logging</span>
-              <Badge size="sm" variant="success">Active</Badge>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-text-secondary">Fiscal Period</span>
-              <span className="font-mono text-text-primary">FY 2026-2027</span>
+
+            <div className="space-y-2.5">
+              <h3 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-primary">
+                Workspace Activity
+              </h3>
+              <div className="space-y-3 rounded-lg border border-border bg-surface-secondary p-4 text-xs">
+                <div className="flex items-center justify-between border-b border-border pb-2">
+                  <span className="text-text-secondary">Sales invoices</span>
+                  <span className="font-mono font-semibold text-text-primary">{dashboard.invoicesCount}</span>
+                </div>
+                <div className="flex items-center justify-between border-b border-border pb-2">
+                  <span className="text-text-secondary">Purchase bills</span>
+                  <span className="font-mono font-semibold text-text-primary">{dashboard.purchaseCount}</span>
+                </div>
+                <div className="flex items-center justify-between border-b border-border pb-2">
+                  <span className="text-text-secondary">Customers</span>
+                  <span className="font-mono font-semibold text-text-primary">{dashboard.customerCount}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-text-secondary">Suppliers</span>
+                  <span className="font-mono font-semibold text-text-primary">{dashboard.supplierCount}</span>
+                </div>
+                <div className="flex items-center gap-2 border-t border-border pt-3 text-text-tertiary">
+                  <Clock className="h-3.5 w-3.5" />
+                  Values are read from this tenant’s business records.
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }
