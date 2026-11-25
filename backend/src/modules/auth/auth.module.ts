@@ -15,7 +15,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
       useFactory: (config: ConfigService) => ({
         secret: config.get<string>('JWT_SECRET') || 'nirvagam_jwt_super_secret_key_production_grade_at_least_32_characters',
         signOptions: {
-          expiresIn: config.get<string>('JWT_EXPIRES_IN') || '15m',
+          expiresIn: config.get<string>('JWT_EXPIRES_IN') || '7d',
         },
       }),
     }),

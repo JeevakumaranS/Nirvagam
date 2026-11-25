@@ -175,6 +175,12 @@ describe('AuthService', () => {
         expect.objectContaining({ platformAdmin: true, sub: 'platform-identity-1' }),
         expect.any(Object)
       );
+      expect(mockJwtService.signAsync).toHaveBeenNthCalledWith(
+        1,
+        expect.any(Object),
+        expect.objectContaining({ expiresIn: '7d' })
+      );
+      expect(result).toHaveProperty('expiresIn', 604800);
     });
 
     it('should throw UnauthorizedException if user not found', async () => {
