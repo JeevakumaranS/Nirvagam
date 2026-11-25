@@ -178,6 +178,13 @@ export class SaveBusinessProfileDto {
   @IsOptional()
   username?: string;
 
+  @ApiPropertyOptional({ description: 'Business owner full name' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  @IsOptional()
+  ownerName?: string;
+
   @ApiPropertyOptional({ minLength: 8, description: 'One-time password for owner account creation or reset' })
   @IsString()
   @MinLength(8)

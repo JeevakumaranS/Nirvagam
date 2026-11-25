@@ -1,102 +1,68 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import React, { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { apiFetch } from '@/lib/api';
 import { useToast } from '@/components/ui/toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import {
+  ChevronRight,
   ShieldCheck,
   Headphones,
   CreditCard,
   Plus,
-  Users,
-  Search,
-  CheckCircle2,
-  AlertTriangle,
-  X,
   Trash2,
   Check,
-  Lock,
+  Shield,
+  type LucideIcon,
 } from 'lucide-react';
+import { Modal } from '@/components/ui/modal';
 
-interface SystemRole {
+interface Role {
+  id: string;
   key: string;
   name: string;
-  responsibilities: string;
-  description: string;
+  description: string | null;
+  assignedCount: number;
+  isCustom: boolean;
 }
 
-interface PlatformUser {
+interface Permission {
   id: string;
-  identityId: string;
-  email: string;
-  firstName: string | null;
-  lastName: string | null;
-  role: string;
-  isSuperAdmin: boolean;
-  status: string;
-  createdAt: string;
+  key: string;
+  category: string;
+  label: string;
 }
 
-const ROLE_METADATA: Record<
-  string,
-  { icon: any; variant: 'accent' | 'secondary' | 'outline'; color: string; badge: string }
-> = {
+const PROTECTED_PLATFORM_ROLES = new Set(['SUPER_ADMIN', 'PLATFORM_SUPER_ADMIN']);
+
+const ROLE_METADATA: Record<string, { icon: LucideIcon; color: string }> = {
   PLATFORM_SUPER_ADMIN: {
     icon: ShieldCheck,
-    variant: 'accent',
     color: 'text-accent',
-    badge: 'Full SaaS Control',
   },
   SUPER_ADMIN: {
     icon: ShieldCheck,
-    variant: 'accent',
     color: 'text-accent',
-    badge: 'Full SaaS Control',
   },
   PLATFORM_SUPPORT_ADMIN: {
     icon: Headphones,
-    variant: 'secondary',
     color: 'text-blue-500',
-    badge: 'Troubleshooting & Logs',
   },
   PLATFORM_FINANCE_ADMIN: {
     icon: CreditCard,
-    variant: 'secondary',
     color: 'text-emerald-500',
-    badge: 'Billing & Subscriptions',
   },
 };
 
-const SYSTEM_ROLES_DEFAULT: SystemRole[] = [
-  {
-    key: 'PLATFORM_SUPER_ADMIN',
-    name: 'Platform Super Admin',
-    responsibilities: 'Manage entire SaaS platform',
-    description: 'Full administrative governance over tenant organizations, schema provisioning, business profiles, and global platform security.',
-  },
-  {
-    key: 'PLATFORM_SUPPORT_ADMIN',
-    name: 'Platform Support Admin',
-    responsibilities: 'Customer support and troubleshooting',
-    description: 'Operational troubleshooting, tenant health inspections, error diagnosis, and user incident resolution without financial alterations.',
-  },
-  {
-    key: 'PLATFORM_FINANCE_ADMIN',
-    name: 'Platform Finance Admin',
-    responsibilities: 'Subscription and payment management',
-    description: 'Monitors platform revenue, billing transactions, subscription renewals, invoices, and payment provider integrations.',
-  },
-];
-
 export default function SystemRolesPage() {
-  const [roles, setRoles] = useState<SystemRole[]>(SYSTEM_ROLES_DEFAULT);
-  const [users, setUsers] = useState<PlatformUser[]>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [permissions, setPermissions] = useState<Permission[]>([]);
+  const [rolePermissions, setRolePermissions] = useState<Record<string, string[]>>({});
+  const [selectedRole, setSelectedRole] = useState<Role | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [customRolesOpen, setCustomRolesOpen] = useState(false);
@@ -104,23 +70,6 @@ export default function SystemRolesPage() {
   const [roleFormSaving, setRoleFormSaving] = useState(false);
   const [roleForm, setRoleForm] = useState({ name: '', description: '' });
   const { toast } = useToast();
-
-  const loadData = async () => {
-    try {
-      setLoading(true);
-      const res = await apiFetch<{ roles: SystemRole[]; users: PlatformUser[] }>('/platform/system-roles');
-      if (res.roles?.length) setRoles(res.roles);
-      if (res.users) setUsers(res.users);
-    } catch (err: any) {
-      toast({
-        type: 'error',
-        title: 'Could not load system roles',
-        message: err.message || 'Failed to fetch platform user directory',
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
 
   useEffect(() => {
     async function load() {
@@ -275,7 +224,7 @@ export default function SystemRolesPage() {
             </Badge>
           </div>
           <p className="text-[12px] text-text-secondary mt-1">
-            Configure platform role access using the tenant role-and-permission workflow.
+            Configure system-level permissions for platform roles and create custom roles.
           </p>
         </div>
         <Button
@@ -297,7 +246,7 @@ export default function SystemRolesPage() {
           </div>
           <div className="max-h-40 space-y-1 overflow-y-auto lg:max-h-none lg:flex-1">
             {roles.map((role) => {
-              const Icon = roleMeta[role.key]?.icon || Shield;
+              const Icon = ROLE_METADATA[role.key]?.icon || Shield;
               const isSelected = selectedRole?.key === role.key;
               return (
                 <button
@@ -312,7 +261,7 @@ export default function SystemRolesPage() {
                   <div className="flex min-w-0 items-center justify-between gap-2">
                     <span className="flex min-w-0 flex-1 items-center gap-2 text-[13px] font-medium">
                       <Icon
-                        className={`w-4 h-4 shrink-0 ${roleMeta[role.key]?.color || 'text-accent'}`}
+                        className={`w-4 h-4 shrink-0 ${ROLE_METADATA[role.key]?.color || 'text-accent'}`}
                       />
                       <span className="truncate">{role.name}</span>
                     </span>

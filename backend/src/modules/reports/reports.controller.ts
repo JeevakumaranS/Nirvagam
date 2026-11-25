@@ -2,6 +2,7 @@ import { Controller, Get, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ReportsService } from './reports.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { TenantResolverGuard } from '../../tenancy/tenant-resolver.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthUser } from '@nirvagam/shared';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
@@ -9,7 +10,7 @@ import { RequirePermissions } from '../../common/decorators/permissions.decorato
 
 @ApiTags('Business Analytics & Statutory Reports')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, TenantResolverGuard, PermissionsGuard)
 @Controller('reports')
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}

@@ -71,7 +71,25 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       };
     }
 
-    const user = await this.prisma.user.findUnique({
+    if (!payload.tenantId) {
+      throw new UnauthorizedException('Tenant identity is missing from the access token');
+    }
+
+    const tenantRecord = await this.tenantDb.withPlatform((tx) =>
+      tx.queryOne<{ id: string; schema_name: string; status: string }>(
+        `SELECT id, schema_name, status
+         FROM platform.tenants
+         WHERE id::text = $1
+         LIMIT 1;`,
+        [payload.tenantId]
+      )
+    );
+    if (!tenantRecord || tenantRecord.status !== 'active') {
+      throw new UnauthorizedException('Tenant account is no longer active');
+    }
+
+    const tenantPrisma = this.prisma.getClientForSchema(tenantRecord.schema_name);
+    const user = await tenantPrisma.user.findUnique({
       where: { id: payload.sub },
       include: {
         userRoles: {
@@ -93,7 +111,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       },
     });
 
-    if (!user || !user.isActive) {
+    if (!user || !user.isActive || user.tenantId !== tenantRecord.id) {
       throw new UnauthorizedException('User account not found or deactivated');
     }
 
@@ -107,7 +125,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
 
     const defaultBranchId = user.branchAssignments[0]?.branchId || payload.branchId;
-    const passwordState = await this.prisma.$queryRaw<Array<{ mustChangePassword: boolean }>>`
+    const passwordState = await tenantPrisma.$queryRaw<Array<{ mustChangePassword: boolean }>>`
       SELECT must_change_password AS "mustChangePassword"
       FROM users
       WHERE id = ${user.id}::uuid;

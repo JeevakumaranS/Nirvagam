@@ -10,7 +10,7 @@ import { apiFetch } from '@/lib/api';
 import { LockKeyhole } from 'lucide-react';
 
 export default function ChangePasswordPage() {
-  const { user, login } = useAuth();
+  const { user, tenant, login } = useAuth();
   const router = useRouter();
   const { toast } = useToast();
   const [currentPassword, setCurrentPassword] = useState('');
@@ -35,7 +35,7 @@ export default function ChangePasswordPage() {
         }),
       });
       if (user) {
-        await login({ email: user.email, password: newPassword });
+        await login({ email: user.email, password: newPassword, tenantSlug: tenant?.slug });
       }
       toast({ type: 'success', title: 'Password changed', message: 'Your new password is ready to use.' });
       router.replace('/dashboard');

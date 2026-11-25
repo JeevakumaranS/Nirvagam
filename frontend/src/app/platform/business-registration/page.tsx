@@ -14,30 +14,21 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import {
   Building2,
+  Edit3,
   Plus,
   Trash2,
   Upload,
   Search,
-  CheckCircle2,
-  Eye,
-  Store,
-  Layers,
-  MapPin,
-  Calendar,
-  CreditCard,
-  FileText,
   X,
-  Edit3,
   Sliders,
-  ShieldCheck,
   Check,
   ArrowRight,
   Briefcase,
-  ChevronDown,
 } from 'lucide-react';
 import { Modal } from '@/components/ui/modal';
 
 interface Branch {
+  id?: string;
   code: string;
   name: string;
   isHeadOffice: boolean;
@@ -51,42 +42,7 @@ interface Branch {
   pincode: string;
 }
 
-interface Profile {
-  id: string;
-  tenantId: string;
-  tenantName: string;
-  tenantSlug: string;
-  legalName: string;
-  tradeName: string;
-  businessType: BusinessType;
-  industry: IndustryType;
-  gstin: string | null;
-  pan: string | null;
-  addressLine1: string;
-  addressLine2: string | null;
-  city: string;
-  district: string | null;
-  state: string;
-  stateCode: string;
-  jurisdiction: string | null;
-  pincode: string;
-  financialYearStart: string;
-  financialYearEnd: string;
-  invoicePrefix: string;
-  currency: string;
-  taxSettings: Record<string, boolean>;
-  logoUrl: string | null;
-  digitalSignatureUrl: string | null;
-  enabledModules: string[];
-  username: string | null;
-  requirePasswordChange: boolean;
-  branches: Branch[];
-  createdAt: string;
-}
-
 interface RegistrationForm {
-  profileId: string;
-  tenantId: string;
   legalName: string;
   tradeName: string;
   businessType: BusinessType;
@@ -110,6 +66,7 @@ interface RegistrationForm {
   digitalSignatureUrl: string;
   enabledModules: string[];
   branches: Branch[];
+  ownerName: string;
   username: string;
   temporaryPassword: string;
   requirePasswordChange: boolean;
@@ -117,7 +74,6 @@ interface RegistrationForm {
 
 interface Workspace {
   tenants: Array<{ id: string; slug: string; displayName: string; status: string }>;
-  profiles: Profile[];
   supportedModules: string[];
   moduleDefaults: Record<string, string[]>;
 }
@@ -125,6 +81,7 @@ interface Workspace {
 interface RegistrationReceipt {
   tenantId: string;
   tenantSlug: string;
+  ownerName: string;
   ownerEmail: string;
   temporaryPassword: string;
 }
@@ -169,6 +126,22 @@ const MODULE_DESCRIPTIONS: Record<string, string> = {
 
 const REGISTRATION_STEPS = ['IDENTITY', 'STATUTORY', 'TAX_BRANDING', 'BRANCHES', 'MODULES', 'SETTINGS'] as const;
 
+function emptyBranch(): Branch {
+  return {
+    code: '',
+    name: '',
+    isHeadOffice: false,
+    gstin: '',
+    addressLine1: '',
+    addressLine2: '',
+    city: '',
+    district: '',
+    state: 'Tamil Nadu',
+    stateCode: '33',
+    pincode: '',
+  };
+}
+
 const STATE_GST_CODES: Record<string, string> = {
   'JAMMU AND KASHMIR': '01', 'HIMACHAL PRADESH': '02', PUNJAB: '03', CHANDIGARH: '04', UTTARAKHAND: '05',
   HARYANA: '06', DELHI: '07', RAJASTHAN: '08', 'UTTAR PRADESH': '09', BIHAR: '10', SIKKIM: '11',
@@ -191,8 +164,6 @@ function getFinancialYear() {
 function emptyForm(defaultModules: string[] = []): RegistrationForm {
   const fy = getFinancialYear();
   return {
-    profileId: '',
-    tenantId: '',
     legalName: '',
     tradeName: '',
     businessType: BusinessType.PROPRIETORSHIP,
@@ -221,45 +192,30 @@ function emptyForm(defaultModules: string[] = []): RegistrationForm {
     digitalSignatureUrl: '',
     enabledModules: defaultModules.length ? defaultModules : ['sales', 'purchases', 'inventory', 'accounting', 'pos', 'gst', 'reports'],
     branches: [],
+    ownerName: '',
     username: '',
     temporaryPassword: '',
     requirePasswordChange: true,
   };
 }
 
-function dateValue(val?: string) {
-  return val ? val.slice(0, 10) : '';
-}
-
 export default function PlatformBusinessRegistrationPage() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedTypeFilter, setSelectedTypeFilter] = useState('ALL');
-  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('ALL');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [viewingProfile, setViewingProfile] = useState<Profile | null>(null);
+  const [editingTenant, setEditingTenant] = useState<Workspace['tenants'][number] | null>(null);
+  const [originalForm, setOriginalForm] = useState<RegistrationForm | null>(null);
+  const [loadingProfile, setLoadingProfile] = useState(false);
   const [registrationReceipt, setRegistrationReceipt] = useState<RegistrationReceipt | null>(null);
   const [form, setForm] = useState<RegistrationForm>(() => emptyForm());
+  const [branchEditIndex, setBranchEditIndex] = useState<number | null>(null);
   const [activeFormTab, setActiveFormTab] = useState<'IDENTITY' | 'STATUTORY' | 'TAX_BRANDING' | 'BRANCHES' | 'MODULES' | 'SETTINGS'>('IDENTITY');
   const [pinLookupMessage, setPinLookupMessage] = useState('Enter a 6-digit PIN to auto-fill the location.');
   const [branchPinLookupMessage, setBranchPinLookupMessage] = useState('Enter a 6-digit PIN to auto-fill the branch location.');
 
   // Branch draft state
-  const [branchDraft, setBranchDraft] = useState<Branch>({
-    code: '',
-    name: '',
-    isHeadOffice: false,
-    gstin: '',
-    addressLine1: '',
-    addressLine2: '',
-    city: '',
-    district: '',
-    state: 'Tamil Nadu',
-    stateCode: '33',
-    pincode: '',
-  });
+  const [branchDraft, setBranchDraft] = useState<Branch>(emptyBranch);
 
   const { toast } = useToast();
   const { user } = useAuth();
@@ -344,7 +300,6 @@ export default function PlatformBusinessRegistrationPage() {
 
   const loadData = async () => {
     try {
-      setLoading(true);
       const data = await apiFetch<Workspace>('/platform/business-registration');
       setWorkspace(data);
     } catch (err: any) {
@@ -353,8 +308,6 @@ export default function PlatformBusinessRegistrationPage() {
         title: 'Failed to load business registration data',
         message: err.message || 'Please check network connection',
       });
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -364,62 +317,110 @@ export default function PlatformBusinessRegistrationPage() {
 
   const openNewRegistration = () => {
     const defaults = workspace?.moduleDefaults[IndustryType.RETAIL] || [];
-    setForm(emptyForm(defaults));
+    const newForm = emptyForm(defaults);
+    setForm(newForm);
+    setOriginalForm(null);
+    setEditingTenant(null);
+    setBranchEditIndex(null);
+    setBranchDraft(emptyBranch());
     setActiveFormTab('IDENTITY');
     setIsModalOpen(true);
   };
 
-  const openEditRegistration = (profile: Profile) => {
-    setForm({
-      profileId: profile.id,
-      tenantId: profile.tenantId,
-      legalName: profile.legalName,
-      tradeName: profile.tradeName,
-      businessType: profile.businessType,
-      industry: profile.industry,
-      gstin: profile.gstin || '',
-      pan: profile.pan || '',
-      addressLine1: profile.addressLine1,
-      addressLine2: profile.addressLine2 || '',
-      city: profile.city,
-      district: profile.district || '',
-      state: profile.state,
-      stateCode: profile.stateCode,
-      jurisdiction: profile.jurisdiction || '',
-      pincode: profile.pincode,
-      financialYearStart: dateValue(profile.financialYearStart),
-      financialYearEnd: dateValue(profile.financialYearEnd),
-      invoicePrefix: profile.invoicePrefix,
-      currency: profile.currency || 'INR',
-      taxSettings: {
-        gstRegistered: true,
-        compositionScheme: false,
-        eInvoicingEnabled: false,
-        eWayBillEnabled: false,
-        ...(profile.taxSettings || {}),
-      },
-      logoUrl: profile.logoUrl || '',
-      digitalSignatureUrl: profile.digitalSignatureUrl || '',
-      enabledModules: profile.enabledModules || [],
-      branches: profile.branches || [],
-      username: profile.username || '',
-      temporaryPassword: '',
-      requirePasswordChange: profile.requirePasswordChange,
-    });
-    setActiveFormTab('IDENTITY');
-    setIsModalOpen(true);
-  };
-
-  const handleDeleteProfile = async (profileId: string, name: string) => {
-    if (!window.confirm(`Are you sure you want to delete business registration "${name}"?`)) {
+  const handleDeleteTenant = async (tenantId: string, name: string) => {
+    if (!window.confirm(
+      `Permanently delete the tenant workspace "${name}" and all its tenant data and login accounts? This cannot be undone.`
+    )) {
       return;
     }
     try {
-      await apiFetch(`/platform/business-registration/${profileId}`, { method: 'DELETE' });
-      toast({ type: 'success', title: 'Deleted', message: `Business profile "${name}" deleted.` });
+      await apiFetch(`/platform/business-registration/tenants/${tenantId}`, { method: 'DELETE' });
+      toast({ type: 'success', title: 'Tenant deleted', message: `"${name}" and its tenant workspace were permanently deleted.` });
       await loadData();
     } catch (err: any) {
-      toast({ type: 'error', title: 'Delete failed', message: err.message || 'Could not delete profile' });
+      toast({ type: 'error', title: 'Delete failed', message: err.message || 'Could not delete tenant' });
+    }
+  };
+
+  const openEditTenant = async (tenant: Workspace['tenants'][number]) => {
+    setEditingTenant(tenant);
+    try {
+      setLoadingProfile(true);
+      const profile = await apiFetch<RegistrationForm>(
+        `/platform/business-registration/tenants/${tenant.id}`
+      );
+      const defaults = emptyForm(workspace?.moduleDefaults[profile.industry] || []);
+      const loadedForm: RegistrationForm = {
+        ...defaults,
+        ...profile,
+        gstin: profile.gstin || '',
+        pan: profile.pan || '',
+        addressLine2: profile.addressLine2 || '',
+        district: profile.district || '',
+        jurisdiction: profile.jurisdiction || '',
+        logoUrl: profile.logoUrl || '',
+        digitalSignatureUrl: profile.digitalSignatureUrl || '',
+        enabledModules: profile.enabledModules || [],
+        taxSettings: { ...defaults.taxSettings, ...profile.taxSettings },
+        temporaryPassword: '',
+        branches: (profile.branches || []).map((branch) => ({
+          ...branch,
+          gstin: branch.gstin || '',
+          addressLine2: branch.addressLine2 || '',
+          district: branch.district || '',
+        })),
+      };
+      setForm(loadedForm);
+      setOriginalForm(loadedForm);
+      setBranchEditIndex(null);
+      setBranchDraft(emptyBranch());
+      setActiveFormTab('IDENTITY');
+      setIsModalOpen(true);
+    } catch (err: any) {
+      toast({
+        type: 'error',
+        title: 'Could not load business registration',
+        message: err.message || 'Could not load this tenant’s business settings.',
+      });
+      setEditingTenant(null);
+    } finally {
+      setLoadingProfile(false);
+    }
+  };
+
+  const closeRegistrationModal = () => {
+    if (saving) return;
+    setIsModalOpen(false);
+    setEditingTenant(null);
+    setOriginalForm(null);
+    setBranchEditIndex(null);
+    setBranchDraft(emptyBranch());
+  };
+
+  const handleTenantStatusChange = async (
+    tenant: Workspace['tenants'][number],
+    nextStatus: 'active' | 'suspended'
+  ) => {
+    const action = nextStatus === 'suspended' ? 'suspend' : 'resume';
+    try {
+      await apiFetch(`/platform/tenants/${tenant.id}/${action}`, {
+        method: 'POST',
+        ...(nextStatus === 'suspended'
+          ? { body: JSON.stringify({ reason: 'Administrative suspension' }) }
+          : {}),
+      });
+      toast({
+        type: 'success',
+        title: nextStatus === 'active' ? 'Tenant activated' : 'Tenant suspended',
+        message: `${tenant.displayName} is now ${nextStatus}.`,
+      });
+      await loadData();
+    } catch (err: any) {
+      toast({
+        type: 'error',
+        title: 'Tenant status update failed',
+        message: err.message || 'Could not change tenant status.',
+      });
     }
   };
 
@@ -466,43 +467,51 @@ export default function PlatformBusinessRegistrationPage() {
       toast({ type: 'warning', title: 'Incomplete branch', message: 'Complete the branch code, name, address, city, district, state, state code, and 6-digit PIN.' });
       return;
     }
-    if (form.branches.some((b) => b.code.toUpperCase() === branchDraft.code.trim().toUpperCase())) {
+    if (form.branches.some((b, index) =>
+      index !== branchEditIndex && b.code.toUpperCase() === branchDraft.code.trim().toUpperCase()
+    )) {
       toast({ type: 'warning', title: 'Duplicate branch code', message: 'A branch with this code already exists.' });
       return;
     }
 
-    setForm((prev) => ({
-      ...prev,
-      branches: [
-        ...prev.branches,
-        {
-          ...branchDraft,
-          code: branchDraft.code.trim().toUpperCase(),
-          name: branchDraft.name.trim(),
-        },
-      ],
-    }));
-
-    setBranchDraft({
-      code: '',
-      name: '',
-      isHeadOffice: false,
-      gstin: '',
-      addressLine1: '',
-      addressLine2: '',
-      city: '',
-      district: '',
-      state: 'Tamil Nadu',
-      stateCode: '33',
-      pincode: '',
+    setForm((prev) => {
+      const isHeadOffice = branchDraft.isHeadOffice;
+      const updatedBranch = {
+        ...branchDraft,
+        code: branchDraft.code.trim().toUpperCase(),
+        name: branchDraft.name.trim(),
+        isHeadOffice,
+      };
+      const branches = prev.branches.map((branch, index) => ({
+        ...branch,
+        ...(isHeadOffice ? { isHeadOffice: false } : {}),
+        ...(index === branchEditIndex ? updatedBranch : {}),
+      }));
+      if (branchEditIndex === null) branches.push(updatedBranch);
+      return {
+        ...prev,
+        branches,
+      };
     });
+
+    setBranchEditIndex(null);
+    setBranchDraft(emptyBranch());
   };
 
   const removeBranchFromForm = (index: number) => {
-    setForm((prev) => ({
-      ...prev,
-      branches: prev.branches.filter((_, i) => i !== index),
-    }));
+    setForm((prev) => {
+      const branches = prev.branches.filter((_, i) => i !== index);
+      return { ...prev, branches };
+    });
+    setBranchEditIndex((current) =>
+      current === null ? null : current === index ? null : current > index ? current - 1 : current
+    );
+    if (branchEditIndex === index) setBranchDraft(emptyBranch());
+  };
+
+  const editBranchInForm = (index: number) => {
+    setBranchDraft(form.branches[index]);
+    setBranchEditIndex(index);
   };
 
   const toggleModuleInForm = (mod: string) => {
@@ -548,13 +557,17 @@ export default function PlatformBusinessRegistrationPage() {
         branchDraft.district,
         branchDraft.pincode,
       ].some((value) => value.trim());
-      if (draftHasValues && (!branchDraft.code.trim() || !branchDraft.name.trim() || !branchDraft.addressLine1.trim() || !branchDraft.city.trim() || !branchDraft.state.trim() || !/^\d{2}$/.test(branchDraft.stateCode) || !/^\d{6}$/.test(branchDraft.pincode))) {
+      if (draftHasValues && (!branchDraft.code.trim() || !branchDraft.name.trim() || !branchDraft.addressLine1.trim() || !branchDraft.city.trim() || !branchDraft.district.trim() || !branchDraft.state.trim() || !/^\d{2}$/.test(branchDraft.stateCode) || !/^\d{6}$/.test(branchDraft.pincode))) {
         missing.push('Complete the branch details or clear the branch form');
       }
+      if (editingTenant && !form.branches.length) missing.push('At least one branch');
     }
     if (step === 'MODULES' && form.enabledModules.length === 0) missing.push('At least one module');
-    if (step === 'SETTINGS' && !form.profileId && (!form.username.trim() || !form.temporaryPassword)) {
-      missing.push('Owner Username and Temporary Password');
+    if (step === 'SETTINGS') {
+      if (!form.ownerName.trim()) missing.push('Business Owner Name');
+      if (!form.username.trim() || (!editingTenant && !form.temporaryPassword)) {
+        missing.push(editingTenant ? 'Owner Username' : 'Owner Username and Temporary Password');
+      }
     }
     if (missing.length && notify) {
       const message = `Please complete: ${missing.join(', ')}`;
@@ -580,6 +593,9 @@ export default function PlatformBusinessRegistrationPage() {
 
   const handleSaveRegistration = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (editingTenant && originalForm && JSON.stringify(form) === JSON.stringify(originalForm)) {
+      return;
+    }
 
     const currentStepIndex = REGISTRATION_STEPS.indexOf(activeFormTab);
     if (!validateRegistrationStep(activeFormTab)) return;
@@ -597,8 +613,19 @@ export default function PlatformBusinessRegistrationPage() {
       toast({ type: 'warning', title: 'Missing address details', message: 'Please complete the registered address details.' });
       return;
     }
-    if (!form.profileId && (!form.username.trim() || !form.temporaryPassword)) {
-      toast({ type: 'warning', title: 'Owner credentials required', message: 'Enter the owner username and temporary password to complete registration.' });
+    if (!form.ownerName.trim()) {
+      toast({ type: 'warning', title: 'Business owner name required', message: 'Enter the business owner name to complete registration.' });
+      setActiveFormTab('SETTINGS');
+      return;
+    }
+    if (!form.username.trim() || (!editingTenant && !form.temporaryPassword)) {
+      toast({
+        type: 'warning',
+        title: 'Owner credentials required',
+        message: editingTenant
+          ? 'Enter the business owner email to save this registration.'
+          : 'Enter the owner username and temporary password to complete registration.',
+      });
       setActiveFormTab('SETTINGS');
       return;
     }
@@ -606,7 +633,6 @@ export default function PlatformBusinessRegistrationPage() {
     try {
       setSaving(true);
       const payload = {
-        tenantId: form.tenantId || undefined,
         legalName: form.legalName.trim(),
         tradeName: form.tradeName.trim(),
         businessType: form.businessType,
@@ -630,17 +656,18 @@ export default function PlatformBusinessRegistrationPage() {
         digitalSignatureUrl: form.digitalSignatureUrl || null,
         enabledModules: form.enabledModules,
         branches: form.branches,
-        username: form.username.trim() || undefined,
+        ownerName: form.ownerName.trim(),
+        username: form.username.trim(),
         temporaryPassword: form.temporaryPassword || undefined,
         requirePasswordChange: form.requirePasswordChange,
       };
 
-      if (form.profileId) {
-        await apiFetch(`/platform/business-registration/${form.profileId}`, {
+      if (editingTenant) {
+        await apiFetch(`/platform/business-registration/tenants/${editingTenant.id}`, {
           method: 'PUT',
           body: JSON.stringify(payload),
         });
-        toast({ type: 'success', title: 'Updated', message: 'Business registration updated successfully.' });
+        toast({ type: 'success', title: 'Business settings saved', message: 'The tenant registration was updated.' });
       } else {
         const created = await apiFetch<{
           tenantId: string;
@@ -652,45 +679,40 @@ export default function PlatformBusinessRegistrationPage() {
         });
         setRegistrationReceipt({
           ...created,
+          ownerName: form.ownerName.trim(),
           temporaryPassword: form.temporaryPassword,
         });
-        setForm((current) => ({ ...current, temporaryPassword: '' }));
         toast({ type: 'success', title: 'Registered', message: 'Tenant account created successfully.' });
       }
+      setForm((current) => ({ ...current, temporaryPassword: '' }));
 
       setIsModalOpen(false);
+      setEditingTenant(null);
+      setOriginalForm(null);
       await loadData();
     } catch (err: any) {
-      toast({ type: 'error', title: 'Registration failed', message: err.message || 'Could not save business registration.' });
+      toast({
+        type: 'error',
+        title: editingTenant ? 'Business update failed' : 'Registration failed',
+        message: err.message || 'Could not save business registration.',
+      });
     } finally {
       setSaving(false);
     }
   };
 
-  // Filter profiles
-  const filteredProfiles = useMemo(() => {
-    if (!workspace?.profiles) return [];
-    return workspace.profiles.filter((p) => {
-      const matchSearch =
-        searchQuery === '' ||
-        p.tradeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.legalName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (p.gstin && p.gstin.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (p.pan && p.pan.toLowerCase().includes(searchQuery.toLowerCase()));
-
-      const matchType = selectedTypeFilter === 'ALL' || p.businessType === selectedTypeFilter;
-      const matchCat = selectedCategoryFilter === 'ALL' || p.industry === selectedCategoryFilter;
-
-      return matchSearch && matchType && matchCat;
-    });
-  }, [workspace?.profiles, searchQuery, selectedTypeFilter, selectedCategoryFilter]);
-
-  const totalBranches = useMemo(() => {
-    return workspace?.profiles.reduce((acc, p) => acc + (p.branches?.length || 0), 0) || 0;
-  }, [workspace?.profiles]);
-
-  const formatProfileDate = (value: string) =>
-    new Date(value).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  const filteredTenants = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return (workspace?.tenants || []).filter((tenant) =>
+      !query ||
+      tenant.displayName.toLowerCase().includes(query) ||
+      tenant.slug.toLowerCase().includes(query)
+    );
+  }, [workspace?.tenants, searchQuery]);
+  const formHasChanges =
+    !editingTenant ||
+    !originalForm ||
+    JSON.stringify(form) !== JSON.stringify(originalForm);
 
   return (
     <div className="mx-auto w-full max-w-[1500px] space-y-5">
@@ -707,8 +729,7 @@ export default function PlatformBusinessRegistrationPage() {
             <Badge variant="accent" size="sm">Platform Super Admin</Badge>
           </div>
           <p className="ml-12 mt-1 max-w-3xl text-xs leading-5 text-text-secondary">
-            Register and configure multiple business profiles, legal structures, state tax jurisdictions,
-            multi-branch topologies, and category-tailored ERP workflows.
+            Register isolated tenant workspaces and manage their access status. Tenant business records remain private to each workspace.
           </p>
         </div>
 
@@ -727,279 +748,109 @@ export default function PlatformBusinessRegistrationPage() {
       {/* Metric Cards Row */}
       <div className="grid grid-cols-4 gap-4">
         <div className="rounded-xl border border-border/80 bg-surface p-4 shadow-subtle">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-text-secondary">Registered Businesses</p>
-          <p className="mt-2 text-2xl font-semibold tracking-tight text-text-primary">{workspace?.profiles.length || 0}</p>
-          <span className="mt-1 block text-xs text-text-tertiary">Multi-profile support active</span>
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-text-secondary">Registered Tenants</p>
+          <p className="mt-2 text-2xl font-semibold tracking-tight text-text-primary">{workspace?.tenants.length || 0}</p>
+          <span className="mt-1 block text-xs text-text-tertiary">Isolated schemas</span>
         </div>
         <div className="rounded-xl border border-border/80 bg-surface p-4 shadow-subtle">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-text-secondary">Operating Branches</p>
-          <p className="mt-2 text-2xl font-semibold tracking-tight text-text-primary">{totalBranches}</p>
-          <span className="mt-1 block text-xs text-text-tertiary">Across head offices & retail</span>
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-text-secondary">Active Tenants</p>
+          <p className="mt-2 text-2xl font-semibold tracking-tight text-text-primary">{workspace?.tenants.filter((tenant) => tenant.status === 'active').length || 0}</p>
+          <span className="mt-1 block text-xs text-text-tertiary">Can sign in</span>
         </div>
         <div className="rounded-xl border border-border/80 bg-surface p-4 shadow-subtle">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-text-secondary">Active Categories</p>
-          <p className="mt-2 text-2xl font-semibold tracking-tight text-text-primary">{new Set(workspace?.profiles.map((p) => p.industry)).size}</p>
-          <span className="mt-1 block text-xs text-text-tertiary">Tailored workflows & templates</span>
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-text-secondary">Suspended Tenants</p>
+          <p className="mt-2 text-2xl font-semibold tracking-tight text-text-primary">{workspace?.tenants.filter((tenant) => tenant.status === 'suspended').length || 0}</p>
+          <span className="mt-1 block text-xs text-text-tertiary">Login disabled</span>
         </div>
         <div className="rounded-xl border border-border/80 bg-surface p-4 shadow-subtle">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-text-secondary">GST Registered</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-text-secondary">Other Status</p>
           <p className="mt-2 text-2xl font-semibold tracking-tight text-accent">
-            {workspace?.profiles.filter((p) => p.taxSettings?.gstRegistered).length || 0}
+            {workspace?.tenants.filter((tenant) => !['active', 'suspended'].includes(tenant.status)).length || 0}
           </p>
-          <span className="mt-1 block text-xs text-text-tertiary">Statutory compliance verified</span>
+          <span className="mt-1 block text-xs text-text-tertiary">Provisioning or inactive</span>
         </div>
       </div>
 
-      {/* Filter and Search Bar */}
-      <div className="flex items-center gap-4 rounded-xl border border-border/80 bg-surface p-4 shadow-subtle">
-        <div className="relative min-w-0 flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" />
-          <input
-            type="text"
-            placeholder="Search registered businesses by trade name, legal name, GSTIN, PAN..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-9 w-full rounded-lg border border-border/80 bg-background pl-9 pr-4 text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent/25"
-          />
-        </div>
-
-        <div className="flex shrink-0 items-center gap-3">
-          <label className="relative block w-48">
-            <select
-              aria-label="Filter by business type"
-              value={selectedTypeFilter}
-              onChange={(e) => setSelectedTypeFilter(e.target.value)}
-              className="h-9 w-full appearance-none rounded-lg border border-border/80 bg-background px-3 pr-9 text-xs leading-none text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/25"
-            >
-              <option value="ALL">All Business Types</option>
-              {businessTypes.map((type) => (
-                <option key={type.value} value={type.value}>{type.label}</option>
-              ))}
-            </select>
-            <ChevronDown
-              aria-hidden="true"
-              className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-secondary"
-              strokeWidth={1.8}
-            />
-          </label>
-
-          <label className="relative block w-48">
-            <select
-              aria-label="Filter by business category"
-              value={selectedCategoryFilter}
-              onChange={(e) => setSelectedCategoryFilter(e.target.value)}
-              className="h-9 w-full appearance-none rounded-lg border border-border/80 bg-background px-3 pr-9 text-xs leading-none text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/25"
-            >
-              <option value="ALL">All Categories</option>
-              {industries.map((industry) => (
-                <option key={industry.value} value={industry.value}>{industry.label}</option>
-              ))}
-            </select>
-            <ChevronDown
-              aria-hidden="true"
-              className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-secondary"
-              strokeWidth={1.8}
-            />
-          </label>
-        </div>
-      </div>
-
-      {/* Main List: Registered Businesses */}
-      {loading ? (
-        <div className="macos-card p-12 text-center text-text-secondary space-y-3">
-          <div className="w-8 h-8 rounded-lg bg-accent animate-pulse mx-auto" />
-          <p className="text-xs font-mono">Loading registered business profiles...</p>
-        </div>
-      ) : filteredProfiles.length === 0 ? (
-        <div className="macos-card p-12 text-center space-y-4">
-          <div className="w-12 h-12 rounded-xl bg-accent/10 border border-accent/20 flex items-center justify-center text-accent mx-auto">
-            <Building2 className="w-6 h-6" />
+      {canManageTenants && (
+        <div className="rounded-xl border border-border/80 bg-surface p-4 shadow-subtle">
+          <div className="mb-3 flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-semibold text-text-primary">Tenant workspaces</h2>
+              <p className="mt-1 text-xs text-text-secondary">
+                Only workspace identity and status are shown here; business data stays in each tenant schema.
+              </p>
+            </div>
+            <div className="relative w-64">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-tertiary" />
+              <input
+                type="search"
+                aria-label="Search tenant workspaces"
+                placeholder="Search name or workspace slug"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                className="h-9 w-full rounded-lg border border-border/80 bg-background pl-9 pr-3 text-xs text-text-primary"
+              />
+            </div>
           </div>
-          <div className="space-y-1">
-            <h3 className="text-sm font-semibold text-text-primary">No Business Registrations Found</h3>
-            <p className="text-xs text-text-secondary max-w-sm mx-auto">
-              {workspace?.profiles.length === 0
-                ? 'Get started by clicking the Register New Business button to register your first enterprise profile.'
-                : 'No registered businesses match your search or filter criteria.'}
-            </p>
-          </div>
-          {canManageTenants && <Button
-            type="button"
-            variant="primary"
-            size="sm"
-            onClick={openNewRegistration}
-            icon={<Plus className="w-3.5 h-3.5" />}
-          >
-            Register New Business
-          </Button>}
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {filteredProfiles.map((profile) => (
-            <div
-              key={profile.id}
-              className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-8 rounded-xl border border-border/80 bg-surface px-5 py-5 shadow-subtle transition-colors duration-150 hover:border-accent/40"
-            >
-              <div className="flex min-w-0 items-center gap-4">
-                {profile.logoUrl ? (
-                  <img
-                    src={profile.logoUrl}
-                    alt={profile.tradeName}
-                    className="h-16 w-16 shrink-0 rounded-xl border border-border/80 bg-background object-contain p-1.5"
-                  />
-                ) : (
-                  <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl border border-accent/20 bg-accent/10 text-xl font-semibold text-accent">
-                    {profile.tradeName.charAt(0).toUpperCase()}
+          {filteredTenants.length === 0 ? (
+            <p className="py-5 text-center text-xs text-text-secondary">No tenant workspaces found.</p>
+          ) : (
+            <div className="divide-y divide-border/60">
+              {filteredTenants.map((tenant) => (
+                <div key={tenant.id} className="flex items-center justify-between gap-4 py-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-text-primary">{tenant.displayName}</p>
+                    <p className="mt-1 truncate font-mono text-[11px] text-text-tertiary">
+                      {tenant.slug}
+                    </p>
                   </div>
-                )}
-
-                <div className="min-w-0 space-y-2.5">
-                  <div className="flex items-center gap-2.5">
-                    <h3 className="truncate text-base font-semibold tracking-tight text-text-primary">{profile.tradeName}</h3>
-                    <Badge variant="neutral" size="sm">{profile.businessType.replaceAll('_', ' ')}</Badge>
-                    <Badge variant="accent" size="sm">{profile.industry}</Badge>
-                    {profile.taxSettings?.gstRegistered && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-success/10 px-2.5 py-1 text-[11px] font-medium text-success">
-                        <CheckCircle2 className="h-3.5 w-3.5" /> GST Active
-                      </span>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Badge size="sm" variant={tenant.status === 'active' ? 'success' : 'neutral'}>
+                      {tenant.status}
+                    </Badge>
+                    {tenant.status === 'active' && (
+                      <Button type="button" variant="secondary" size="sm" onClick={() => handleTenantStatusChange(tenant, 'suspended')}>
+                        Suspend
+                      </Button>
                     )}
-                  </div>
-
-                  <div className="flex items-center gap-6 text-xs text-text-secondary">
-                    <span className="flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5 text-text-tertiary" />{profile.city}, {profile.state} · {profile.pincode}</span>
-                    <span className="flex items-center gap-1.5"><Store className="h-3.5 w-3.5 text-text-tertiary" />{profile.branches?.length || 0} branches</span>
-                    <span className="flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5 text-text-tertiary" />FY {formatProfileDate(profile.financialYearStart)} – {formatProfileDate(profile.financialYearEnd)}</span>
-                  </div>
-
-                  <div className="flex items-center gap-4 text-[11px] text-text-tertiary">
-                    <span>Legal name: <strong className="font-medium text-text-secondary">{profile.legalName}</strong></span>
-                    {profile.gstin && <span className="font-mono">GSTIN: {profile.gstin}</span>}
+                    {tenant.status === 'suspended' && (
+                      <Button type="button" variant="secondary" size="sm" onClick={() => handleTenantStatusChange(tenant, 'active')}>
+                        Activate
+                      </Button>
+                    )}
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      loading={loadingProfile && editingTenant?.id === tenant.id}
+                      disabled={loadingProfile && editingTenant?.id !== tenant.id}
+                      onClick={() => void openEditTenant(tenant)}
+                      icon={<Edit3 className="h-3.5 w-3.5" />}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="danger"
+                      size="sm"
+                      onClick={() => handleDeleteTenant(tenant.id, tenant.displayName)}
+                      icon={<Trash2 className="h-3.5 w-3.5" />}
+                    >
+                      Delete
+                    </Button>
                   </div>
                 </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex shrink-0 items-center justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  className="whitespace-nowrap"
-                  onClick={() => setViewingProfile(profile)}
-                  icon={<Eye className="h-3.5 w-3.5" />}
-                >
-                  View
-                </Button>
-                {canManageTenants && <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  className="whitespace-nowrap"
-                  onClick={() => openEditRegistration(profile)}
-                  icon={<Edit3 className="w-3.5 h-3.5" />}
-                >
-                  Edit
-                </Button>}
-                {canManageTenants && <Button
-                  type="button"
-                  variant="danger"
-                  size="sm"
-                  className="whitespace-nowrap"
-                  onClick={() => handleDeleteProfile(profile.id, profile.tradeName)}
-                  icon={<Trash2 className="h-3.5 w-3.5" />}
-                >
-                  Delete
-                </Button>}
-              </div>
+              ))}
             </div>
-          ))}
+          )}
         </div>
       )}
-
-      <Modal
-        isOpen={Boolean(viewingProfile)}
-        onClose={() => setViewingProfile(null)}
-        title={viewingProfile?.tradeName || 'Business details'}
-        description="Read-only registration, fiscal, branch, and enabled module details."
-        maxWidth="xl"
-      >
-        {viewingProfile && (
-          <div className="space-y-5">
-            <div className="flex items-center gap-4 rounded-xl border border-border/80 bg-surface-secondary/30 p-4">
-              {viewingProfile.logoUrl ? (
-                <img src={viewingProfile.logoUrl} alt={viewingProfile.tradeName} className="h-16 w-16 rounded-xl border border-border bg-background object-contain p-1.5" />
-              ) : (
-                <div className="flex h-16 w-16 items-center justify-center rounded-xl border border-accent/20 bg-accent/10 text-xl font-semibold text-accent">{viewingProfile.tradeName.charAt(0).toUpperCase()}</div>
-              )}
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-base font-semibold text-text-primary">{viewingProfile.tradeName}</h3>
-                  {viewingProfile.taxSettings?.gstRegistered && <Badge variant="success" size="sm">GST Active</Badge>}
-                </div>
-                <p className="mt-1 text-xs text-text-secondary">{viewingProfile.legalName}</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-3 gap-3">
-              {[
-                ['Business type', viewingProfile.businessType.replaceAll('_', ' ')],
-                ['Industry', viewingProfile.industry],
-                ['Currency', viewingProfile.currency],
-                ['GSTIN', viewingProfile.gstin || 'Not provided'],
-                ['PAN', viewingProfile.pan || 'Not provided'],
-                ['Invoice prefix', viewingProfile.invoicePrefix],
-              ].map(([label, value]) => (
-                <div key={label} className="rounded-lg border border-border/70 bg-surface p-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">{label}</p>
-                  <p className="mt-1 text-xs font-medium text-text-primary">{value}</p>
-                </div>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="rounded-lg border border-border/70 bg-surface p-4">
-                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">Registered location</p>
-                <p className="text-sm text-text-primary">{viewingProfile.addressLine1}</p>
-                {viewingProfile.addressLine2 && <p className="text-xs text-text-secondary">{viewingProfile.addressLine2}</p>}
-                <p className="mt-1 text-xs text-text-secondary">{viewingProfile.city}, {viewingProfile.district || viewingProfile.state} · {viewingProfile.state} · {viewingProfile.pincode}</p>
-              </div>
-              <div className="rounded-lg border border-border/70 bg-surface p-4">
-                <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">Financial year</p>
-                <p className="text-sm text-text-primary">{formatProfileDate(viewingProfile.financialYearStart)} – {formatProfileDate(viewingProfile.financialYearEnd)}</p>
-                <p className="mt-1 text-xs text-text-secondary">Tax jurisdiction: {viewingProfile.jurisdiction || 'Not specified'}</p>
-              </div>
-            </div>
-
-            <div className="rounded-lg border border-border/70 bg-surface p-4">
-              <div className="flex items-center justify-between">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">Branches</p>
-                <span className="text-xs text-text-secondary">{viewingProfile.branches?.length || 0} configured</span>
-              </div>
-              <div className="mt-3 space-y-2">
-                {viewingProfile.branches?.length ? viewingProfile.branches.map((branch) => (
-                  <div key={branch.code} className="flex items-center justify-between rounded-md border border-border/60 bg-surface-secondary/30 px-3 py-2 text-xs">
-                    <span className="font-medium text-text-primary">{branch.name} <span className="font-mono text-text-tertiary">({branch.code})</span></span>
-                    <span className="text-text-secondary">{branch.city}, {branch.state} · {branch.pincode}</span>
-                  </div>
-                )) : <p className="text-xs text-text-secondary">No branches configured.</p>}
-              </div>
-            </div>
-
-            <div className="rounded-lg border border-border/70 bg-surface p-4">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-text-tertiary">Enabled modules</p>
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {viewingProfile.enabledModules?.map((module) => <Badge key={module} variant="neutral" size="sm">{module}</Badge>)}
-              </div>
-            </div>
-          </div>
-        )}
-      </Modal>
 
       {/* REGISTRATION MODAL FORM */}
       {isModalOpen && typeof document !== 'undefined' && createPortal(
         <div
           className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/35 p-3 animate-fade-in sm:p-4"
-          onClick={() => !saving && setIsModalOpen(false)}
+          onClick={closeRegistrationModal}
         >
           <div
             className="my-auto flex max-h-[90dvh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl animate-scale-up"
@@ -1013,16 +864,18 @@ export default function PlatformBusinessRegistrationPage() {
                 </div>
                 <div>
                   <h2 className="text-base font-semibold text-text-primary tracking-tight">
-                    {form.profileId ? `Edit Business: ${form.tradeName}` : 'Register New Business'}
+                    {editingTenant ? `Edit Business: ${form.tradeName}` : 'Register New Business'}
                   </h2>
                   <p className="text-[11px] text-text-secondary">
-                    Statutory registration, jurisdiction, tax setup, multiple branches, and category workflows.
+                    {editingTenant
+                      ? 'Update this tenant’s business profile, branches, and owner details.'
+                      : 'Statutory registration, jurisdiction, tax setup, multiple branches, and category workflows.'}
                   </p>
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => setIsModalOpen(false)}
+                onClick={closeRegistrationModal}
                 className="w-8 h-8 rounded-lg flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-secondary transition-colors"
               >
                 <X className="w-4 h-4" />
@@ -1430,13 +1283,24 @@ export default function PlatformBusinessRegistrationPage() {
                               {b.gstin && <span className="ml-2 font-mono">GSTIN: {b.gstin}</span>}
                             </p>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => removeBranchFromForm(idx)}
-                            className="p-1.5 text-text-tertiary hover:text-danger rounded hover:bg-danger/10 transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              aria-label={`Edit ${b.name}`}
+                              onClick={() => editBranchInForm(idx)}
+                              className="p-1.5 text-text-tertiary hover:text-accent rounded hover:bg-accent/10 transition-colors"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`Remove ${b.name}`}
+                              onClick={() => removeBranchFromForm(idx)}
+                              className="p-1.5 text-text-tertiary hover:text-danger rounded hover:bg-danger/10 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1444,7 +1308,9 @@ export default function PlatformBusinessRegistrationPage() {
 
                   {/* Branch Builder Box */}
                   <div className="macos-card p-4 space-y-3 bg-surface-secondary/40">
-                    <p className="text-xs font-semibold text-text-primary">Add New Branch Location</p>
+                    <p className="text-xs font-semibold text-text-primary">
+                      {branchEditIndex === null ? 'Add New Branch Location' : 'Edit Branch Location'}
+                    </p>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <Input
                         label="Branch Code *"
@@ -1509,20 +1375,49 @@ export default function PlatformBusinessRegistrationPage() {
                       />
                     </div>
                     <div className="flex items-center justify-between pt-2">
-                      <Switch
-                        label="Mark as Head Office Branch"
-                        checked={branchDraft.isHeadOffice}
-                        onChange={(v) => setBranchDraft({ ...branchDraft, isHeadOffice: v })}
-                      />
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        onClick={addBranchToForm}
-                        icon={<Plus className="w-3.5 h-3.5" />}
-                      >
-                        Add Branch
-                      </Button>
+                      <div>
+                        <Switch
+                          label="Mark as Head Office Branch"
+                          checked={branchDraft.isHeadOffice}
+                          disabled={form.branches.some((branch, index) =>
+                            branch.isHeadOffice && index !== branchEditIndex
+                          )}
+                          onChange={(v) => setBranchDraft({ ...branchDraft, isHeadOffice: v })}
+                        />
+                        {form.branches.some((branch, index) =>
+                          branch.isHeadOffice && index !== branchEditIndex
+                        ) && (
+                          <p className="mt-1 text-[11px] text-text-tertiary">
+                            This business already has a head office branch.
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {branchEditIndex !== null && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setBranchDraft(emptyBranch());
+                              setBranchEditIndex(null);
+                            }}
+                          >
+                            Cancel Edit
+                          </Button>
+                        )}
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={addBranchToForm}
+                          icon={branchEditIndex === null
+                            ? <Plus className="w-3.5 h-3.5" />
+                            : <Check className="w-3.5 h-3.5" />}
+                        >
+                          {branchEditIndex === null ? 'Add Branch' : 'Save Branch'}
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1582,29 +1477,42 @@ export default function PlatformBusinessRegistrationPage() {
                       Owner Login & Password Settings
                     </h3>
                     <p className="text-[11px] text-text-tertiary">
-                      Set the business owner account used to sign in to this workspace.
+                      {editingTenant
+                        ? 'Update the owner name and email for this workspace. The existing password is not changed here.'
+                        : 'Set the business owner account used to sign in to this workspace.'}
                     </p>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <Input
-                      label={`Owner email${form.profileId ? '' : ' *'}`}
+                      label="Business Owner Name *"
+                      autoComplete="name"
+                      placeholder="Full name of the business owner"
+                      maxLength={200}
+                      value={form.ownerName}
+                      required
+                      onChange={(e) => setForm({ ...form, ownerName: e.target.value })}
+                    />
+                    <Input
+                      label="Owner email *"
                       type="email"
                       autoComplete="username"
                       placeholder="owner@company.com"
                       value={form.username}
-                      required={!form.profileId}
+                      required
                       onChange={(e) => setForm({ ...form, username: e.target.value })}
                     />
-                    <PasswordInput
-                      label={`Temporary Password${form.profileId ? ' (leave blank to keep current)' : ' *'}`}
-                      autoComplete="new-password"
-                      minLength={8}
-                      placeholder={form.profileId ? 'Leave blank to keep the current password' : 'Enter a temporary owner password'}
-                      value={form.temporaryPassword}
-                      required={!form.profileId}
-                      onChange={(e) => setForm({ ...form, temporaryPassword: e.target.value })}
-                    />
+                    {!editingTenant && (
+                      <PasswordInput
+                        label="Temporary Password *"
+                        autoComplete="new-password"
+                        minLength={8}
+                        placeholder="Enter a temporary owner password"
+                        value={form.temporaryPassword}
+                        required
+                        onChange={(e) => setForm({ ...form, temporaryPassword: e.target.value })}
+                      />
+                    )}
                   </div>
 
                   <div className="macos-card p-4">
@@ -1626,7 +1534,7 @@ export default function PlatformBusinessRegistrationPage() {
                 <Button
                   type="button"
                   variant="secondary"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={closeRegistrationModal}
                 >
                   Cancel
                 </Button>
@@ -1634,10 +1542,13 @@ export default function PlatformBusinessRegistrationPage() {
                   type="submit"
                   variant="primary"
                   loading={saving}
+                  disabled={activeFormTab === 'SETTINGS' && editingTenant !== null && !formHasChanges}
                   icon={activeFormTab === 'SETTINGS' ? <Check className="w-4 h-4" /> : <ArrowRight className="w-4 h-4" />}
                 >
                   {activeFormTab === 'SETTINGS'
-                    ? form.profileId ? 'Save Changes' : 'Complete Business Registration'
+                    ? editingTenant
+                      ? (formHasChanges ? 'Save Business Settings' : 'No Changes')
+                      : 'Complete Business Registration'
                     : 'Save changes and next page'}
                 </Button>
               </div>
@@ -1655,6 +1566,10 @@ export default function PlatformBusinessRegistrationPage() {
       >
         {registrationReceipt && (
           <div className="space-y-4">
+            <div className="rounded-lg border border-border bg-surface-secondary/30 p-3 text-sm">
+              <p className="text-xs text-text-tertiary">Business owner</p>
+              <p className="mt-1 break-all font-medium text-text-primary">{registrationReceipt.ownerName}</p>
+            </div>
             <div className="rounded-lg border border-border bg-surface-secondary/30 p-3 text-sm">
               <p className="text-xs text-text-tertiary">Owner email</p>
               <p className="mt-1 break-all font-medium text-text-primary">{registrationReceipt.ownerEmail}</p>

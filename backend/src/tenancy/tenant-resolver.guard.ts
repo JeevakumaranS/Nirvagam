@@ -37,11 +37,22 @@ export class TenantResolverGuard implements CanActivate {
       return true;
     }
 
-    // 1. Resolve Tenant Identifier in specified order:
-    // (a) Subdomain / Custom Domain
-    // (b) Signed JWT claim req.user.tenant_id
-    // (c) X-Tenant-Id header
-    const resolvedTenantId = await this.resolveTenantIdentifier(req);
+    const user = (req as any).user;
+    if (user?.platformAdmin) {
+      if (path.startsWith('/auth/')) {
+        return true;
+      }
+      throw new HttpException(
+        'Platform administrators cannot access tenant business data.',
+        HttpStatus.FORBIDDEN
+      );
+    }
+    if (!user?.id || !user?.tenantId) {
+      throw new HttpException('Authenticated tenant identity is required.', HttpStatus.UNAUTHORIZED);
+    }
+
+    const requestTenantIds = await this.resolveRequestTenantIdentifiers(req);
+    const resolvedTenantId = requestTenantIds[0] || user.tenantId;
 
     if (!resolvedTenantId) {
       throw new HttpException(
@@ -65,6 +76,22 @@ export class TenantResolverGuard implements CanActivate {
           message: `Tenant [${resolvedTenantId}] does not exist in platform registry.`,
         },
         HttpStatus.NOT_FOUND
+      );
+    }
+
+    for (const requestTenantId of requestTenantIds) {
+      const requestedTenant = await this.getTenantRecord(requestTenantId);
+      if (!requestedTenant || requestedTenant.id !== tenant.id) {
+        throw new HttpException(
+          'The requested tenant does not match the authenticated tenant.',
+          HttpStatus.FORBIDDEN
+        );
+      }
+    }
+    if (tenant.id !== user.tenantId) {
+      throw new HttpException(
+        'The authenticated user does not belong to the requested tenant.',
+        HttpStatus.FORBIDDEN
       );
     }
 
@@ -102,39 +129,42 @@ export class TenantResolverGuard implements CanActivate {
       );
     }
 
-    // 4. Verify Identity & Tenant Membership (Never trust header alone)
-    const user = (req as any).user;
-    let roleKeys: string[] = ['GUEST'];
-    let branchIds: string[] = [];
-
-    if (user && user.sub) {
-      // Check platform.tenant_memberships
-      const membership = await this.verifyMembership(user.sub, tenant.id);
-      if (!membership) {
-        throw new HttpException(
-          {
-            statusCode: HttpStatus.FORBIDDEN,
-            error: 'MEMBERSHIP_REQUIRED',
-            message: 'User does not hold an active membership in this tenant workspace.',
-          },
-          HttpStatus.FORBIDDEN
-        );
-      }
-      roleKeys = [membership.tenantRoleKey];
+    const tenantUser = await this.tenantDb.withTenant({
+      tenantId: tenant.id,
+      schemaName: tenant.schemaName,
+      slug: tenant.slug,
+      displayName: tenant.displayName,
+      status: tenant.status,
+      roleKeys: [],
+      branchIds: [],
+      planLimits: tenant.planLimits || {
+        maxBranches: 1,
+        maxUsers: 5,
+        maxInvoicesPerMonth: 500,
+        featureFlags: {},
+      },
+    }, (tx) => tx.queryOne<{ id: string }>(
+      `SELECT id FROM users WHERE id = $1::uuid AND tenant_id = $2::uuid AND is_active = TRUE LIMIT 1;`,
+      [user.id, tenant.id]
+    ));
+    if (!tenantUser) {
+      throw new HttpException(
+        'The authenticated user is not present in this tenant schema.',
+        HttpStatus.FORBIDDEN
+      );
     }
 
-    // 5. Build immutable TenantContext
     const tenantCtx: TenantContext = {
       tenantId: tenant.id,
       schemaName: tenant.schemaName,
       slug: tenant.slug,
       displayName: tenant.displayName,
       status: tenant.status,
-      identityId: user?.sub,
-      userId: user?.tenantUserId || user?.sub,
+      identityId: user.id,
+      userId: user.id,
       email: user?.email,
-      roleKeys,
-      branchIds,
+      roleKeys: user.roles || [],
+      branchIds: [],
       planLimits: tenant.planLimits || {
         maxBranches: 1,
         maxUsers: 5,
@@ -145,47 +175,40 @@ export class TenantResolverGuard implements CanActivate {
 
     // Attach to Request object and AsyncLocalStorage
     (req as any).tenant = tenantCtx;
-
-    // Run the request inside TenantContextStorage
-    // Note: In Express middleware/interceptor, we can set store or wrap execution
+    TenantContextStorage.enterWith(tenantCtx);
     return true;
   }
 
-  private async resolveTenantIdentifier(req: Request): Promise<string | null> {
+  private async resolveRequestTenantIdentifiers(req: Request): Promise<string[]> {
+    const identifiers: string[] = [];
     const host = req.headers['host'] || '';
 
-    // (a) Subdomain / Custom Domain check
     if (host) {
       const domainWithoutPort = host.split(':')[0];
       const cachedDomainTenant = await this.cache.get<string>(`domain:${domainWithoutPort}`);
-      if (cachedDomainTenant) return cachedDomainTenant;
+      if (cachedDomainTenant) {
+        identifiers.push(cachedDomainTenant);
+      } else {
+        const domainRecord = await this.tenantDb.withPlatform(async (tx) => {
+          return tx.queryOne<{ tenant_id: string }>(
+            `SELECT tenant_id FROM platform.tenant_domains WHERE domain = $1 AND verified = true LIMIT 1;`,
+            [domainWithoutPort]
+          );
+        });
 
-      const domainRecord = await this.tenantDb.withPlatform(async (tx) => {
-        return tx.queryOne<{ tenant_id: string }>(
-          `SELECT tenant_id FROM platform.tenant_domains WHERE domain = $1 AND verified = true LIMIT 1;`,
-          [domainWithoutPort]
-        );
-      });
-
-      if (domainRecord?.tenant_id) {
-        await this.cache.set(`domain:${domainWithoutPort}`, domainRecord.tenant_id, 300);
-        return domainRecord.tenant_id;
+        if (domainRecord?.tenant_id) {
+          await this.cache.set(`domain:${domainWithoutPort}`, domainRecord.tenant_id, 300);
+          identifiers.push(domainRecord.tenant_id);
+        }
       }
     }
 
-    // (b) Signed JWT claim tenant_id
-    const user = (req as any).user;
-    if (user?.tenant_id || user?.tenantId) {
-      return user.tenant_id || user.tenantId;
-    }
-
-    // (c) X-Tenant-Id header (for internal service-to-service or explicit switch)
     const headerTenantId = req.headers['x-tenant-id'] as string;
     if (headerTenantId) {
-      return headerTenantId.trim();
+      identifiers.push(headerTenantId.trim());
     }
 
-    return null;
+    return identifiers;
   }
 
   private async getTenantRecord(identifier: string): Promise<TenantRecord | null> {
@@ -232,28 +255,4 @@ export class TenantResolverGuard implements CanActivate {
     return record;
   }
 
-  private async verifyMembership(
-    identityId: string,
-    tenantId: string
-  ): Promise<{ tenantRoleKey: string } | null> {
-    const cacheKey = `membership:${identityId}:${tenantId}`;
-    const cached = await this.cache.get<{ tenantRoleKey: string }>(cacheKey);
-    if (cached) return cached;
-
-    const membership = await this.tenantDb.withPlatform(async (tx) => {
-      return tx.queryOne<{ tenant_role_key: string }>(
-        `SELECT tenant_role_key 
-         FROM platform.tenant_memberships 
-         WHERE identity_id = $1 AND tenant_id = $2 AND status = 'ACTIVE' 
-         LIMIT 1;`,
-        [identityId, tenantId]
-      );
-    });
-
-    if (!membership) return null;
-
-    const res = { tenantRoleKey: membership.tenant_role_key };
-    await this.cache.set(cacheKey, res, 60);
-    return res;
-  }
 }

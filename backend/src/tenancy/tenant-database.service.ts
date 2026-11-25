@@ -29,12 +29,17 @@ export function validateSchemaName(schemaName: string): void {
 export class TenantDatabaseService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TenantDatabaseService.name);
   private pool!: Pool;
-  private readonly enablePerTenantRoles: boolean =
-    process.env.ENABLE_PER_TENANT_ROLES === 'true';
 
   onModuleInit() {
-    const connectionString =
-      process.env.DATABASE_URL || 'postgresql://postgres:user@localhost:5432/nirvagam_db';
+    if (process.env.ENABLE_PER_TENANT_ROLES === 'true') {
+      throw new Error(
+        'ENABLE_PER_TENANT_ROLES is unsupported; unset it because tenant database roles are not provisioned.'
+      );
+    }
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
+      throw new Error('DATABASE_URL must be configured before initializing tenant database access');
+    }
 
     this.pool = new Pool({
       connectionString,
@@ -99,15 +104,9 @@ export class TenantDatabaseService implements OnModuleInit, OnModuleDestroy {
     try {
       await client.query('BEGIN;');
 
-      // 1. Transaction-scoped search path: target tenant schema -> platform -> public
+      // Tenant queries never fall back to shared schemas.
       const safeSchema = quoteIdent(ctx.schemaName);
-      await client.query(`SET LOCAL search_path TO ${safeSchema}, platform, public;`);
-
-      // 2. DB-level safety net: per-tenant PostgreSQL role if enabled
-      if (this.enablePerTenantRoles) {
-        const safeRole = quoteIdent(`role_${ctx.schemaName}`);
-        await client.query(`SET LOCAL ROLE ${safeRole};`);
-      }
+      await client.query(`SET LOCAL search_path TO ${safeSchema};`);
 
       const txWrapper = this.createTxWrapper(client);
       const result = await callback(txWrapper);

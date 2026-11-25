@@ -18,8 +18,6 @@
     "test": "npm run test --workspaces --if-present",
     "prisma:generate": "npm run prisma:generate --workspace=@nirvagam/backend",
     "prisma:push": "npm run prisma:push --workspace=@nirvagam/backend",
-    "prisma:uuidv7": "npm run prisma:uuidv7 --workspace=@nirvagam/backend",
-    "prisma:seed": "npm run prisma:seed --workspace=@nirvagam/backend",
     "tenant:provision": "npm run tenant:provision --workspace=@nirvagam/backend --",
     "tenant:migrate": "npm run tenant:migrate --workspace=@nirvagam/backend --",
     "super-admin:create": "npm run super-admin:create --workspace=@nirvagam/backend --"

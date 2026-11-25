@@ -3,6 +3,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagg
 import { PurchasesService } from './purchases.service';
 import { CreatePurchaseDto } from './dto/create-purchase.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { TenantResolverGuard } from '../../tenancy/tenant-resolver.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthUser, PaginationParams } from '@nirvagam/shared';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
@@ -10,7 +11,7 @@ import { RequirePermissions } from '../../common/decorators/permissions.decorato
 
 @ApiTags('Purchases & Procurement')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, TenantResolverGuard, PermissionsGuard)
 @Controller('purchases')
 export class PurchasesController {
   constructor(private readonly purchasesService: PurchasesService) {}

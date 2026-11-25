@@ -30,4 +30,8 @@ export class TenantContextStorage {
   static tryGet(): TenantContext | undefined {
     return tenantStorage.getStore();
   }
+
+  static enterWith(context: TenantContext): void {
+    tenantStorage.enterWith(context);
+  }
 }

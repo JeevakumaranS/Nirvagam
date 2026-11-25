@@ -12,6 +12,7 @@ import {
   HttpStatus,
   Headers,
   UseGuards,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import * as bcrypt from 'bcryptjs';
@@ -90,9 +91,7 @@ export class PlatformController {
         FROM platform.tenants t LEFT JOIN platform.plans p ON p.id = t.plan_id
         WHERE t.id::text = $1 OR t.slug = $1 LIMIT 1`, [id]);
       if (!tenant) throw new HttpException('Tenant not found', HttpStatus.NOT_FOUND);
-      const [business, subscription, payments, supportRequests, auditLogs] = await Promise.all([
-        tx.queryOne(`SELECT id, legal_name AS "legalName", trade_name AS "tradeName", business_type AS "businessType",
-          industry, gstin, pan, city, district, state, pincode, currency FROM platform.business_profiles WHERE tenant_id = $1`, [tenant.id]),
+      const [subscription, payments, supportRequests, auditLogs] = await Promise.all([
         tx.query(`SELECT s.id, s.status, s.current_period_start AS "periodStart", s.current_period_end AS "periodEnd",
           s.auto_renew AS "autoRenew", p.name AS "planName", p.price_monthly AS "monthlyPrice"
           FROM platform.subscriptions s JOIN platform.plans p ON p.id = s.plan_id WHERE s.tenant_id = $1 ORDER BY s.created_at DESC`, [tenant.id]),
@@ -103,7 +102,7 @@ export class PlatformController {
         tx.query(`SELECT id, action, target_type AS "targetType", target_id AS "targetId", metadata, created_at AS "createdAt"
           FROM platform.platform_audit_log WHERE target_id = $1 ORDER BY created_at DESC LIMIT 50`, [tenant.id]),
       ]);
-      return { tenant, business, subscriptions: subscription, payments, supportRequests, auditLogs };
+      return { tenant, subscriptions: subscription, payments, supportRequests, auditLogs };
     });
   }
 
@@ -142,12 +141,31 @@ export class PlatformController {
   @ApiOperation({ summary: 'Resume suspended tenant workspace' })
   async resumeTenant(@Param('id') id: string) {
     const updated = await this.tenantDb.withPlatform(async (tx) => {
+      const tenant = await tx.queryOne<{
+        id: string;
+        slug: string;
+        requiresReprovisioning: boolean;
+      }>(
+        `SELECT id, slug,
+                COALESCE((metadata->>'requires_reprovisioning')::boolean, FALSE) AS "requiresReprovisioning"
+         FROM platform.tenants
+         WHERE (id::text = $1 OR slug = $1)
+         FOR UPDATE;`,
+        [id]
+      );
+      if (tenant?.requiresReprovisioning) {
+        throw new BadRequestException(
+          'This legacy workspace was reset and has no tenant users. Delete it and register a new workspace.'
+        );
+      }
+      if (!tenant) return null;
+
       const res = await tx.queryOne<{ id: string; slug: string }>(
         `UPDATE platform.tenants 
          SET status = 'active', suspended_at = NULL, updated_at = NOW() 
-         WHERE (id::text = $1 OR slug = $1)
+         WHERE id = $1
          RETURNING id, slug;`,
-        [id]
+        [tenant.id]
       );
       if (res) {
         await tx.execute(

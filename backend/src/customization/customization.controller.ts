@@ -15,6 +15,7 @@ import { CustomEntityCrudService } from './custom-entity-crud.service';
 import { IndustryTemplatesService } from './industry-templates.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { TenantResolverGuard } from '../tenancy/tenant-resolver.guard';
+import { TenantContextStorage } from '../tenancy/tenant-context.storage';
 import {
   CreateCustomFieldInput,
   CreateCustomEntityInput,
@@ -165,11 +166,9 @@ export class CustomizationController {
   }
 
   @Post('templates/:code/apply')
-  @ApiOperation({ summary: 'Apply industry template attributes to target tenant' })
-  async applyTemplate(
-    @Param('code') code: string,
-    @Body('tenantId') tenantId: string
-  ) {
+  @ApiOperation({ summary: 'Apply industry template attributes to this tenant' })
+  async applyTemplate(@Param('code') code: string) {
+    const tenantId = TenantContextStorage.get().tenantId;
     return await this.templates.applyTemplateToTenant(tenantId, code);
   }
 }

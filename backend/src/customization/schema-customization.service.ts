@@ -342,9 +342,9 @@ export class SchemaCustomizationService {
       const actions = ['Approve', 'Cancel', 'Create', 'Delete', 'Edit', 'Export', 'Print', 'View'];
       for (const act of actions) {
         const perm = await tx.queryOne<any>(
-          `INSERT INTO permissions (module, action, description)
+          `INSERT INTO permissions (resource, action, description)
            VALUES ($1, $2, $3)
-           ON CONFLICT (module, action) DO UPDATE SET description = EXCLUDED.description
+           ON CONFLICT (resource, action) DO UPDATE SET description = EXCLUDED.description
            RETURNING id;`,
           [input.label, act, `Can ${act} ${input.label}`]
         );

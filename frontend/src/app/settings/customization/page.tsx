@@ -207,7 +207,6 @@ export default function CustomizationPage() {
     try {
       await apiFetch(`/customization/templates/${code}/apply`, {
         method: 'POST',
-        body: JSON.stringify({ tenantId: 'current' }),
       });
       alert('Template applied successfully!');
       loadMetadata(selectedEntity);

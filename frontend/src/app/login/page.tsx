@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
+import { Select } from '@/components/ui/select';
 import { useAuth } from '@/lib/auth-context';
 import { useToast } from '@/components/ui/toast';
 import { Lock, Mail, ArrowRight, ShieldCheck } from 'lucide-react';
@@ -12,6 +13,9 @@ import { Lock, Mail, ArrowRight, ShieldCheck } from 'lucide-react';
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [tenantSlug, setTenantSlug] = useState('');
+  const [workspaceSelectionRequired, setWorkspaceSelectionRequired] = useState(false);
+  const [workspaces, setWorkspaces] = useState<Array<{ slug: string; displayName: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,7 +33,16 @@ export default function LoginPage() {
     try {
       setLoading(true);
       setError(null);
-      const authData = await login({ email, password });
+      const authData = await login({
+        email,
+        password,
+        tenantSlug: workspaceSelectionRequired ? tenantSlug : undefined,
+      });
+      if (authData.workspaceSelectionRequired) {
+        setWorkspaces(authData.workspaces || []);
+        setWorkspaceSelectionRequired(true);
+        return;
+      }
       if (authData.user?.mustChangePassword) {
         router.push('/change-password');
         return;
@@ -69,12 +82,24 @@ export default function LoginPage() {
           </div>
         )}
 
+        {workspaceSelectionRequired && (
+          <p className="mb-4 rounded border border-accent/20 bg-accent/5 p-2.5 text-xs text-text-secondary">
+            These credentials match more than one workspace. Select the workspace you want to open.
+          </p>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-3.5">
           <Input
             label="Email Address"
             type="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              setError(null);
+              setWorkspaceSelectionRequired(false);
+              setWorkspaces([]);
+              setTenantSlug('');
+            }}
             placeholder="name@company.com"
             prefixIcon={<Mail className="w-3.5 h-3.5" />}
             autoFocus
@@ -83,13 +108,35 @@ export default function LoginPage() {
           <PasswordInput
             label="Password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              setError(null);
+              setWorkspaceSelectionRequired(false);
+              setWorkspaces([]);
+              setTenantSlug('');
+            }}
             placeholder="Enter your Nirvagam account password"
             prefixIcon={<Lock className="w-3.5 h-3.5" />}
           />
 
+          {workspaceSelectionRequired && (
+            <Select
+              label="Workspace"
+              value={tenantSlug}
+              onChange={(e) => setTenantSlug(e.target.value)}
+              required
+              options={[
+                { value: '', label: 'Choose a workspace' },
+                ...workspaces.map((workspace) => ({
+                  value: workspace.slug,
+                  label: `${workspace.displayName} (${workspace.slug})`,
+                })),
+              ]}
+            />
+          )}
+
           <Button type="submit" variant="primary" loading={loading} className="w-full mt-2">
-            Sign In <ArrowRight className="w-3.5 h-3.5 ml-1" />
+            {workspaceSelectionRequired ? 'Continue' : 'Sign In'} <ArrowRight className="w-3.5 h-3.5 ml-1" />
           </Button>
         </form>
 

@@ -129,8 +129,10 @@ model Business {
   addressLine1   String       @map("address_line1")
   addressLine2   String?      @map("address_line2")
   city           String
+  district       String?
   state          String
   stateCode      String       @map("state_code")
+  jurisdiction   String?
   pincode        String
   country        String       @default("India")
   enabledModules Json         @default("[\"sales\", \"purchase\", \"inventory\", \"accounting\", \"pos\", \"gst\"]") @map("enabled_modules")
@@ -171,6 +173,7 @@ model Branch {
   addressLine1 String   @map("address_line1")
   addressLine2 String?  @map("address_line2")
   city         String
+  district     String?
   state        String
   stateCode    String   @map("state_code")
   pincode      String

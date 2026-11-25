@@ -115,6 +115,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify(credentials),
     });
 
+    if (data.workspaceSelectionRequired) {
+      return data;
+    }
+
     localStorage.setItem('nirvagam_access_token', data.accessToken);
     localStorage.setItem('nirvagam_refresh_token', data.refreshToken);
     setToken(data.accessToken);

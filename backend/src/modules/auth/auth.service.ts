@@ -18,6 +18,15 @@ import {
   JwtPayload,
   AuthUser,
 } from '@nirvagam/shared';
+import { TenantContext } from '../../tenancy/tenancy.types';
+
+interface LoginTenantRecord {
+  id: string;
+  slug: string;
+  display_name: string;
+  schema_name: string;
+  status: string;
+}
 
 @Injectable()
 export class AuthService {
@@ -32,7 +41,7 @@ export class AuthService {
     throw new ForbiddenException('Public registration is disabled. Contact a platform administrator to create a workspace.');
   }
 
-  async login(dto: LoginDto) {
+  async login(dto: LoginDto, host?: string) {
     const email = dto.email.toLowerCase().trim();
     const platformAdmin = await this.tenantDb.withPlatform((tx) =>
       tx.queryOne<{
@@ -94,7 +103,29 @@ export class AuthService {
       };
     }
 
-    const user = await this.prisma.user.findUnique({
+    let tenantRecord = await this.resolveLoginTenant(dto.tenantSlug, host);
+    if (!tenantRecord && !dto.tenantSlug?.trim()) {
+      const matchingTenants = await this.findTenantsForCredentials(email, dto.password);
+      if (matchingTenants.length > 1) {
+        return {
+          workspaceSelectionRequired: true,
+          workspaces: matchingTenants.map((tenant) => ({
+            slug: tenant.slug,
+            displayName: tenant.display_name,
+          })),
+        };
+      }
+      tenantRecord = matchingTenants[0] || null;
+    }
+    if (!tenantRecord) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+    if (tenantRecord.status !== 'active') {
+      throw new UnauthorizedException('This organization is not active. Please contact platform support.');
+    }
+
+    const tenantPrisma = this.prisma.getClientForSchema(tenantRecord.schema_name);
+    const user = await tenantPrisma.user.findUnique({
       where: { email },
       include: {
         tenant: true,
@@ -120,7 +151,7 @@ export class AuthService {
       },
     });
 
-    if (!user || !user.isActive) {
+    if (!user || !user.isActive || user.tenantId !== tenantRecord.id) {
       throw new UnauthorizedException('Invalid email or password');
     }
 
@@ -134,7 +165,7 @@ export class AuthService {
     }
 
     const roles = user.userRoles.map((ur) => ur.role.name);
-    const passwordState = await this.prisma.$queryRaw<Array<{ mustChangePassword: boolean }>>`
+    const passwordState = await tenantPrisma.$queryRaw<Array<{ mustChangePassword: boolean }>>`
       SELECT must_change_password AS "mustChangePassword"
       FROM users
       WHERE id = ${user.id}::uuid;
@@ -151,7 +182,7 @@ export class AuthService {
     let businessId = primaryBranch?.businessId;
 
     if (!businessId) {
-      const defaultBiz = await this.prisma.business.findFirst({
+      const defaultBiz = await tenantPrisma.business.findFirst({
         where: { tenantId: user.tenantId },
         include: { branches: true },
       });
@@ -230,7 +261,24 @@ export class AuthService {
         });
       }
 
-      const user = await this.prisma.user.findUnique({
+      if (!decoded.tenantId) {
+        throw new UnauthorizedException('Tenant identity is missing from the refresh token');
+      }
+      const tenantRecord = await this.tenantDb.withPlatform((tx) =>
+        tx.queryOne<{ id: string; schema_name: string; status: string }>(
+          `SELECT id, schema_name, status
+           FROM platform.tenants
+           WHERE id::text = $1
+           LIMIT 1;`,
+          [decoded.tenantId]
+        )
+      );
+      if (!tenantRecord || tenantRecord.status !== 'active') {
+        throw new UnauthorizedException('Tenant account is no longer active');
+      }
+
+      const tenantPrisma = this.prisma.getClientForSchema(tenantRecord.schema_name);
+      const user = await tenantPrisma.user.findUnique({
         where: { id: decoded.sub },
         include: {
           userRoles: {
@@ -243,7 +291,7 @@ export class AuthService {
         },
       });
 
-      if (!user || !user.isActive) {
+      if (!user || !user.isActive || user.tenantId !== tenantRecord.id) {
         throw new UnauthorizedException('User account no longer valid');
       }
 
@@ -437,5 +485,85 @@ export class AuthService {
        WHERE r.role_key = $1`, [role]
     ));
     return rows.map((row) => row.permission_key);
+  }
+
+  private async findTenantsForCredentials(email: string, password: string): Promise<LoginTenantRecord[]> {
+    const tenants = await this.tenantDb.withPlatform((tx) =>
+      tx.query<LoginTenantRecord>(
+        `SELECT id, slug, display_name, schema_name, status
+         FROM platform.tenants
+         WHERE status = 'active'
+         ORDER BY slug;`
+      )
+    );
+    const matchingTenants: LoginTenantRecord[] = [];
+    let nextTenantIndex = 0;
+    const workerCount = Math.min(5, tenants.length);
+
+    await Promise.all(Array.from({ length: workerCount }, async () => {
+      while (nextTenantIndex < tenants.length) {
+        const tenant = tenants[nextTenantIndex++];
+        const context: TenantContext = {
+          tenantId: tenant.id,
+          schemaName: tenant.schema_name,
+          slug: tenant.slug,
+          displayName: tenant.display_name,
+          status: 'active',
+          roleKeys: [],
+          branchIds: [],
+          planLimits: {
+            maxBranches: 1,
+            maxUsers: 5,
+            maxInvoicesPerMonth: 500,
+            featureFlags: {},
+          },
+        };
+        const user = await this.tenantDb.withTenant(context, (tx) =>
+          tx.queryOne<{ tenant_id: string; password_hash: string; is_active: boolean }>(
+            `SELECT tenant_id, password_hash, is_active
+             FROM users
+             WHERE lower(email) = $1
+             LIMIT 1;`,
+            [email]
+          )
+        );
+
+        if (
+          user?.is_active &&
+          user.tenant_id === tenant.id &&
+          await bcrypt.compare(password, user.password_hash)
+        ) {
+          matchingTenants.push(tenant);
+        }
+      }
+    }));
+
+    return matchingTenants.sort((first, second) => first.slug.localeCompare(second.slug));
+  }
+
+  private async resolveLoginTenant(tenantSlug?: string, host?: string) {
+    const normalizedSlug = tenantSlug?.trim().toLowerCase();
+    const domain = host?.split(':')[0].toLowerCase();
+    const tenants = await this.tenantDb.withPlatform((tx) =>
+      tx.query<{
+        id: string;
+        slug: string;
+        display_name: string;
+        schema_name: string;
+        status: string;
+      }>(
+        `SELECT t.id, t.slug, t.display_name, t.schema_name, t.status
+         FROM platform.tenants t
+         LEFT JOIN platform.tenant_domains td
+           ON td.tenant_id = t.id AND td.verified = TRUE AND td.domain = $2
+         WHERE ($1::text IS NOT NULL AND (t.id::text = $1 OR t.slug = $1 OR t.schema_name = $1))
+            OR td.tenant_id IS NOT NULL;`,
+        [normalizedSlug || null, domain || null]
+      )
+    );
+    if (tenants.length > 1) {
+      throw new UnauthorizedException('Workspace slug does not match the current workspace domain');
+    }
+    return tenants[0] || null;
   }
 }

@@ -13,6 +13,7 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
 import { RolesService } from './roles.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { TenantResolverGuard } from '../../tenancy/tenant-resolver.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthUser, UserRoleName } from '@nirvagam/shared';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -23,7 +24,7 @@ import { UpdateRolePermissionsDto } from './dto/update-role-permissions.dto';
 
 @ApiTags('Roles & Permissions')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, TenantResolverGuard)
 @Controller('roles')
 export class RolesController {
   constructor(private readonly rolesService: RolesService) {}

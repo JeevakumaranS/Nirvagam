@@ -6,6 +6,7 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Headers,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
@@ -13,6 +14,7 @@ import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { TenantResolverGuard } from '../../tenancy/tenant-resolver.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthUser } from '@nirvagam/shared';
 
@@ -33,8 +35,8 @@ export class AuthController {
   @ApiOperation({ summary: 'User login with email and password' })
   @ApiResponse({ status: 200, description: 'Authenticated successfully, returns JWT access and refresh tokens' })
   @ApiResponse({ status: 401, description: 'Invalid credentials or suspended tenant' })
-  async login(@Body() dto: LoginDto) {
-    return this.authService.login(dto);
+  async login(@Body() dto: LoginDto, @Headers('host') host?: string) {
+    return this.authService.login(dto, host);
   }
 
   @Post('refresh')
@@ -47,7 +49,7 @@ export class AuthController {
   }
 
   @Get('me')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, TenantResolverGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current authenticated user profile, active business, and assigned branch' })
   @ApiResponse({ status: 200, description: 'User profile returned' })
@@ -57,7 +59,7 @@ export class AuthController {
   }
 
   @Post('change-password')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, TenantResolverGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Change the authenticated tenant user password' })
   async changePassword(

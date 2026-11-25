@@ -38,11 +38,11 @@ export class RolesService {
         // Fetch mapped permissions for each role
         for (const r of roles) {
           const perms = await tx.query<any>(
-            `SELECT p.id, p.module, p.action, p.description
+            `SELECT p.id, p.resource, p.action, p.description
              FROM role_permissions rp
              JOIN permissions p ON p.id = rp.permission_id
              WHERE rp.role_id = $1
-             ORDER BY p.module ASC, p.action ASC;`,
+             ORDER BY p.resource ASC, p.action ASC;`,
             [r.id]
           );
 
@@ -51,7 +51,7 @@ export class RolesService {
             permissionId: p.id,
             permission: {
               id: p.id,
-              resource: p.module,
+              resource: p.resource,
               action: p.action,
               description: p.description,
             },
@@ -88,9 +88,9 @@ export class RolesService {
     if (tenantCtx) {
       return await this.tenantDb.withTenant(tenantCtx, async (tx) => {
         const permissions = await tx.query<any>(
-          `SELECT id, module as resource, action, description
+          `SELECT id, resource, action, description
            FROM permissions
-           ORDER BY module ASC, action ASC;`
+           ORDER BY resource ASC, action ASC;`
         );
 
         const grouped: Record<string, any[]> = {};

@@ -28,7 +28,7 @@ export class PlatformBusinessRegistrationController {
 
   @Get()
   @RequirePlatformPermissions('platform_tenants:view')
-  @ApiOperation({ summary: 'List platform tenants, plans, and registered business profiles' })
+  @ApiOperation({ summary: 'List tenant workspace identities and registration options without business data' })
   getWorkspace() {
     return this.registration.getWorkspace();
   }
@@ -51,10 +51,38 @@ export class PlatformBusinessRegistrationController {
     return this.registration.update(profileId, dto, user);
   }
 
+  @Get('tenants/:tenantId')
+  @RequirePlatformPermissions('platform_tenants:manage')
+  @ApiOperation({ summary: 'Load a tenant business profile for platform editing' })
+  getTenantBusinessProfile(@Param('tenantId', ParseUUIDPipe) tenantId: string) {
+    return this.registration.getTenantBusinessProfile(tenantId);
+  }
+
+  @Put('tenants/:tenantId')
+  @RequirePlatformPermissions('platform_tenants:manage')
+  @ApiOperation({ summary: 'Update a tenant business profile in its isolated schema' })
+  updateTenantBusinessProfile(
+    @Param('tenantId', ParseUUIDPipe) tenantId: string,
+    @Body() dto: SaveBusinessProfileDto,
+    @CurrentUser() user: AuthUser
+  ) {
+    return this.registration.updateTenantBusinessProfile(tenantId, dto, user);
+  }
+
   @Delete(':profileId')
   @RequirePlatformPermissions('platform_tenants:manage')
-  @ApiOperation({ summary: 'Delete a platform business profile' })
+  @ApiOperation({ summary: 'Permanently delete the business tenant and all of its data' })
   delete(@Param('profileId', ParseUUIDPipe) profileId: string, @CurrentUser() user: AuthUser) {
     return this.registration.delete(profileId, user);
+  }
+
+  @Delete('tenants/:tenantId')
+  @RequirePlatformPermissions('platform_tenants:manage')
+  @ApiOperation({ summary: 'Permanently delete a tenant workspace and all of its data' })
+  deleteTenant(
+    @Param('tenantId', ParseUUIDPipe) tenantId: string,
+    @CurrentUser() user: AuthUser
+  ) {
+    return this.registration.deleteTenant(tenantId, user);
   }
 }

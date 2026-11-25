@@ -6,6 +6,7 @@ import { UpdateBusinessDto } from './dto/update-business.dto';
 import { CreateBranchDto } from './dto/create-branch.dto';
 import { UpdateBranchDto } from './dto/update-branch.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { TenantResolverGuard } from '../../tenancy/tenant-resolver.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthUser } from '@nirvagam/shared';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
@@ -13,7 +14,7 @@ import { RequirePermissions } from '../../common/decorators/permissions.decorato
 
 @ApiTags('Businesses & Branches')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, TenantResolverGuard, PermissionsGuard)
 @Controller('businesses')
 export class BusinessesController {
   constructor(private readonly businessesService: BusinessesService) {}

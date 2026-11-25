@@ -5,6 +5,8 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TenantDatabaseService } from '../../tenancy/tenant-database.service';
+import { TenantContextStorage } from '../../tenancy/tenant-context.storage';
+import { TenantContext } from '../../tenancy/tenancy.types';
 import { RolesService } from './roles.service';
 
 describe('RolesService', () => {
@@ -88,6 +90,87 @@ describe('RolesService', () => {
       orderBy: { name: 'asc' },
     });
   });
+
+    it('uses the tenant permissions resource column when listing roles', async () => {
+      const role = { id: roleId, name: 'ACCOUNTANT', isSystem: true };
+      const tx = {
+        query: jest.fn()
+          .mockResolvedValueOnce([role])
+          .mockResolvedValueOnce([{
+            id: permissionId,
+            resource: 'accounting',
+            action: 'view',
+            description: 'View accounts',
+          }]),
+      };
+      const tenantDb = {
+        withTenant: jest.fn((_context, callback) => callback(tx)),
+      };
+      const tenantService = new RolesService(
+        prisma as PrismaService,
+        tenantDb as unknown as TenantDatabaseService
+      );
+      const context: TenantContext = {
+        tenantId: 'tenant-id',
+        schemaName: 't_1234abcd',
+        slug: 'tenant-a',
+        displayName: 'Tenant A',
+        status: 'active',
+        roleKeys: [],
+        branchIds: [],
+        planLimits: {
+          maxBranches: 1,
+          maxUsers: 5,
+          maxInvoicesPerMonth: 500,
+          featureFlags: {},
+        },
+      };
+
+      const result = await TenantContextStorage.run(context, () => tenantService.findAll());
+
+      expect(tx.query.mock.calls[1][0]).toContain('p.resource');
+      expect(tx.query.mock.calls[1][0]).not.toContain('p.module');
+      expect(result[0].rolePermissions[0].permission.resource).toBe('accounting');
+    });
+
+    it('uses the tenant permissions resource column when listing permissions', async () => {
+      const tx = {
+        query: jest.fn().mockResolvedValue([{
+          id: permissionId,
+          resource: 'users',
+          action: 'view',
+          description: 'View users',
+        }]),
+      };
+      const tenantDb = {
+        withTenant: jest.fn((_context, callback) => callback(tx)),
+      };
+      const tenantService = new RolesService(
+        prisma as PrismaService,
+        tenantDb as unknown as TenantDatabaseService
+      );
+      const context: TenantContext = {
+        tenantId: 'tenant-id',
+        schemaName: 't_1234abcd',
+        slug: 'tenant-a',
+        displayName: 'Tenant A',
+        status: 'active',
+        roleKeys: [],
+        branchIds: [],
+        planLimits: {
+          maxBranches: 1,
+          maxUsers: 5,
+          maxInvoicesPerMonth: 500,
+          featureFlags: {},
+        },
+      };
+
+      const result = await TenantContextStorage.run(context, () => tenantService.getAllPermissions());
+
+      expect(tx.query.mock.calls[0][0]).toContain('SELECT id, resource, action, description');
+      expect(tx.query.mock.calls[0][0]).not.toContain('module');
+      expect(result.users[0].id).toBe(permissionId);
+    });
 
   it('replaces permissions for a predefined role', async () => {
     await expect(

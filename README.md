@@ -34,11 +34,8 @@
 
 ### Roles & RBAC
 
-Run `npm run prisma:seed` to create the predefined roles and their default
-permissions. Seeding also restores predefined role grants to those defaults.
-Predefined role permission changes made in `/settings/roles` are global and
-affect every tenant using that role; custom roles are scoped to the current
-business. A role cannot be deleted while it is assigned to users.
+Roles, permissions, and user accounts are stored in each tenant's own schema.
+Changes to one tenant's roles do not affect any other tenant.
 
 The permission catalog is stored in the database and includes view, create,
 edit, delete, approve, cancel, export, print, and access-reports actions.
@@ -63,34 +60,23 @@ npm run dev:frontend
 npm run dev
 ```
 
-Before using the expanded sales and billing workflow, apply
-`backend/prisma/migrations/20261123154500_sales_billing_features/migration.sql`
-once to each application database, then regenerate Prisma Client:
+### Database Migrations and Tenant Isolation
 
-```bash
-npm run prisma:generate
-```
+Tenant tables are created from `backend/prisma/migrations` inside each tenant's
+schema. Run `npm run tenant:migrate` from `backend/` after deploying migration
+files; new tenants receive the current schema during registration. Do not run
+Prisma `migrate` or `db push` directly against `public`; the `prisma:migrate`
+and `prisma:push` scripts are aliases for the tenant migration runner.
+`npm run prisma:generate` only regenerates the Prisma client and does not apply
+database changes.
 
-### Prisma Database Migrations
-
-For a fresh database, run from `backend/`:
-
-```powershell
-npx prisma migrate deploy
-```
-
-For an existing database already created from the current Prisma schema, mark
-the initial schema as applied once, then apply pending migrations:
-
-```powershell
-npx prisma migrate resolve --applied 20261119155900_initial_schema
-npx prisma migrate dev --skip-generate
-```
-
-Only mark the baseline as applied when the existing database already matches
-the current schema. The UUIDv7 migration preserves IDs that are already UUIDv7.
-If you need to regenerate Prisma Client, stop the running backend first and run
-`npx prisma generate` from `backend/`.
+Platform migrations must be applied in filename order. Migration
+`008_per_tenant_schema_reset.sql` is a one-time, destructive transition: it
+deletes legacy shared tenant records and old tenant schemas, preserves platform
+administrator accounts, and suspends old workspaces because their tenant users
+are removed. Back up the database before applying it. Afterward, run
+`npm run tenant:migrate`; old workspaces must be deleted and registered again
+before their owners can log in.
 
 ### Create a Platform Super Admin
 
@@ -104,6 +90,8 @@ backend/migrations/platform/003_platform_role_permissions.sql
 backend/migrations/platform/004_platform_operations.sql
 backend/migrations/platform/005_business_profile_location.sql
 backend/migrations/platform/006_business_branch_location.sql
+backend/migrations/platform/007_single_head_office_per_business.sql
+backend/migrations/platform/008_per_tenant_schema_reset.sql
 ```
 
 The CLI implementation is in `backend/src/account-creation/create-super-admin.ts`.
@@ -119,14 +107,9 @@ provide `SUPER_ADMIN_PASSWORD` through the environment.
 
 ### Business Onboarding
 
-From `backend`, run `npm run prisma:seed` after applying the database migrations.
-This initializes only shared plans, permissions, and system roles; it does not
-create a tenant, business, administrator, or sample transactions.
-
 Sign in as the platform super admin and register the business from the platform
-business-registration page. Set the owner's email and temporary password there.
-The owner signs in from `/login` with those credentials and is prompted to change
-the password on first sign-in. Public self-registration is disabled.
-
-Existing installations may still contain accounts or sample records created by
-older seed scripts. The new seed does not recreate or overwrite those records.
+business-registration page. Registration creates the isolated schema, current
+tables, business owner account, and required tenant-local roles atomically. Set
+the owner's name, email, and temporary password there. The owner signs in from
+`/login` with those credentials and is prompted to change the password on first
+sign-in. Public self-registration is disabled.

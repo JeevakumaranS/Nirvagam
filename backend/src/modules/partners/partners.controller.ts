@@ -4,6 +4,7 @@ import { PartnersService } from './partners.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { TenantResolverGuard } from '../../tenancy/tenant-resolver.guard';
 import { BusinessContextGuard } from '../../common/guards/business-context.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthUser, PaginationParams } from '@nirvagam/shared';
@@ -12,7 +13,7 @@ import { RequirePermissions } from '../../common/decorators/permissions.decorato
 
 @ApiTags('Customers & Suppliers')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, BusinessContextGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, TenantResolverGuard, BusinessContextGuard, PermissionsGuard)
 @Controller()
 export class PartnersController {
   constructor(private readonly partnersService: PartnersService) {}

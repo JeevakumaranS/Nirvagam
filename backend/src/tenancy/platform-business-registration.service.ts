@@ -1,15 +1,10 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import {
-  AccountGroup,
-  BusinessType as PrismaBusinessType,
-  IndustryType as PrismaIndustryType,
-  Prisma,
-} from '@prisma/client';
-import * as bcrypt from 'bcryptjs';
-import { PrismaService } from '../prisma/prisma.service';
-import { TenantDatabaseService, TenantTx } from './tenant-database.service';
-import { SaveBusinessProfileDto, SUPPORTED_BUSINESS_MODULES } from './dto/save-business-profile.dto';
 import { AuthUser } from '@nirvagam/shared';
+import { TenantDatabaseService, quoteIdent, validateSchemaName } from './tenant-database.service';
+import { TenantCacheService } from './tenant-cache.service';
+import { TenantProvisioningService } from './tenant-provisioning.service';
+import { SaveBusinessProfileDto, SUPPORTED_BUSINESS_MODULES } from './dto/save-business-profile.dto';
+import { TenantContext } from './tenancy.types';
 
 const DEFAULT_MODULES: Record<string, string[]> = {
   RETAIL: ['sales', 'purchases', 'inventory', 'accounting', 'pos', 'gst', 'reports'],
@@ -32,608 +27,602 @@ const DEFAULT_MODULES: Record<string, string[]> = {
 export class PlatformBusinessRegistrationService {
   constructor(
     private readonly tenantDb: TenantDatabaseService,
-    private readonly prisma: PrismaService
+    private readonly cache: TenantCacheService,
+    private readonly provisioning: TenantProvisioningService
   ) {}
 
   async getWorkspace() {
-    const workspace = await this.tenantDb.withPlatform(async (tx) => {
-      const tenants = await tx.query(
-        `SELECT t.id, t.slug, t.display_name AS "displayName", t.status,
-                t.plan_id AS "planId", p.name AS "planName"
-         FROM platform.tenants t
-         LEFT JOIN platform.plans p ON p.id = t.plan_id
-         ORDER BY t.created_at DESC;`
-      );
-      const profiles = await tx.query<any>(
-        `SELECT bp.id, bp.tenant_id AS "tenantId", t.display_name AS "tenantName",
-                t.slug AS "tenantSlug", bp.legal_name AS "legalName",
-                bp.trade_name AS "tradeName", bp.business_type AS "businessType",
-                bp.industry, bp.gstin, bp.pan, bp.address_line1 AS "addressLine1",
-                bp.address_line2 AS "addressLine2", bp.city, bp.district, bp.state,
-                bp.state_code AS "stateCode", bp.jurisdiction, bp.pincode,
-                bp.financial_year_start AS "financialYearStart",
-                bp.financial_year_end AS "financialYearEnd",
-                bp.invoice_prefix AS "invoicePrefix", bp.currency,
-                bp.tax_settings AS "taxSettings", bp.logo_url AS "logoUrl",
-                bp.digital_signature_url AS "digitalSignatureUrl",
-                bp.enabled_modules AS "enabledModules", bp.created_at AS "createdAt"
-         FROM platform.business_profiles bp
-         JOIN platform.tenants t ON t.id = bp.tenant_id
-         ORDER BY bp.created_at DESC;`
-      );
-
-      const branches = profiles.length
-        ? await tx.query<any>(
-            `SELECT id, profile_id AS "profileId", code, name,
-                    is_head_office AS "isHeadOffice", gstin,
-                    address_line1 AS "addressLine1", address_line2 AS "addressLine2",
-                    city, district, state, state_code AS "stateCode", pincode
-             FROM platform.business_branches
-             WHERE profile_id = ANY($1::uuid[])
-             ORDER BY is_head_office DESC, name;`,
-            [profiles.map((profile) => profile.id)]
-          )
-        : [];
-      const plans = await tx.query(
+    const tenants = await this.tenantDb.withPlatform((tx) =>
+      tx.query(
+        `SELECT id, slug, display_name AS "displayName", status, plan_id AS "planId"
+         FROM platform.tenants
+         ORDER BY created_at DESC;`
+      )
+    );
+    const plans = await this.tenantDb.withPlatform((tx) =>
+      tx.query(
         `SELECT id, code, name, price_monthly AS "priceMonthly", currency
          FROM platform.plans
          WHERE is_active = TRUE
          ORDER BY price_monthly, name;`
-      );
-
-      return {
-        tenants,
-        plans,
-        supportedModules: SUPPORTED_BUSINESS_MODULES,
-        moduleDefaults: DEFAULT_MODULES,
-        profiles: profiles.map((profile) => ({
-          ...profile,
-          branches: branches.filter((branch) => branch.profileId === profile.id),
-        })),
-      };
-    });
-
-    const tenantIds = workspace.profiles.map((profile) => profile.tenantId);
-    const ownerUsers = tenantIds.length
-      ? await this.prisma.$queryRaw<Array<{
-          tenantId: string;
-          email: string;
-          mustChangePassword: boolean;
-        }>>`
-          SELECT u.tenant_id AS "tenantId", u.email,
-                 u.must_change_password AS "mustChangePassword"
-          FROM users u
-          JOIN user_roles ur ON ur.user_id = u.id
-          JOIN roles r ON r.id = ur.role_id
-          WHERE u.tenant_id = ANY(${tenantIds}::uuid[])
-            AND r.name = 'BUSINESS_OWNER';
-        `
-      : [];
+      )
+    );
 
     return {
-      ...workspace,
-      profiles: workspace.profiles.map((profile) => ({
-        ...profile,
-        username: ownerUsers.find((owner) => owner.tenantId === profile.tenantId)?.email || null,
-        requirePasswordChange:
-          ownerUsers.find((owner) => owner.tenantId === profile.tenantId)?.mustChangePassword ?? true,
-      })),
+      tenants,
+      plans,
+      supportedModules: SUPPORTED_BUSINESS_MODULES,
+      moduleDefaults: DEFAULT_MODULES,
     };
   }
 
   async create(dto: SaveBusinessProfileDto, actor?: AuthUser) {
-    if (!dto.username || !dto.temporaryPassword) {
-      throw new BadRequestException('Owner username and temporary password are required for new business registration');
+    this.validateImage(dto.logoUrl, 'Logo');
+    this.validateImage(dto.digitalSignatureUrl, 'Digital signature');
+    this.validateFinancialYear(dto);
+    this.validateHeadOfficeCount(dto.branches);
+    if (!dto.ownerName?.trim() || !dto.username?.trim() || !dto.temporaryPassword) {
+      throw new BadRequestException(
+        'Business owner name, username, and temporary password are required for new tenant registration'
+      );
     }
-    this.validateImage(dto.logoUrl, 'Logo');
-    this.validateImage(dto.digitalSignatureUrl, 'Digital signature');
-    this.validateFinancialYear(dto);
 
-    return this.tenantDb.withPlatform(async (tx) => {
-      const newTenant = await tx.queryOne<{ id: string; slug: string }>(
-        `INSERT INTO platform.tenants (slug, display_name, schema_name, status, metadata)
-         VALUES ('org-' || substr(gen_random_uuid()::text, 1, 8), $1,
-           't_' || substr(gen_random_uuid()::text, 1, 8), 'active', $2::jsonb)
-         RETURNING id, slug;`,
-        [dto.tradeName.trim(), JSON.stringify({ source: 'platform_business_registration' })]
-      );
-      const tenantId = newTenant!.id;
-
-      const profile = await tx.queryOne<{ id: string }>(
-        `INSERT INTO platform.business_profiles (
-          tenant_id, legal_name, trade_name, business_type, industry, gstin, pan,
-          address_line1, address_line2, city, district, state, state_code, jurisdiction, pincode,
-          financial_year_start, financial_year_end, invoice_prefix, currency, tax_settings,
-          logo_url, digital_signature_url, enabled_modules
-        ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-          $19, $20::jsonb, $21, $22, $23::jsonb
-        ) RETURNING id;`,
-        this.profileValues({ ...dto, tenantId })
-      );
-
-      await this.replaceBranches(tx, profile!.id, dto.branches || []);
-      if (dto.planId !== undefined && dto.planId) {
-        await this.updateTenantPlan(tx, tenantId, dto.planId);
-      }
-      await this.syncOwnerAccount(tx, profile!.id, tenantId, dto, true);
-      await tx.execute(`INSERT INTO platform.platform_audit_log (actor_id, action, target_type, target_id, metadata)
-        VALUES ($1, 'BUSINESS_REGISTERED', 'TENANT', $2, $3)`,
-        [actor?.id || null, tenantId, JSON.stringify({ profileId: profile!.id, tradeName: dto.tradeName })]);
-
-      return {
-        id: profile!.id,
-        tenantId,
-        tenantSlug: newTenant!.slug,
-        ownerEmail: dto.username!.trim().toLowerCase(),
-      };
-    });
+    const result = await this.provisioning.provisionBusiness(dto, actor);
+    return {
+      id: result.businessId,
+      businessId: result.businessId,
+      tenantId: result.tenantId,
+      tenantSlug: result.slug,
+      ownerEmail: result.ownerEmail,
+    };
   }
 
-  async update(profileId: string, dto: SaveBusinessProfileDto, actor?: AuthUser) {
-    this.validateImage(dto.logoUrl, 'Logo');
-    this.validateImage(dto.digitalSignatureUrl, 'Digital signature');
-    this.validateFinancialYear(dto);
-
-    return this.tenantDb.withPlatform(async (tx) => {
-      const existing = await tx.queryOne<{ tenantId: string }>(
-        `SELECT tenant_id AS "tenantId"
-         FROM platform.business_profiles
-         WHERE id = $1;`,
-        [profileId]
-      );
-      if (!existing) {
-        throw new NotFoundException('Business profile not found');
-      }
-      if (existing.tenantId !== dto.tenantId) {
-        throw new BadRequestException('A business profile cannot be reassigned to another tenant');
-      }
-
-      await tx.execute(
-        `UPDATE platform.business_profiles SET
-          legal_name = $2, trade_name = $3, business_type = $4, industry = $5,
-          gstin = $6, pan = $7, address_line1 = $8, address_line2 = $9,
-          city = $10, district = $11, state = $12, state_code = $13, jurisdiction = $14,
-          pincode = $15, financial_year_start = $16, financial_year_end = $17,
-          invoice_prefix = $18, currency = $19, tax_settings = $20::jsonb,
-          logo_url = $21, digital_signature_url = $22, enabled_modules = $23::jsonb,
-          updated_at = NOW()
-         WHERE id = $1;`,
-        [profileId, ...this.profileValues(dto).slice(1)]
-      );
-
-      await this.replaceBranches(tx, profileId, dto.branches || []);
-      if (dto.planId !== undefined) {
-        await this.updateTenantPlan(tx, dto.tenantId, dto.planId);
-      }
-      await this.syncOwnerAccount(tx, profileId, dto.tenantId, dto, false);
-      await tx.execute(`INSERT INTO platform.platform_audit_log (actor_id, action, target_type, target_id, metadata)
-        VALUES ($1, 'BUSINESS_PROFILE_UPDATED', 'TENANT', $2, $3)`,
-        [actor?.id || null, dto.tenantId, JSON.stringify({ profileId })]);
-
-      return { id: profileId };
-    });
-  }
-
-  async delete(profileId: string, actor?: AuthUser) {
-    return this.tenantDb.withPlatform(async (tx) => {
-      const existing = await tx.queryOne<{ id: string; tenantId: string }>(
-        'SELECT id, tenant_id AS "tenantId" FROM platform.business_profiles WHERE id = $1;',
-        [profileId]
-      );
-      if (!existing) {
-        throw new NotFoundException('Business profile not found');
-      }
-      await tx.execute('DELETE FROM platform.business_branches WHERE profile_id = $1;', [profileId]);
-      await tx.execute('DELETE FROM platform.business_profiles WHERE id = $1;', [profileId]);
-      await tx.execute(`INSERT INTO platform.platform_audit_log (actor_id, action, target_type, target_id, metadata)
-        VALUES ($1, 'BUSINESS_PROFILE_DELETED', 'TENANT', $2, $3)`,
-        [actor?.id || null, existing.tenantId, JSON.stringify({ profileId })]);
-      return { success: true };
-    });
-  }
-
-  private profileValues(dto: SaveBusinessProfileDto): unknown[] {
-    return [
-      dto.tenantId,
-      dto.legalName.trim(),
-      dto.tradeName.trim(),
-      dto.businessType,
-      dto.industry,
-      dto.gstin?.trim().toUpperCase() || null,
-      dto.pan?.trim().toUpperCase() || null,
-      dto.addressLine1.trim(),
-      dto.addressLine2?.trim() || null,
-      dto.city.trim(),
-      dto.district?.trim() || null,
-      dto.state.trim(),
-      dto.stateCode.trim(),
-      dto.jurisdiction?.trim() || null,
-      dto.pincode.trim(),
-      dto.financialYearStart,
-      dto.financialYearEnd,
-      dto.invoicePrefix.trim(),
-      dto.currency.trim().toUpperCase(),
-      JSON.stringify(dto.taxSettings || {}),
-      dto.logoUrl || null,
-      dto.digitalSignatureUrl || null,
-      JSON.stringify(dto.enabledModules || DEFAULT_MODULES[dto.industry] || SUPPORTED_BUSINESS_MODULES),
-    ];
-  }
-
-  private async syncOwnerAccount(
-    tx: TenantTx,
-    profileId: string,
-    tenantId: string,
-    dto: SaveBusinessProfileDto,
-    isNewProfile: boolean
-  ) {
-    const tenantRecord = await tx.queryOne<{ slug: string }>(
-      'SELECT slug FROM platform.tenants WHERE id = $1;',
-      [tenantId]
+  async update(_profileId: string, _dto: SaveBusinessProfileDto, _actor?: AuthUser) {
+    throw new BadRequestException(
+      'Platform administrators cannot view or edit tenant business data after registration'
     );
-    if (!tenantRecord) {
-      throw new NotFoundException('Tenant not found');
-    }
-
-    const username = dto.username?.trim().toLowerCase();
-    if (!username && dto.temporaryPassword) {
-      throw new BadRequestException('A username is required when setting a temporary password');
-    }
-    if (isNewProfile && !username) {
-      throw new BadRequestException('Owner username is required');
-    }
-
-    const branches = dto.branches || [];
-
-    await this.prisma.$transaction(async (prismaTx) => {
-      const currentTenant = await prismaTx.tenant.findUnique({ where: { id: tenantId } });
-      if (!currentTenant) {
-        const slugConflict = await prismaTx.tenant.findUnique({ where: { slug: tenantRecord.slug } });
-        if (slugConflict) {
-          throw new ConflictException('The platform tenant slug is already assigned to a different application tenant');
-        }
-        await prismaTx.tenant.create({
-          data: { id: tenantId, slug: tenantRecord.slug, name: dto.tradeName.trim() },
-        });
-      } else {
-        await prismaTx.tenant.update({
-          where: { id: tenantId },
-          data: { name: dto.tradeName.trim() },
-        });
-      }
-
-      const businessData = {
-        tenantId,
-        legalName: dto.legalName.trim(),
-        tradeName: dto.tradeName.trim(),
-        businessType: dto.businessType as PrismaBusinessType,
-        industry: dto.industry as PrismaIndustryType,
-        pan: dto.pan?.trim().toUpperCase() || null,
-        logoUrl: dto.logoUrl || null,
-        signatureUrl: dto.digitalSignatureUrl || null,
-        currency: dto.currency.trim().toUpperCase(),
-        taxSettings: JSON.parse(JSON.stringify(dto.taxSettings || {})),
-        addressLine1: dto.addressLine1.trim(),
-        addressLine2: dto.addressLine2?.trim() || null,
-        city: dto.city.trim(),
-        state: dto.state.trim(),
-        stateCode: dto.stateCode.trim(),
-        pincode: dto.pincode.trim(),
-        enabledModules: dto.enabledModules || [],
-      };
-      const existingBusiness = await prismaTx.business.findUnique({ where: { id: profileId } });
-      if (existingBusiness && existingBusiness.tenantId !== tenantId) {
-        throw new ConflictException('This profile ID is already associated with a different tenant business');
-      }
-      if (existingBusiness) {
-        await prismaTx.business.update({ where: { id: profileId }, data: businessData });
-      } else {
-        await prismaTx.business.create({ data: { id: profileId, ...businessData } });
-      }
-
-      const createdBranches = [];
-      for (const [index, branch] of branches.entries()) {
-        const code = branch.code.trim().toUpperCase();
-        const existingBranch = await prismaTx.branch.findUnique({
-          where: { businessId_code: { businessId: profileId, code } },
-        });
-        if (existingBranch) {
-          createdBranches.push(await prismaTx.branch.update({
-            where: { id: existingBranch.id },
-            data: {
-              name: branch.name.trim(),
-              isHeadOffice: branch.isHeadOffice || index === 0,
-              gstin: branch.gstin?.trim().toUpperCase() || null,
-              addressLine1: branch.addressLine1.trim(),
-              addressLine2: branch.addressLine2?.trim() || null,
-              city: branch.city.trim(),
-              state: branch.state.trim(),
-              stateCode: branch.stateCode.trim(),
-              pincode: branch.pincode.trim(),
-            },
-          }));
-          continue;
-        }
-        createdBranches.push(await prismaTx.branch.create({
-          data: {
-            businessId: profileId,
-            code,
-            name: branch.name.trim(),
-            isHeadOffice: branch.isHeadOffice || index === 0,
-            gstin: branch.gstin?.trim().toUpperCase() || null,
-            addressLine1: branch.addressLine1.trim(),
-            addressLine2: branch.addressLine2?.trim() || null,
-            city: branch.city.trim(),
-            state: branch.state.trim(),
-            stateCode: branch.stateCode.trim(),
-            pincode: branch.pincode.trim(),
-          },
-        }));
-      }
-      const ownerBranch = createdBranches.find((branch) => branch.isHeadOffice) || createdBranches[0];
-
-      const ownerRole = await prismaTx.role.findFirst({
-        where: { name: 'BUSINESS_OWNER', businessId: null },
-      });
-      if (!ownerRole) {
-        throw new BadRequestException('Business Owner role is not initialized; seed the system roles before registration');
-      }
-
-      const existingOwner = await prismaTx.user.findFirst({
-        where: {
-          tenantId,
-          userRoles: { some: { role: { name: 'BUSINESS_OWNER' } } },
-        },
-      });
-      if (!username) {
-        if (isNewProfile) {
-          throw new BadRequestException('Owner username is required');
-        }
-        if (existingOwner && dto.requirePasswordChange !== undefined) {
-          await prismaTx.$executeRaw`
-            UPDATE users
-            SET must_change_password = ${dto.requirePasswordChange}
-            WHERE id = ${existingOwner.id}::uuid;
-          `;
-        }
-        return;
-      }
-
-      const usernameOwner = await prismaTx.user.findUnique({ where: { email: username } });
-      if (usernameOwner && usernameOwner.id !== existingOwner?.id) {
-        throw new ConflictException('This username is already in use');
-      }
-      if (!existingOwner && !dto.temporaryPassword) {
-        throw new BadRequestException('A temporary password is required when creating the owner account');
-      }
-
-      const passwordHash = dto.temporaryPassword
-        ? await bcrypt.hash(dto.temporaryPassword, 12)
-        : undefined;
-      const owner = existingOwner
-        ? await prismaTx.user.update({
-            where: { id: existingOwner.id },
-            data: {
-              email: username,
-              ...(passwordHash ? { passwordHash } : {}),
-            },
-          })
-        : await prismaTx.user.create({
-            data: {
-              tenantId,
-              email: username,
-              passwordHash: passwordHash!,
-              firstName: dto.tradeName.trim(),
-              lastName: 'Owner',
-            },
-          });
-
-      if (dto.requirePasswordChange !== undefined || passwordHash) {
-        await prismaTx.$executeRaw`
-          UPDATE users
-          SET must_change_password = ${dto.requirePasswordChange ?? true}
-          WHERE id = ${owner.id}::uuid;
-        `;
-      }
-
-      for (const branch of createdBranches) {
-        const warehouse = await prismaTx.warehouse.findFirst({ where: { branchId: branch.id } });
-        if (!warehouse) {
-          await prismaTx.warehouse.create({
-            data: {
-              branchId: branch.id,
-              name: `${branch.name} Warehouse`,
-              code: `WH-${branch.code}`,
-              isDefault: true,
-            },
-          });
-        }
-      }
-
-      if (isNewProfile) {
-        await this.initializeBusinessDefaults(prismaTx, profileId, ownerBranch?.id, dto);
-      }
-
-      await prismaTx.userRole.upsert({
-        where: { userId_roleId: { userId: owner.id, roleId: ownerRole.id } },
-        create: { userId: owner.id, roleId: ownerRole.id },
-        update: {},
-      });
-      if (ownerBranch) {
-        await prismaTx.userBranchAssignment.updateMany({
-          where: { userId: owner.id, isDefault: true },
-          data: { isDefault: false },
-        });
-        await prismaTx.userBranchAssignment.upsert({
-          where: { userId_branchId: { userId: owner.id, branchId: ownerBranch.id } },
-          create: { userId: owner.id, branchId: ownerBranch.id, isDefault: true },
-          update: { isDefault: true },
-        });
-      }
-    });
   }
 
-  private async initializeBusinessDefaults(
-    prismaTx: Prisma.TransactionClient,
-    businessId: string,
-    branchId: string | undefined,
-    dto: SaveBusinessProfileDto
-  ) {
-    const taxRates = [
-      { name: 'GST 0% (Nil Rated)', rate: 0, cgstRate: 0, sgstRate: 0, igstRate: 0 },
-      { name: 'GST 5%', rate: 5, cgstRate: 2.5, sgstRate: 2.5, igstRate: 5 },
-      { name: 'GST 12%', rate: 12, cgstRate: 6, sgstRate: 6, igstRate: 12 },
-      { name: 'GST 18%', rate: 18, cgstRate: 9, sgstRate: 9, igstRate: 18, isDefault: true },
-      { name: 'GST 28%', rate: 28, cgstRate: 14, sgstRate: 14, igstRate: 28 },
-    ];
-    await prismaTx.taxRate.createMany({
-      data: taxRates.map((taxRate) => ({ businessId, ...taxRate })),
-    });
-
-    const units = [
-      { name: 'Pieces', symbol: 'PCS', decimalPlaces: 0, isDefault: true },
-      { name: 'Box', symbol: 'BOX', decimalPlaces: 0, isDefault: false },
-      { name: 'Kilogram', symbol: 'KG', decimalPlaces: 3, isDefault: false },
-    ];
-    for (const unit of units) {
-      await prismaTx.unit.upsert({
-        where: { businessId_symbol: { businessId, symbol: unit.symbol } },
-        create: { businessId, ...unit },
-        update: {},
-      });
-    }
-
-    const accounts = [
-      { code: '1010', name: 'Cash in Hand', group: AccountGroup.ASSET, subGroup: 'Cash' },
-      { code: '1020', name: 'Operating Bank Account', group: AccountGroup.ASSET, subGroup: 'Bank' },
-      { code: '1030', name: 'Accounts Receivable (Debtors)', group: AccountGroup.ASSET, subGroup: 'Accounts Receivable' },
-      { code: '1040', name: 'Merchandise Inventory', group: AccountGroup.ASSET, subGroup: 'Inventory' },
-      { code: '1051', name: 'Input CGST', group: AccountGroup.ASSET, subGroup: 'Tax Receivable' },
-      { code: '1052', name: 'Input SGST', group: AccountGroup.ASSET, subGroup: 'Tax Receivable' },
-      { code: '1053', name: 'Input IGST', group: AccountGroup.ASSET, subGroup: 'Tax Receivable' },
-      { code: '2010', name: 'Accounts Payable (Creditors)', group: AccountGroup.LIABILITY, subGroup: 'Accounts Payable' },
-      { code: '2021', name: 'Output CGST', group: AccountGroup.LIABILITY, subGroup: 'Tax Payable' },
-      { code: '2022', name: 'Output SGST', group: AccountGroup.LIABILITY, subGroup: 'Tax Payable' },
-      { code: '2023', name: 'Output IGST', group: AccountGroup.LIABILITY, subGroup: 'Tax Payable' },
-      { code: '3010', name: 'Capital Account', group: AccountGroup.EQUITY, subGroup: 'Equity' },
-      { code: '4010', name: 'Sales Revenue', group: AccountGroup.INCOME, subGroup: 'Operating Revenue' },
-      { code: '5010', name: 'Cost of Goods Sold (COGS)', group: AccountGroup.EXPENSE, subGroup: 'Direct Expense' },
-      { code: '5020', name: 'Purchase Expenses', group: AccountGroup.EXPENSE, subGroup: 'Direct Expense' },
-      { code: '5090', name: 'Round-off Account', group: AccountGroup.EXPENSE, subGroup: 'Adjustment' },
-    ];
-    for (const account of accounts) {
-      await prismaTx.chartOfAccount.upsert({
-        where: { businessId_code: { businessId, code: account.code } },
-        create: { businessId, ...account, isSystem: true },
-        update: {},
-      });
-    }
-
-    const financialYearStart = new Date(dto.financialYearStart);
-    const financialYearEnd = new Date(dto.financialYearEnd);
-    await prismaTx.fiscalPeriod.upsert({
-      where: {
-        businessId_name: {
-          businessId,
-          name: `FY ${financialYearStart.getUTCFullYear()}-${financialYearEnd.getUTCFullYear()}`,
-        },
-      },
-      create: {
-        businessId,
-        name: `FY ${financialYearStart.getUTCFullYear()}-${financialYearEnd.getUTCFullYear()}`,
-        startDate: financialYearStart,
-        endDate: financialYearEnd,
-        isActive: true,
-      },
-      update: {},
-    });
-
-    if (branchId) {
-      const sequences = [
-        { documentType: 'TAX_INVOICE', prefix: dto.invoicePrefix.trim() },
-        { documentType: 'POS_RECEIPT', prefix: 'POS-' },
-        { documentType: 'PURCHASE_INVOICE', prefix: 'PUR-' },
-        { documentType: 'QUOTATION', prefix: 'QUO-' },
-      ];
-      for (const sequence of sequences) {
-        await prismaTx.documentSequence.upsert({
-          where: {
-            businessId_branchId_documentType: {
-              businessId,
-              branchId,
-              documentType: sequence.documentType,
-            },
-          },
-          create: { businessId, branchId, ...sequence, nextNumber: 1, padding: 4 },
-          update: {},
-        });
-      }
-    }
+  async delete(_profileId: string, _actor?: AuthUser) {
+    throw new BadRequestException('Delete a tenant by its workspace ID instead of a business profile ID');
   }
 
-  private async replaceBranches(tx: TenantTx, profileId: string, branches: SaveBusinessProfileDto['branches']) {
-    await tx.execute('DELETE FROM platform.business_branches WHERE profile_id = $1;', [profileId]);
-    for (const branch of branches || []) {
-      await tx.execute(
-        `INSERT INTO platform.business_branches (
-          profile_id, code, name, is_head_office, gstin, address_line1, address_line2,
-          city, district, state, state_code, pincode
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);`,
-        [
-          profileId,
-          branch.code.trim().toUpperCase(),
-          branch.name.trim(),
-          branch.isHeadOffice || false,
-          branch.gstin?.trim().toUpperCase() || null,
-          branch.addressLine1.trim(),
-          branch.addressLine2?.trim() || null,
-          branch.city.trim(),
-          branch.district?.trim() || null,
-          branch.state.trim(),
-          branch.stateCode.trim(),
-          branch.pincode.trim(),
-        ]
-      );
-    }
-  }
-
-  private async updateTenantPlan(tx: TenantTx, tenantId: string, planId: string | null) {
-    if (planId === null) {
-      await tx.execute('UPDATE platform.tenants SET plan_id = NULL, updated_at = NOW() WHERE id = $1;', [tenantId]);
-      await tx.execute(
-        `UPDATE platform.subscriptions SET status = 'CANCELLED'
-         WHERE tenant_id = $1 AND status = 'ACTIVE';`,
+  async getTenantBusinessProfile(tenantId: string) {
+    const context = await this.getTenantContext(tenantId);
+    return this.tenantDb.withTenant(context, async (tx) => {
+      const business = await tx.queryOne<{
+        id: string;
+        legalName: string;
+        tradeName: string;
+        businessType: string;
+        industry: string;
+        pan: string | null;
+        addressLine1: string;
+        addressLine2: string | null;
+        city: string;
+        district: string | null;
+        state: string;
+        stateCode: string;
+        jurisdiction: string | null;
+        pincode: string;
+        currency: string;
+        enabledModules: string[] | null;
+        taxSettings: Record<string, unknown> | null;
+        logoUrl: string | null;
+        digitalSignatureUrl: string | null;
+      }>(
+        `SELECT id, legal_name AS "legalName", trade_name AS "tradeName",
+                business_type AS "businessType", industry, pan,
+                address_line1 AS "addressLine1", address_line2 AS "addressLine2",
+                city, district, state, state_code AS "stateCode", jurisdiction, pincode,
+                currency, enabled_modules AS "enabledModules", tax_settings AS "taxSettings",
+                logo_url AS "logoUrl", signature_url AS "digitalSignatureUrl"
+         FROM businesses
+         WHERE tenant_id = $1 AND is_active = TRUE
+         ORDER BY created_at ASC
+         LIMIT 1;`,
         [tenantId]
       );
-      return;
-    }
+      if (!business) {
+        throw new NotFoundException('Business registration was not found in this tenant');
+      }
 
-    const plan = await tx.queryOne<{ id: string }>(
-      'SELECT id FROM platform.plans WHERE id = $1 AND is_active = TRUE;',
-      [planId]
-    );
-    if (!plan) {
-      throw new BadRequestException('Selected subscription plan does not exist or is inactive');
-    }
-
-    await tx.execute('UPDATE platform.tenants SET plan_id = $2, updated_at = NOW() WHERE id = $1;', [
-      tenantId,
-      planId,
-    ]);
-    const updated = await tx.execute(
-      `UPDATE platform.subscriptions
-       SET plan_id = $2, status = 'ACTIVE'
-       WHERE tenant_id = $1 AND status = 'ACTIVE';`,
-      [tenantId, planId]
-    );
-    if (updated === 0) {
-      await tx.execute(
-        `INSERT INTO platform.subscriptions (tenant_id, plan_id, status)
-         VALUES ($1, $2, 'ACTIVE');`,
-        [tenantId, planId]
+      const branches = await tx.query<{
+        id: string;
+        code: string;
+        name: string;
+        isHeadOffice: boolean;
+        gstin: string | null;
+        addressLine1: string;
+        addressLine2: string | null;
+        city: string;
+        district: string | null;
+        state: string;
+        stateCode: string;
+        pincode: string;
+      }>(
+        `SELECT id, code, name, is_head_office AS "isHeadOffice", gstin,
+                address_line1 AS "addressLine1", address_line2 AS "addressLine2",
+                city, district, state, state_code AS "stateCode", pincode
+         FROM branches
+         WHERE business_id = $1 AND is_active = TRUE
+         ORDER BY is_head_office DESC, name ASC;`,
+        [business.id]
       );
+      const gstRegistration = await tx.queryOne<{ gstin: string }>(
+        `SELECT gstin FROM gst_registrations
+         WHERE business_id = $1
+         ORDER BY is_default DESC, created_at ASC
+         LIMIT 1;`,
+        [business.id]
+      );
+      const fiscalPeriod = await tx.queryOne<{ startDate: string; endDate: string }>(
+        `SELECT start_date::date::text AS "startDate", end_date::date::text AS "endDate"
+         FROM fiscal_periods
+         WHERE business_id = $1 AND is_active = TRUE
+         ORDER BY start_date DESC
+         LIMIT 1;`,
+        [business.id]
+      );
+      const owner = await tx.queryOne<{
+        firstName: string;
+        lastName: string;
+        email: string;
+        mustChangePassword: boolean;
+      }>(
+        `SELECT u.first_name AS "firstName", u.last_name AS "lastName",
+                u.email, u.must_change_password AS "mustChangePassword"
+         FROM users u
+         JOIN user_roles ur ON ur.user_id = u.id
+         JOIN roles r ON r.id = ur.role_id
+         WHERE u.tenant_id = $1 AND u.is_active = TRUE AND r.name = 'BUSINESS_OWNER'
+         ORDER BY u.created_at ASC
+         LIMIT 1;`,
+        [tenantId]
+      );
+      if (!owner) {
+        throw new NotFoundException('Business owner account was not found in this tenant');
+      }
+      const primaryBranch = branches.find((branch) => branch.isHeadOffice) || branches[0];
+      const documentSequence = primaryBranch
+        ? await tx.queryOne<{ prefix: string }>(
+            `SELECT prefix FROM document_sequences
+             WHERE business_id = $1 AND branch_id = $2 AND document_type = 'TAX_INVOICE'
+             LIMIT 1;`,
+            [business.id, primaryBranch.id]
+          )
+        : null;
+      const financialYear = this.currentFinancialYear();
+
+      return {
+        tenantId,
+        ...business,
+        gstin: gstRegistration?.gstin || '',
+        financialYearStart: fiscalPeriod?.startDate || financialYear.start,
+        financialYearEnd: fiscalPeriod?.endDate || financialYear.end,
+        invoicePrefix: documentSequence?.prefix || 'INV-',
+        enabledModules: business.enabledModules || [],
+        taxSettings: business.taxSettings || {},
+        branches: branches.map((branch) => ({ ...branch, district: branch.district || '' })),
+        ownerName: `${owner.firstName} ${owner.lastName}`.trim(),
+        username: owner.email,
+        temporaryPassword: '',
+        requirePasswordChange: owner.mustChangePassword,
+      };
+    });
+  }
+
+  async updateTenantBusinessProfile(tenantId: string, dto: SaveBusinessProfileDto, actor?: AuthUser) {
+    this.validateImage(dto.logoUrl, 'Logo');
+    this.validateImage(dto.digitalSignatureUrl, 'Digital signature');
+    this.validateFinancialYear(dto);
+    this.validateHeadOfficeCount(dto.branches);
+    if (!dto.ownerName?.trim() || !dto.username?.trim()) {
+      throw new BadRequestException('Business owner name and username are required');
     }
+
+    const context = await this.getTenantContext(tenantId);
+    const normalizedEmail = dto.username.trim().toLowerCase();
+    const ownerNameParts = dto.ownerName.trim().split(/\s+/);
+    const firstName = ownerNameParts.shift()!;
+    const lastName = ownerNameParts.join(' ');
+    const branches = dto.branches || [];
+    if (!branches.length) {
+      throw new BadRequestException('A business must retain at least one branch');
+    }
+    if (new Set(branches.map((branch) => branch.code.trim().toUpperCase())).size !== branches.length) {
+      throw new BadRequestException('Branch codes must be unique within the business');
+    }
+
+    await this.tenantDb.withTenant(context, async (tx) => {
+      const business = await tx.queryOne<{ id: string }>(
+        `SELECT id FROM businesses
+         WHERE tenant_id = $1 AND is_active = TRUE
+         ORDER BY created_at ASC
+         LIMIT 1
+         FOR UPDATE;`,
+        [tenantId]
+      );
+      if (!business) {
+        throw new NotFoundException('Business registration was not found in this tenant');
+      }
+
+      const owner = await tx.queryOne<{ id: string; email: string }>(
+        `SELECT u.id, u.email
+         FROM users u
+         JOIN user_roles ur ON ur.user_id = u.id
+         JOIN roles r ON r.id = ur.role_id
+         WHERE u.tenant_id = $1 AND u.is_active = TRUE AND r.name = 'BUSINESS_OWNER'
+         ORDER BY u.created_at ASC
+         LIMIT 1
+         FOR UPDATE OF u;`,
+        [tenantId]
+      );
+      if (!owner) {
+        throw new NotFoundException('Business owner account was not found in this tenant');
+      }
+      const duplicateOwner = await tx.queryOne<{ id: string }>(
+        `SELECT id FROM users
+         WHERE tenant_id = $1 AND lower(email) = $2 AND id <> $3
+         LIMIT 1;`,
+        [tenantId, normalizedEmail, owner.id]
+      );
+      if (duplicateOwner) {
+        throw new ConflictException('That email address is already used by another user in this workspace');
+      }
+
+      const fiscalPeriod = await tx.queryOne<{ id: string; isLocked: boolean }>(
+        `SELECT id, is_locked AS "isLocked"
+         FROM fiscal_periods
+         WHERE business_id = $1 AND is_active = TRUE
+         ORDER BY start_date DESC
+         LIMIT 1
+         FOR UPDATE;`,
+        [business.id]
+      );
+      if (fiscalPeriod?.isLocked) {
+        const existingDates = await tx.queryOne<{ matches: boolean }>(
+          `SELECT start_date::date = $2::date AND end_date::date = $3::date AS matches
+           FROM fiscal_periods WHERE id = $1;`,
+          [fiscalPeriod.id, dto.financialYearStart, dto.financialYearEnd]
+        );
+        if (!existingDates?.matches) {
+          throw new BadRequestException('The active financial year is locked and cannot be changed');
+        }
+      }
+      const periodName = `FY ${dto.financialYearStart.slice(0, 4)}-${dto.financialYearEnd.slice(0, 4)}`;
+      const duplicatePeriod = await tx.queryOne<{ id: string }>(
+        `SELECT id FROM fiscal_periods
+         WHERE business_id = $1 AND name = $2 AND ($3::uuid IS NULL OR id <> $3::uuid)
+         LIMIT 1;`,
+        [business.id, periodName, fiscalPeriod?.id || null]
+      );
+      if (duplicatePeriod) {
+        throw new BadRequestException('A financial period with those dates already exists');
+      }
+
+      await tx.execute(
+        `UPDATE businesses SET
+           legal_name = $2, trade_name = $3, business_type = $4::"BusinessType",
+           industry = $5::"IndustryType", pan = $6, address_line1 = $7, address_line2 = $8,
+           city = $9, district = $10, state = $11, state_code = $12, jurisdiction = $13,
+           pincode = $14, currency = $15, enabled_modules = $16::jsonb,
+           tax_settings = $17::jsonb, logo_url = $18, signature_url = $19, updated_at = NOW()
+         WHERE id = $1 AND tenant_id = $20;`,
+        [
+          business.id,
+          dto.legalName.trim(),
+          dto.tradeName.trim(),
+          dto.businessType,
+          dto.industry,
+          dto.pan?.trim().toUpperCase() || null,
+          dto.addressLine1.trim(),
+          dto.addressLine2?.trim() || null,
+          dto.city.trim(),
+          dto.district?.trim() || null,
+          dto.state.trim(),
+          dto.stateCode.trim(),
+          dto.jurisdiction?.trim() || null,
+          dto.pincode.trim(),
+          dto.currency?.trim().toUpperCase() || 'INR',
+          JSON.stringify(dto.enabledModules || []),
+          JSON.stringify(dto.taxSettings || {}),
+          dto.logoUrl || null,
+          dto.digitalSignatureUrl || null,
+          tenantId,
+        ]
+      );
+
+      const gstRegistration = await tx.queryOne<{ id: string }>(
+        `SELECT id FROM gst_registrations
+         WHERE business_id = $1
+         ORDER BY is_default DESC, created_at ASC
+         LIMIT 1
+         FOR UPDATE;`,
+        [business.id]
+      );
+      if (dto.gstin?.trim()) {
+        if (gstRegistration) {
+          await tx.execute(
+            `UPDATE gst_registrations SET gstin = $2, legal_name = $3, state = $4,
+               state_code = $5, is_default = TRUE, updated_at = NOW()
+             WHERE id = $1;`,
+            [
+              gstRegistration.id,
+              dto.gstin.trim().toUpperCase(),
+              dto.legalName.trim(),
+              dto.state.trim(),
+              dto.stateCode.trim(),
+            ]
+          );
+        } else {
+          await tx.execute(
+            `INSERT INTO gst_registrations (
+               business_id, gstin, legal_name, state, state_code, is_default, created_at, updated_at
+             ) VALUES ($1, $2, $3, $4, $5, TRUE, NOW(), NOW());`,
+            [
+              business.id,
+              dto.gstin.trim().toUpperCase(),
+              dto.legalName.trim(),
+              dto.state.trim(),
+              dto.stateCode.trim(),
+            ]
+          );
+        }
+      } else if (gstRegistration) {
+        await tx.execute('DELETE FROM gst_registrations WHERE id = $1;', [gstRegistration.id]);
+      }
+
+      const existingBranches = await tx.query<{ id: string; code: string; isActive: boolean }>(
+        `SELECT id, code, is_active AS "isActive" FROM branches WHERE business_id = $1;`,
+        [business.id]
+      );
+      await tx.execute(
+        'UPDATE branches SET is_head_office = FALSE WHERE business_id = $1 AND is_head_office = TRUE;',
+        [business.id]
+      );
+      const retainedBranchIds = new Set<string>();
+      const activeBranchIds: string[] = [];
+      for (const branch of branches) {
+        const matchingBranch = branch.id
+          ? existingBranches.find((existing) => existing.id === branch.id)
+          : existingBranches.find((existing) => existing.code.toUpperCase() === branch.code.trim().toUpperCase());
+        if (branch.id && !matchingBranch) {
+          throw new BadRequestException('A selected branch does not belong to this business');
+        }
+
+        let branchId: string;
+        if (matchingBranch) {
+          branchId = matchingBranch.id;
+          await tx.execute(
+            `UPDATE branches SET
+               name = $2, code = $3, is_head_office = $4, gstin = $5,
+               address_line1 = $6, address_line2 = $7, city = $8, district = $9,
+               state = $10, state_code = $11, pincode = $12, is_active = TRUE, updated_at = NOW()
+             WHERE id = $1 AND business_id = $13;`,
+            [
+              branchId,
+              branch.name.trim(),
+              branch.code.trim().toUpperCase(),
+              branch.isHeadOffice ?? false,
+              branch.gstin?.trim().toUpperCase() || null,
+              branch.addressLine1.trim(),
+              branch.addressLine2?.trim() || null,
+              branch.city.trim(),
+              branch.district?.trim() || null,
+              branch.state.trim(),
+              branch.stateCode.trim(),
+              branch.pincode.trim(),
+              business.id,
+            ]
+          );
+        } else {
+          const insertedBranch = await tx.queryOne<{ id: string }>(
+            `INSERT INTO branches (
+               business_id, name, code, is_head_office, gstin, address_line1,
+               address_line2, city, district, state, state_code, pincode, created_at, updated_at
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())
+             RETURNING id;`,
+            [
+              business.id,
+              branch.name.trim(),
+              branch.code.trim().toUpperCase(),
+              branch.isHeadOffice ?? false,
+              branch.gstin?.trim().toUpperCase() || null,
+              branch.addressLine1.trim(),
+              branch.addressLine2?.trim() || null,
+              branch.city.trim(),
+              branch.district?.trim() || null,
+              branch.state.trim(),
+              branch.stateCode.trim(),
+              branch.pincode.trim(),
+            ]
+          );
+          branchId = insertedBranch!.id;
+        }
+        retainedBranchIds.add(branchId);
+        activeBranchIds.push(branchId);
+
+        const sequenceUpdated = await tx.execute(
+          `UPDATE document_sequences SET prefix = $3, updated_at = NOW()
+           WHERE business_id = $1 AND branch_id = $2 AND document_type = 'TAX_INVOICE';`,
+          [business.id, branchId, dto.invoicePrefix.trim() || 'INV-']
+        );
+        if (!sequenceUpdated) {
+          await tx.execute(
+            `INSERT INTO document_sequences (
+               business_id, branch_id, document_type, prefix, next_number, padding, created_at, updated_at
+             ) VALUES ($1, $2, 'TAX_INVOICE', $3, 1001, 4, NOW(), NOW());`,
+            [business.id, branchId, dto.invoicePrefix.trim() || 'INV-']
+          );
+        }
+      }
+
+      const removedBranchIds = existingBranches
+        .filter((branch) => branch.isActive && !retainedBranchIds.has(branch.id))
+        .map((branch) => branch.id);
+      if (removedBranchIds.length) {
+        await tx.execute(
+          `UPDATE branches SET is_active = FALSE, updated_at = NOW()
+           WHERE id = ANY($1::uuid[]) AND business_id = $2;`,
+          [removedBranchIds, business.id]
+        );
+      }
+
+      const primaryBranchId =
+        branches.find((branch) => branch.isHeadOffice)
+          ? activeBranchIds[branches.findIndex((branch) => branch.isHeadOffice)]
+          : activeBranchIds[0];
+      await tx.execute('UPDATE branches SET owner_id = NULL WHERE owner_id = $1;', [owner.id]);
+      await tx.execute('UPDATE branches SET owner_id = $1 WHERE id = $2;', [owner.id, primaryBranchId]);
+      await tx.execute(
+        'UPDATE user_branch_assignments SET is_default = FALSE WHERE user_id = $1;',
+        [owner.id]
+      );
+      await tx.execute(
+        `INSERT INTO user_branch_assignments (user_id, branch_id, is_default)
+         VALUES ($1, $2, TRUE)
+         ON CONFLICT (user_id, branch_id) DO UPDATE SET is_default = TRUE;`,
+        [owner.id, primaryBranchId]
+      );
+
+      if (fiscalPeriod) {
+        await tx.execute(
+          `UPDATE fiscal_periods SET name = $2, start_date = $3::date, end_date = $4::date,
+             updated_at = NOW()
+           WHERE id = $1;`,
+          [fiscalPeriod.id, periodName, dto.financialYearStart, dto.financialYearEnd]
+        );
+      } else {
+        await tx.execute(
+          `INSERT INTO fiscal_periods (
+             business_id, name, start_date, end_date, is_active, created_at, updated_at
+           ) VALUES ($1, $2, $3::date, $4::date, TRUE, NOW(), NOW());`,
+          [business.id, periodName, dto.financialYearStart, dto.financialYearEnd]
+        );
+      }
+
+      await tx.execute(
+        `UPDATE users SET email = $2, first_name = $3, last_name = $4,
+           must_change_password = COALESCE($5, must_change_password), updated_at = NOW()
+         WHERE id = $1 AND tenant_id = $6;`,
+        [
+          owner.id,
+          normalizedEmail,
+          firstName,
+          lastName,
+          dto.requirePasswordChange ?? null,
+          tenantId,
+        ]
+      );
+      await tx.execute(
+        `UPDATE platform.tenants SET display_name = $2, updated_at = NOW() WHERE id = $1;`,
+        [tenantId, dto.tradeName.trim()]
+      );
+      await tx.execute(
+        `INSERT INTO platform.platform_audit_log (actor_id, action, target_type, target_id, metadata)
+         VALUES ($1, 'TENANT_BUSINESS_REGISTRATION_UPDATED', 'TENANT', $2, $3);`,
+        [
+          actor?.id || null,
+          tenantId,
+          JSON.stringify({ businessId: business.id, branchCount: activeBranchIds.length }),
+        ]
+      );
+    });
+
+    await this.cache.invalidateTenant(tenantId, context.slug);
+    return { success: true };
+  }
+
+  async deleteTenant(tenantId: string, actor?: AuthUser, profileId?: string) {
+    const tenant = await this.tenantDb.withPlatform(async (tx) => {
+      const existing = await tx.queryOne<{
+        id: string;
+        schemaName: string;
+        slug: string;
+      }>(
+        `SELECT id, schema_name AS "schemaName", slug
+         FROM platform.tenants
+         WHERE id::text = $1
+         FOR UPDATE;`,
+        [tenantId]
+      );
+      if (!existing) {
+        throw new NotFoundException('Tenant not found');
+      }
+      validateSchemaName(existing.schemaName);
+      await tx.execute(
+        `UPDATE platform.tenants SET status = 'deleting', updated_at = NOW() WHERE id = $1;`,
+        [existing.id]
+      );
+      await tx.execute(
+        `INSERT INTO platform.platform_audit_log (actor_id, action, target_type, target_id, metadata)
+         VALUES ($1, 'TENANT_DELETION_STARTED', 'TENANT', $2, $3);`,
+        [actor?.id || null, existing.id, JSON.stringify({ profileId: profileId || null })]
+      );
+      return existing;
+    });
+
+    await this.cache.invalidateTenant(tenant.id, tenant.slug);
+    await this.tenantDb.withPlatform(async (tx) => {
+      await tx.execute(`DROP SCHEMA IF EXISTS ${quoteIdent(tenant.schemaName)} CASCADE;`);
+      await tx.execute('DELETE FROM platform.tenants WHERE id = $1;', [tenant.id]);
+      await tx.execute(
+        `INSERT INTO platform.platform_audit_log (actor_id, action, target_type, target_id, metadata)
+         VALUES ($1, 'TENANT_DELETED', 'TENANT', $2, $3);`,
+        [actor?.id || null, tenant.id, JSON.stringify({ profileId: profileId || null })]
+      );
+    });
+    await this.cache.invalidateTenant(tenant.id, tenant.slug);
+    return { success: true };
+  }
+
+  private async getTenantContext(tenantId: string): Promise<TenantContext> {
+    const tenant = await this.tenantDb.withPlatform((tx) =>
+      tx.queryOne<{
+        id: string;
+        slug: string;
+        displayName: string;
+        schemaName: string;
+        status: string;
+      }>(
+        `SELECT id, slug, display_name AS "displayName",
+                schema_name AS "schemaName", status
+         FROM platform.tenants
+         WHERE id::text = $1 AND status IN ('active', 'suspended')
+         LIMIT 1;`,
+        [tenantId]
+      )
+    );
+    if (!tenant) {
+      throw new NotFoundException('Active or suspended tenant not found');
+    }
+    validateSchemaName(tenant.schemaName);
+
+    return {
+      tenantId: tenant.id,
+      schemaName: tenant.schemaName,
+      slug: tenant.slug,
+      displayName: tenant.displayName,
+      status: tenant.status === 'suspended' ? 'suspended' : 'active',
+      roleKeys: [],
+      branchIds: [],
+      planLimits: {
+        maxBranches: 1,
+        maxUsers: 5,
+        maxInvoicesPerMonth: 500,
+        featureFlags: {},
+      },
+    };
+  }
+
+  private currentFinancialYear() {
+    const now = new Date();
+    const startYear = now.getUTCMonth() >= 3 ? now.getUTCFullYear() : now.getUTCFullYear() - 1;
+    return {
+      start: `${startYear}-04-01`,
+      end: `${startYear + 1}-03-31`,
+    };
   }
 
   private validateImage(value: string | null | undefined, label: string) {
@@ -654,6 +643,12 @@ export class PlatformBusinessRegistrationService {
     }
     if (new Date(dto.financialYearEnd) <= new Date(dto.financialYearStart)) {
       throw new BadRequestException('Financial year end must be after its start date');
+    }
+  }
+
+  private validateHeadOfficeCount(branches: SaveBusinessProfileDto['branches'] = []) {
+    if ((branches || []).filter((branch) => branch.isHeadOffice).length > 1) {
+      throw new BadRequestException('A business can have only one head-office branch');
     }
   }
 }
