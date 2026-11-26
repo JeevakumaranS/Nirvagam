@@ -13,3 +13,5 @@ yarn-error.log*
 coverage/
 .DS_Store
 *.local
+backend\tsconfig.tsbuildinfo
+packages/shared/tsconfig.tsbuildinfo
