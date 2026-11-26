@@ -117,12 +117,17 @@ export default function PurchasesPage() {
         method: 'POST',
         body: JSON.stringify({
           supplierId,
-          billNumber: billNumber.trim(),
+          supplierBillNumber: billNumber.trim(),
+          invoiceDate: new Date().toISOString().slice(0, 10),
+          mode: 'DIRECT',
+          post: true,
           items: items.map((i) => ({
             variantId: i.variantId,
             quantity: i.quantity,
-            unitPrice: i.unitPrice,
-            gstRate: i.gstRate,
+            unitRate: i.unitPrice,
+            taxRate: i.gstRate,
+            discountType: 'AMOUNT',
+            discountValue: 0,
           })),
         }),
       });
@@ -147,7 +152,7 @@ export default function PurchasesPage() {
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-base font-semibold text-text-primary">Purchases & Vendor Procurement</h2>
+          <h2 className="text-base font-semibold text-text-primary">Purchase Management</h2>
           <p className="text-xs text-text-secondary mt-0.5">
             Vendor bills, stock intake, Input Tax Credit (ITC) tracking and Accounts Payable ledgers.
           </p>
@@ -200,10 +205,10 @@ export default function PurchasesPage() {
             ) : (
               purchases.map((bill) => (
                 <TableRow key={bill.id}>
-                  <TableCell className="font-mono text-accent font-semibold">{bill.billNumber}</TableCell>
+                  <TableCell className="font-mono text-accent font-semibold">{bill.supplierBillNumber || bill.billNumber}</TableCell>
                   <TableCell className="font-medium text-text-primary">{bill.supplier?.name}</TableCell>
                   <TableCell className="text-text-secondary">
-                    {new Date(bill.billDate).toLocaleDateString()}
+                    {new Date(bill.invoiceDate || bill.billDate).toLocaleDateString()}
                   </TableCell>
                   <TableCell className="text-right font-mono text-xs">
                     ₹ {Number(bill.taxableAmount).toFixed(2)}
@@ -228,8 +233,8 @@ export default function PurchasesPage() {
       <Drawer
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
-        title="Record Inward Purchase Bill"
-        description="Records vendor invoice, increments stock balance, and credits Accounts Payable."
+        title="Direct Purchase Invoice"
+        description="Direct mode: receive goods and post accounting immediately. Against PO/GRN invoices are linked to existing documents."
         width="xl"
       >
         <form onSubmit={handleCreatePurchase} className="space-y-4">

@@ -988,7 +988,7 @@ export default function SalesPage() {
                       {p.unit?.symbol || 'Unit'} · Stock: {p.totalStock}
                     </p>
                   </div>
-                  <span className="font-mono text-accent shrink-0">₹{p.salesPrice}</span>
+                  <span className="font-mono text-accent shrink-0">₹{p.retailPrice}</span>
                 </button>
               ))}
             </div>

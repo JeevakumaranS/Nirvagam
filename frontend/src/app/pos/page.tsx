@@ -74,7 +74,7 @@ export default function PosBillingPage() {
           variantId: variant.id,
           name: product.name,
           sku: product.sku,
-          price: Number(variant.salesPrice || 0),
+          price: Number(product.retailPrice || 0),
           gstRate: Number(product.taxRate?.rate || 18),
           qty: 1,
         },
@@ -237,7 +237,7 @@ export default function PosBillingPage() {
                     <p className="text-xs font-medium text-text-primary line-clamp-2 mt-0.5">{p.name}</p>
                   </div>
                   <div className="mt-2 flex items-center justify-between pt-2 border-t border-border/60">
-                    <span className="font-mono text-xs font-semibold text-accent">₹{p.salesPrice}</span>
+                    <span className="font-mono text-xs font-semibold text-accent">₹{p.retailPrice}</span>
                     <span className="text-[10px] text-text-tertiary font-mono">Qty: {p.totalStock}</span>
                   </div>
                 </button>

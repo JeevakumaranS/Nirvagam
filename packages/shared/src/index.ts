@@ -141,12 +141,12 @@ export enum AccountGroup {
 }
 
 export enum StockMovementType {
+  MANUAL_IN = 'MANUAL_IN',
+  MANUAL_OUT = 'MANUAL_OUT',
   IN_PURCHASE = 'IN_PURCHASE',
   OUT_SALE = 'OUT_SALE',
   IN_TRANSFER = 'IN_TRANSFER',
   OUT_TRANSFER = 'OUT_TRANSFER',
-  ADJUSTMENT_ADD = 'ADJUSTMENT_ADD',
-  ADJUSTMENT_SUB = 'ADJUSTMENT_SUB',
   RETURN_IN_CREDIT_NOTE = 'RETURN_IN_CREDIT_NOTE',
   RETURN_OUT_DEBIT_NOTE = 'RETURN_OUT_DEBIT_NOTE',
 }
@@ -310,5 +310,282 @@ export function calculateGstInvoice(
     roundOffAmount,
     netTotal: roundedNetTotal,
     items: calculatedItems,
+  };
+}
+
+export type PurchaseDiscountType = 'PERCENT' | 'AMOUNT';
+export type PurchaseFreightAllocationMethod = 'VALUE' | 'QUANTITY' | 'WEIGHT';
+
+export interface PurchaseCalculationLine {
+  id: string;
+  quantity: string;
+  rate: string;
+  weight?: string;
+  lineDiscountType?: PurchaseDiscountType;
+  lineDiscountValue?: string;
+  taxRate: string;
+}
+
+export interface PurchaseCalculationCharge {
+  name: string;
+  type: 'LOADING' | 'PACKING' | 'INSURANCE' | 'FREIGHT' | 'OTHER';
+  amount: string;
+  isTaxable: boolean;
+  taxRate?: string;
+  allocationMethod?: PurchaseFreightAllocationMethod;
+  accountId?: string;
+}
+
+export interface PurchaseCalculationOptions {
+  businessStateCode: string;
+  supplierStateCode: string;
+  pricesIncludeTax?: boolean;
+  invoiceDiscountType?: PurchaseDiscountType;
+  invoiceDiscountValue?: string;
+  roundOff?: string;
+  charges?: PurchaseCalculationCharge[];
+}
+
+export interface PurchaseCalculationLineResult {
+  id: string;
+  lineAmount: string;
+  lineDiscount: string;
+  taxableValue: string;
+  invoiceDiscount: string;
+  cgstAmount: string;
+  sgstAmount: string;
+  igstAmount: string;
+  vatAmount: string;
+  taxAmount: string;
+  landedCost: string;
+  totalAmount: string;
+  rule: Record<string, string>;
+}
+
+export interface PurchaseCalculationResult {
+  isInterState: boolean;
+  taxableAmount: string;
+  cgstAmount: string;
+  sgstAmount: string;
+  igstAmount: string;
+  vatAmount: string;
+  totalTax: string;
+  additionalCharges: string;
+  roundOff: string;
+  grandTotal: string;
+  taxSummary: Array<{ rate: string; taxable: string; tax: string }>;
+  items: PurchaseCalculationLineResult[];
+  rule: Record<string, unknown>;
+}
+
+const DECIMAL_SCALE = 100n;
+const THREE_SCALE = 1000n;
+
+function decimalToUnits(value: string | number | undefined, scale: bigint): bigint {
+  const raw = String(value ?? '0').trim();
+  const negative = raw.startsWith('-');
+  const unsigned = negative ? raw.slice(1) : raw;
+  const [whole = '0', fraction = ''] = unsigned.split('.');
+  const digits = fraction.padEnd(Number(scale.toString().length - 1), '0').slice(0, Number(scale.toString().length - 1));
+  const result = BigInt(whole || '0') * scale + BigInt(digits || '0');
+  return negative ? -result : result;
+}
+
+function unitsToDecimal(value: bigint, scale: bigint): string {
+  const negative = value < 0n;
+  const absolute = negative ? -value : value;
+  const whole = absolute / scale;
+  const fraction = absolute % scale;
+  if (fraction === 0n) return `${negative ? '-' : ''}${whole}`;
+  const places = Number(scale.toString().length - 1);
+  return `${negative ? '-' : ''}${whole}.${fraction.toString().padStart(places, '0').replace(/0+$/, '')}`;
+}
+
+function money(value: bigint): string {
+  return unitsToDecimal(roundToMoney(value), DECIMAL_SCALE);
+}
+
+function roundToMoney(value: bigint): bigint {
+  return value;
+}
+
+function roundDivision(numerator: bigint, denominator: bigint): bigint {
+  if (denominator === 0n) return 0n;
+  if (numerator >= 0n) return (numerator + denominator / 2n) / denominator;
+  return -((-numerator + denominator / 2n) / denominator);
+}
+
+function multiplyDecimal(a: bigint, b: bigint, aScale: bigint, bScale: bigint): bigint {
+  return (a * b) / (aScale * bScale / DECIMAL_SCALE);
+}
+
+function percentOf(value: bigint, percent: bigint): bigint {
+  return roundDivision(value * percent, 100n * DECIMAL_SCALE);
+}
+
+export function calculatePurchaseDocument(
+  lines: PurchaseCalculationLine[],
+  options: PurchaseCalculationOptions
+): PurchaseCalculationResult {
+  const isInterState = options.businessStateCode.trim().toUpperCase() !== options.supplierStateCode.trim().toUpperCase();
+  const calculatedLines: PurchaseCalculationLineResult[] = [];
+  let totalTaxable = 0n;
+  let totalCgst = 0n;
+  let totalSgst = 0n;
+  let totalIgst = 0n;
+  let totalVat = 0n;
+
+  const preDiscountTaxables: bigint[] = [];
+  const grossAmounts: bigint[] = [];
+
+  for (const line of lines) {
+    const quantity = decimalToUnits(line.quantity, THREE_SCALE);
+    const rate = decimalToUnits(line.rate, DECIMAL_SCALE);
+    const gross = roundDivision(quantity * rate, THREE_SCALE);
+    let lineDiscount = 0n;
+    if (line.lineDiscountType === 'PERCENT') {
+      const percent = decimalToUnits(line.lineDiscountValue || '0', DECIMAL_SCALE);
+      lineDiscount = percentOf(gross, percent);
+    } else {
+      lineDiscount = decimalToUnits(line.lineDiscountValue || '0', DECIMAL_SCALE);
+    }
+    lineDiscount = lineDiscount > gross ? gross : lineDiscount;
+    let net = gross - lineDiscount;
+    const taxRate = decimalToUnits(line.taxRate, DECIMAL_SCALE);
+    if (options.pricesIncludeTax && taxRate > 0n) {
+      net = roundDivision(net * 10000n, 10000n + taxRate);
+    }
+    grossAmounts.push(gross);
+    preDiscountTaxables.push(net);
+  }
+
+  const beforeInvoiceDiscount = preDiscountTaxables.reduce((sum, value) => sum + value, 0n);
+  const invoiceValue = decimalToUnits(options.invoiceDiscountValue || '0', DECIMAL_SCALE);
+  let invoiceDiscount =
+    options.invoiceDiscountType === 'PERCENT'
+      ? percentOf(beforeInvoiceDiscount, invoiceValue)
+      : invoiceValue;
+  invoiceDiscount = invoiceDiscount > beforeInvoiceDiscount ? beforeInvoiceDiscount : invoiceDiscount;
+
+  let allocatedDiscount = 0n;
+  preDiscountTaxables.forEach((initialTaxable, index) => {
+    const invoiceLineDiscount =
+      index === preDiscountTaxables.length - 1
+        ? invoiceDiscount - allocatedDiscount
+        : beforeInvoiceDiscount > 0n
+          ? roundDivision(invoiceDiscount * initialTaxable, beforeInvoiceDiscount)
+          : 0n;
+    allocatedDiscount += invoiceLineDiscount;
+
+    const line = lines[index];
+    const gross = grossAmounts[index];
+    const quantity = decimalToUnits(line.quantity, THREE_SCALE);
+    const rate = decimalToUnits(line.rate, DECIMAL_SCALE);
+    let lineDiscount = 0n;
+    if (line.lineDiscountType === 'PERCENT') {
+      lineDiscount = percentOf(gross, decimalToUnits(line.lineDiscountValue || '0', DECIMAL_SCALE));
+    } else {
+      lineDiscount = decimalToUnits(line.lineDiscountValue || '0', DECIMAL_SCALE);
+    }
+    lineDiscount = lineDiscount > gross ? gross : lineDiscount;
+
+    const taxableValue = initialTaxable - invoiceLineDiscount;
+    const taxRate = decimalToUnits(line.taxRate, DECIMAL_SCALE);
+    const taxAmount = roundDivision(taxableValue * taxRate, 10000n);
+    const cgst = isInterState ? 0n : roundDivision(taxAmount, 2n);
+    const sgst = isInterState ? 0n : taxAmount - cgst;
+    const igst = isInterState ? taxAmount : 0n;
+
+    totalTaxable += taxableValue;
+    totalCgst += cgst;
+    totalSgst += sgst;
+    totalIgst += igst;
+
+    calculatedLines.push({
+      id: line.id,
+      lineAmount: money(gross),
+      lineDiscount: money(lineDiscount),
+      taxableValue: money(taxableValue),
+      invoiceDiscount: money(invoiceLineDiscount),
+      cgstAmount: money(cgst),
+      sgstAmount: money(sgst),
+      igstAmount: money(igst),
+      vatAmount: '0',
+      taxAmount: money(taxAmount),
+      landedCost: money(roundDivision(taxableValue * THREE_SCALE, quantity || THREE_SCALE)),
+      totalAmount: money(taxableValue + taxAmount),
+      rule: {
+        pricesIncludeTax: String(options.pricesIncludeTax === true),
+        taxRate: unitsToDecimal(taxRate, DECIMAL_SCALE),
+        lineDiscountType: line.lineDiscountType || 'AMOUNT',
+      },
+    });
+  });
+
+  const charges = options.charges || [];
+  let chargeTax = 0n;
+  let additionalCharges = 0n;
+  const freightTotal = charges
+    .filter((charge) => charge.type === 'FREIGHT')
+    .reduce((sum, charge) => sum + decimalToUnits(charge.amount, DECIMAL_SCALE), 0n);
+
+  for (const charge of charges) {
+    const amount = decimalToUnits(charge.amount, DECIMAL_SCALE);
+    additionalCharges += amount;
+    if (charge.isTaxable) {
+      const chargeTaxRate = decimalToUnits(charge.taxRate || '0', DECIMAL_SCALE);
+      chargeTax += roundDivision(amount * chargeTaxRate, 10000n);
+    }
+  }
+
+  if (chargeTax > 0n) {
+    if (isInterState) totalIgst += chargeTax;
+    else {
+      const cgst = roundDivision(chargeTax, 2n);
+      totalCgst += cgst;
+      totalSgst += chargeTax - cgst;
+    }
+  }
+
+  const taxSummaryMap = new Map<string, { taxable: bigint; tax: bigint }>();
+  calculatedLines.forEach((line, index) => {
+    const lineTaxable = decimalToUnits(line.taxableValue, DECIMAL_SCALE);
+    const taxRate = decimalToUnits(lines[index].taxRate, DECIMAL_SCALE);
+    const key = unitsToDecimal(taxRate, DECIMAL_SCALE);
+    const existing = taxSummaryMap.get(key) || { taxable: 0n, tax: 0n };
+    existing.taxable += lineTaxable;
+    existing.tax += decimalToUnits(line.taxAmount, DECIMAL_SCALE);
+    taxSummaryMap.set(key, existing);
+  });
+
+  const rawGrand = totalTaxable + totalCgst + totalSgst + totalIgst + totalVat + additionalCharges;
+  const roundOff = decimalToUnits(options.roundOff || '0', DECIMAL_SCALE);
+  const grandTotal = rawGrand + roundOff;
+
+  return {
+    isInterState,
+    taxableAmount: money(totalTaxable),
+    cgstAmount: money(totalCgst),
+    sgstAmount: money(totalSgst),
+    igstAmount: money(totalIgst),
+    vatAmount: money(totalVat),
+    totalTax: money(totalCgst + totalSgst + totalIgst + totalVat),
+    additionalCharges: money(additionalCharges),
+    roundOff: money(roundOff),
+    grandTotal: money(grandTotal),
+    taxSummary: Array.from(taxSummaryMap.entries()).map(([rate, value]) => ({
+      rate,
+      taxable: money(value.taxable),
+      tax: money(value.tax),
+    })),
+    items: calculatedLines,
+    rule: {
+      pricesIncludeTax: options.pricesIncludeTax === true,
+      invoiceDiscountType: options.invoiceDiscountType || 'AMOUNT',
+      invoiceDiscountValue: options.invoiceDiscountValue || '0',
+      chargeCount: charges.length,
+      freightAllocationMethod: charges.find((charge) => charge.type === 'FREIGHT')?.allocationMethod || 'VALUE',
+      freightTotal: money(freightTotal),
+    },
   };
 }
