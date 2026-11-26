@@ -81,6 +81,7 @@ const paymentDocumentTypes = new Set<InvoiceType>([
 const today = () => new Date().toISOString().slice(0, 10);
 const defaultDueDate = () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 const normalizeNumericInput = (value: string) => value.replace(/^0+(?=\d)/, '');
+const formatNumericInput = (value: number) => (value === 0 ? '' : String(value));
 const parseNumericInput = (value: string) => {
   const parsed = Number(normalizeNumericInput(value));
   return Number.isFinite(parsed) ? parsed : 0;
@@ -123,11 +124,11 @@ export default function SalesPage() {
   const [pricesIncludeTax, setPricesIncludeTax] = useState(false);
   const [invoiceDiscount, setInvoiceDiscount] = useState(0);
   const [invoiceDiscountPercent, setInvoiceDiscountPercent] = useState(0);
-  const [invoiceDiscountAmountInput, setInvoiceDiscountAmountInput] = useState('0');
-  const [invoiceDiscountPercentInput, setInvoiceDiscountPercentInput] = useState('0');
+  const [invoiceDiscountAmountInput, setInvoiceDiscountAmountInput] = useState('');
+  const [invoiceDiscountPercentInput, setInvoiceDiscountPercentInput] = useState('');
   const [invoiceDiscountInputMode, setInvoiceDiscountInputMode] = useState<'amount' | 'percent'>('percent');
   const [additionalCharges, setAdditionalCharges] = useState(0);
-  const [additionalChargesInput, setAdditionalChargesInput] = useState('0');
+  const [additionalChargesInput, setAdditionalChargesInput] = useState('');
   const [payments, setPayments] = useState<Array<{ amount: number; mode: PaymentMode }>>([]);
   const [notes, setNotes] = useState('Payment due in 30 days');
   const [terms, setTerms] = useState('');
@@ -324,25 +325,25 @@ export default function SalesPage() {
   }, 0);
   useEffect(() => {
     if (invoiceDiscountInputMode === 'percent') {
-        const amount = (invoiceDiscountableBase * invoiceDiscountPercent) / 100;
-        if (amount !== invoiceDiscount) setInvoiceDiscount(amount);
-        const amountText = String(amount);
-        if (amountText !== invoiceDiscountAmountInput) setInvoiceDiscountAmountInput(amountText);
-        return;
+      const amount = (invoiceDiscountableBase * invoiceDiscountPercent) / 100;
+      if (amount !== invoiceDiscount) setInvoiceDiscount(amount);
+      const amountText = formatNumericInput(amount);
+      if (amountText !== invoiceDiscountAmountInput) setInvoiceDiscountAmountInput(amountText);
+      return;
     }
 
     const amount = Math.max(0, invoiceDiscount);
     if (invoiceDiscountableBase > 0 && amount > invoiceDiscountableBase) {
-        setInvoiceDiscount(invoiceDiscountableBase);
-        setInvoiceDiscountAmountInput(String(invoiceDiscountableBase));
-        setInvoiceDiscountPercent(100);
-        setInvoiceDiscountPercentInput('100');
-        return;
+      setInvoiceDiscount(invoiceDiscountableBase);
+      setInvoiceDiscountAmountInput(formatNumericInput(invoiceDiscountableBase));
+      setInvoiceDiscountPercent(100);
+      setInvoiceDiscountPercentInput('100');
+      return;
     }
 
     const percent = invoiceDiscountableBase > 0 ? (amount / invoiceDiscountableBase) * 100 : 0;
     if (percent !== invoiceDiscountPercent) setInvoiceDiscountPercent(percent);
-    const percentText = String(percent);
+    const percentText = formatNumericInput(percent);
     if (percentText !== invoiceDiscountPercentInput) setInvoiceDiscountPercentInput(percentText);
   }, [
     invoiceDiscountableBase,
@@ -575,7 +576,7 @@ export default function SalesPage() {
       setPricesIncludeTax(Boolean(originalInvoice.pricesIncludeTax));
       const duplicatedDiscount = Math.max(0, Number(originalInvoice.discountAmount || 0));
       setInvoiceDiscount(duplicatedDiscount);
-      setInvoiceDiscountAmountInput(String(duplicatedDiscount));
+      setInvoiceDiscountAmountInput(formatNumericInput(duplicatedDiscount));
       setInvoiceDiscountInputMode('amount');
       const taxableBeforeInvoiceDiscount =
         Number(originalInvoice.taxableAmount || 0) + Number(originalInvoice.discountAmount || 0);
@@ -584,10 +585,10 @@ export default function SalesPage() {
           ? (Number(originalInvoice.discountAmount || 0) / taxableBeforeInvoiceDiscount) * 100
           : 0;
       setInvoiceDiscountPercent(duplicatedDiscountPercent);
-      setInvoiceDiscountPercentInput(String(duplicatedDiscountPercent));
+      setInvoiceDiscountPercentInput(formatNumericInput(duplicatedDiscountPercent));
       const duplicatedAdditionalCharges = Math.max(0, Number(originalInvoice.additionalCharges || 0));
       setAdditionalCharges(duplicatedAdditionalCharges);
-      setAdditionalChargesInput(String(duplicatedAdditionalCharges));
+      setAdditionalChargesInput(formatNumericInput(duplicatedAdditionalCharges));
       setRecurrenceFrequency(
         originalInvoice.recurrenceFrequency || RecurrenceFrequency.MONTHLY
       );
@@ -645,11 +646,11 @@ export default function SalesPage() {
     setPricesIncludeTax(false);
     setInvoiceDiscount(0);
     setInvoiceDiscountPercent(0);
-    setInvoiceDiscountAmountInput('0');
-    setInvoiceDiscountPercentInput('0');
+    setInvoiceDiscountAmountInput('');
+    setInvoiceDiscountPercentInput('');
     setInvoiceDiscountInputMode('percent');
     setAdditionalCharges(0);
-    setAdditionalChargesInput('0');
+    setAdditionalChargesInput('');
     setPayments([]);
     setNotes('Payment due in 30 days');
     setTerms('');
@@ -1137,7 +1138,7 @@ export default function SalesPage() {
                 setInvoiceDiscountPercent(percent);
                 const amount = (invoiceDiscountableBase * percent) / 100;
                 setInvoiceDiscount(amount);
-                setInvoiceDiscountAmountInput(String(amount));
+                setInvoiceDiscountAmountInput(formatNumericInput(amount));
               }}
             />
             <Input
@@ -1162,7 +1163,7 @@ export default function SalesPage() {
                   ? (amount / invoiceDiscountableBase) * 100
                   : 0;
                 setInvoiceDiscountPercent(percent);
-                setInvoiceDiscountPercentInput(String(percent));
+                setInvoiceDiscountPercentInput(formatNumericInput(percent));
               }}
             />
             <Input
