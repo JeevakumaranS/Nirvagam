@@ -116,7 +116,7 @@ const industries: Array<{ value: IndustryType; label: string }> = [
 const MODULE_DESCRIPTIONS: Record<string, string> = {
   sales: 'Estimates, Sales Orders, Tax Invoices & Delivery Challans',
   purchases: 'Vendor Purchase Orders, Goods Receipt & Bills',
-  inventory: 'Multi-Warehouse Stock, Batch Numbers & Barcode Tracking',
+  inventory: 'Branch Stock & Barcode Tracking',
   accounting: 'General Ledger, Chart of Accounts, Trial Balance & Vouchers',
   pos: 'High-speed Counter Checkout, Touchscreen, Barcode & Receipts',
   gst: 'GSTR-1, GSTR-3B Tax Filing Workflows & E-Invoicing Prep',

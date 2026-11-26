@@ -555,7 +555,7 @@ export default function CustomizationPage() {
           <div>
             <label className="text-[12px] font-medium text-text-primary">Field Label</label>
             <Input
-              placeholder="e.g. Fabric GSM, Expiry Date"
+              placeholder="e.g. Fabric GSM, Material Grade"
               value={newField.label}
               onChange={(e) => {
                 const label = e.target.value;
@@ -636,7 +636,7 @@ export default function CustomizationPage() {
           <div>
             <label className="text-[12px] font-medium text-text-primary">Entity Singular Label</label>
             <Input
-              placeholder="e.g. Batch Inspection, Vehicle Log"
+              placeholder="e.g. Quality Check, Vehicle Log"
               value={newEntity.label}
               onChange={(e) => {
                 const label = e.target.value;

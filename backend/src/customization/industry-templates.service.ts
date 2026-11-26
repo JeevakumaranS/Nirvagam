@@ -71,28 +71,9 @@ export class IndustryTemplatesService {
     pharma: {
       code: 'pharma',
       name: 'Pharmaceuticals & Health',
-      description: 'Compliant drug and healthcare attributes: Batch, Expiry, Schedule Drug',
+      description: 'Drug and healthcare attributes: Schedule H status and active ingredients',
       targetEntity: 'items',
       fields: [
-        {
-          entityKey: 'items',
-          fieldKey: 'cf_batch_number',
-          label: 'Batch Number',
-          datatype: 'text',
-          storage: 'column',
-          required: true,
-          validation: { maxLength: 50 },
-          showInList: true,
-        },
-        {
-          entityKey: 'items',
-          fieldKey: 'cf_expiry_date',
-          label: 'Expiry Date',
-          datatype: 'date',
-          storage: 'column',
-          required: true,
-          showInList: true,
-        },
         {
           entityKey: 'items',
           fieldKey: 'cf_is_schedule_h',

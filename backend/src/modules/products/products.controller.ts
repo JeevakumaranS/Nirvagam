@@ -2,6 +2,7 @@ import { Controller, Get, Post, Body, Query, UseGuards, Patch, Delete, Param } f
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
 import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
+import { CreateUnitDto, UpdateUnitDto } from './dto/create-unit.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { TenantResolverGuard } from '../../tenancy/tenant-resolver.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -53,7 +54,21 @@ export class ProductsController {
 
   @Post('meta/units')
   @RequirePermissions('product:create')
-  async createUnit(@CurrentUser() user: AuthUser, @Body() dto: any) { return this.productsService.createUnit(user.businessId, dto); }
+  async createUnit(@CurrentUser() user: AuthUser, @Body() dto: CreateUnitDto) {
+    return this.productsService.createUnit(user.businessId, dto);
+  }
+
+  @Patch('meta/units/:id')
+  @RequirePermissions('product:edit')
+  async updateUnit(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateUnitDto) {
+    return this.productsService.updateUnit(user.businessId, id, dto);
+  }
+
+  @Delete('meta/units/:id')
+  @RequirePermissions('product:delete')
+  async deleteUnit(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.productsService.deleteUnit(user.businessId, id);
+  }
 
   @Get('meta/tax-rates')
   @RequirePermissions('product:view')
@@ -70,13 +85,27 @@ export class ProductsController {
   @RequirePermissions('product:view')
   async branches(@CurrentUser() user: AuthUser) { return this.productsService.branches(user.businessId); }
 
+  @Get('inventory/variants')
+  @RequirePermissions('product:view')
+  async inventoryVariants(@CurrentUser() user: AuthUser) {
+    return this.productsService.inventoryVariants(user.businessId);
+  }
+
   @Get('inventory/balances')
   @RequirePermissions('product:view')
-  async balances(@CurrentUser() user: AuthUser, @Query('search') search?: string) { return this.productsService.balances(user.businessId, search); }
+  async balances(@CurrentUser() user: AuthUser, @Query() query: PaginationParams) {
+    return this.productsService.balancesPage(user.businessId, query);
+  }
 
   @Get('inventory/movements')
   @RequirePermissions('product:view')
-  async movements(@CurrentUser() user: AuthUser, @Query('search') search?: string) { return this.productsService.movements(user.businessId, search); }
+  async movements(
+    @CurrentUser() user: AuthUser,
+    @Query() query: PaginationParams,
+    @Query('transfersOnly') transfersOnly?: string,
+  ) {
+    return this.productsService.movementsPage(user.businessId, query, transfersOnly === 'true');
+  }
 
   @Get('inventory/reports')
   @RequirePermissions('product:view')

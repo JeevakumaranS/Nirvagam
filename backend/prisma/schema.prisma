@@ -180,20 +180,20 @@ model Branch {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  owner            User?                  @relation("BranchOwner", fields: [ownerId], references: [id])
-  business         Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  userAssignments  UserBranchAssignment[]
-  salesInvoices    SalesInvoice[]
-  purchaseRequests PurchaseRequest[]
-  purchaseOrders   PurchaseOrder[]
-  grns             Grn[]
-  purchaseInvoices PurchaseInvoice[]
-  purchaseReturns  PurchaseReturn[]
-  purchasePayments PurchasePayment[]
-  expenses         Expense[]
-  payments         Payment[]
-  stockBalances    StockBalance[]
-  stockMovements   StockMovement[]
+  owner                 User?                  @relation("BranchOwner", fields: [ownerId], references: [id])
+  business              Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  userAssignments       UserBranchAssignment[]
+  salesInvoices         SalesInvoice[]
+  purchaseRequests      PurchaseRequest[]
+  purchaseOrders        PurchaseOrder[]
+  grns                  Grn[]
+  purchaseInvoices      PurchaseInvoice[]
+  purchaseReturns       PurchaseReturn[]
+  purchasePayments      PurchasePayment[]
+  expenses              Expense[]
+  payments              Payment[]
+  stockBalances         StockBalance[]
+  stockMovements        StockMovement[]
 
   @@unique([businessId, code])
   @@map("branches")
@@ -381,6 +381,10 @@ model Unit {
   symbol        String // e.g. "PCS", "KG", "BOX"
   decimalPlaces Int      @default(0) @map("decimal_places")
   isDefault     Boolean  @default(false) @map("is_default")
+  isStandard    Boolean  @default(false) @map("is_standard")
+  isQuickSelect Boolean  @default(false) @map("is_quick_select")
+  quantityType  String   @default("WHOLE") @map("quantity_type")
+  uqcCode       String?  @map("uqc_code")
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
@@ -401,13 +405,13 @@ model Product {
   barcode        String?
   hsnCode        String?  @map("hsn_code")
   description    String?
+  hasVariants    Boolean  @default(false) @map("has_variants")
   purchasePrice  Decimal  @default(0) @map("purchase_price") @db.Decimal(15, 2)
   mrp            Decimal  @default(0) @db.Decimal(15, 2)
   wholesalePrice Decimal  @default(0) @map("wholesale_price") @db.Decimal(15, 2)
   retailPrice    Decimal  @default(0) @map("retail_price") @db.Decimal(15, 2)
   minStockLevel  Decimal  @default(0) @map("min_stock_level") @db.Decimal(15, 2)
   imageUrl       String?  @map("image_url")
-  trackingMode   String   @default("NONE") @map("tracking_mode")
   isTaxInclusive Boolean  @default(false) @map("is_tax_inclusive")
   isActive       Boolean  @default(true) @map("is_active")
   createdAt      DateTime @default(now()) @map("created_at")
@@ -423,27 +427,34 @@ model Product {
 }
 
 model ProductVariant {
-  id            String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  productId     String   @map("product_id") @db.Uuid
-  name          String // e.g. "Standard", "Red - XL"
-  sku           String   @unique
-  barcode       String?
-  purchasePrice Decimal  @map("purchase_price") @db.Decimal(15, 2)
-  mrp           Decimal  @db.Decimal(15, 2)
-  isActive      Boolean  @default(true) @map("is_active")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  id              String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  productId       String   @map("product_id") @db.Uuid
+  name            String // e.g. "Standard", "Red - XL"
+  sku             String   @unique
+  barcode         String?  @unique
+  attributes      Json?    @db.JsonB
+  attributeSearch String?  @map("attribute_search")
+  combinationKey  String?  @map("combination_key")
+  purchasePrice   Decimal  @map("purchase_price") @db.Decimal(15, 2)
+  mrp             Decimal  @db.Decimal(15, 2)
+  retailPrice     Decimal? @map("retail_price") @db.Decimal(15, 2)
+  minStockLevel   Decimal? @map("min_stock_level") @db.Decimal(15, 2)
+  imageUrl        String?  @map("image_url")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
-  product              Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
-  stockBalances        StockBalance[]
-  stockMovements       StockMovement[]
-  salesInvoiceItems    SalesInvoiceItem[]
-  purchaseRequestItems PurchaseRequestItem[]
-  purchaseOrderItems   PurchaseOrderItem[]
-  grnItems             GrnItem[]
-  purchaseInvoiceItems PurchaseInvoiceItem[]
-  purchaseReturnItems  PurchaseReturnItem[]
+  product               Product                @relation(fields: [productId], references: [id], onDelete: Cascade)
+  stockBalances         StockBalance[]
+  stockMovements        StockMovement[]
+  salesInvoiceItems     SalesInvoiceItem[]
+  purchaseRequestItems  PurchaseRequestItem[]
+  purchaseOrderItems    PurchaseOrderItem[]
+  grnItems              GrnItem[]
+  purchaseInvoiceItems  PurchaseInvoiceItem[]
+  purchaseReturnItems   PurchaseReturnItem[]
 
+  @@unique([productId, combinationKey])
   @@map("product_variants")
 }
 
@@ -526,7 +537,7 @@ model StockBalance {
   updatedAt   DateTime @updatedAt @map("updated_at")
 
   branch  Branch         @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
   @@unique([branchId, variantId])
   @@map("stock_balances")
@@ -544,9 +555,8 @@ enum StockMovementType {
 }
 
 model StockMovement {
-<<<<<<< HEAD
   id                    String            @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  warehouseId           String            @map("warehouse_id") @db.Uuid
+  branchId              String            @map("branch_id") @db.Uuid
   variantId             String            @map("variant_id") @db.Uuid
   type                  StockMovementType
   quantity              Decimal           @db.Decimal(15, 2)
@@ -554,32 +564,14 @@ model StockMovement {
   totalCost             Decimal           @map("total_cost") @db.Decimal(15, 2)
   referenceId           String?           @map("reference_id") @db.Uuid // Invoice/Bill ID
   referenceDocumentType String?           @map("reference_document_type")
-  batchNumber           String?           @map("batch_number")
-  serialNumber          String?           @map("serial_number")
-  expiryDate            DateTime?         @map("expiry_date")
+  performedById         String?           @map("performed_by_id") @db.Uuid
+  reason                String?
   idempotencyKey        String?           @unique @map("idempotency_key")
   notes                 String?
   createdAt             DateTime          @default(now()) @map("created_at")
-=======
-  id          String            @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  branchId    String            @map("branch_id") @db.Uuid
-  variantId   String            @map("variant_id") @db.Uuid
-  type        StockMovementType
-  quantity    Decimal           @db.Decimal(15, 2)
-  unitCost    Decimal           @map("unit_cost") @db.Decimal(15, 2)
-  totalCost   Decimal           @map("total_cost") @db.Decimal(15, 2)
-  referenceId String?           @map("reference_id") @db.Uuid // Invoice/Bill ID
-  notes       String?
-  performedById String?         @map("performed_by_id") @db.Uuid
-  reason      String?
-  batchNumber String?           @map("batch_number")
-  expiryDate  DateTime?         @map("expiry_date")
-  serialNumber String?          @map("serial_number")
-  createdAt   DateTime          @default(now()) @map("created_at")
->>>>>>> af79d887a17952dddc6f7a98c49d00ec9f4d29f0
 
   branch  Branch         @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
   @@index([branchId])
   @@map("stock_movements")
@@ -885,7 +877,6 @@ model PurchaseOrder {
   orderDate            DateTime            @map("order_date")
   expectedDate         DateTime?           @map("expected_date")
   status               PurchaseOrderStatus @default(DRAFT)
-  warehouseId          String              @map("warehouse_id") @db.Uuid
   overReceiptTolerance Decimal             @default(5) @map("over_receipt_tolerance") @db.Decimal(5, 2)
   pricesIncludeTax     Boolean             @default(false) @map("prices_include_tax")
   invoiceDiscountType  DiscountType?       @map("invoice_discount_type")
@@ -949,7 +940,6 @@ model Grn {
   branchId        String    @map("branch_id") @db.Uuid
   supplierId      String    @map("supplier_id") @db.Uuid
   purchaseOrderId String?   @map("purchase_order_id") @db.Uuid
-  warehouseId     String    @map("warehouse_id") @db.Uuid
   grnNumber       String    @map("grn_number")
   grnDate         DateTime  @map("grn_date")
   status          GrnStatus @default(DRAFT)
@@ -973,17 +963,14 @@ model Grn {
 }
 
 model GrnItem {
-  id                  String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  grnId               String    @map("grn_id") @db.Uuid
-  variantId           String    @map("variant_id") @db.Uuid
-  purchaseOrderItemId String?   @map("purchase_order_item_id") @db.Uuid
-  quantity            Decimal   @db.Decimal(15, 3)
-  rejectedQuantity    Decimal   @default(0) @map("rejected_quantity") @db.Decimal(15, 3)
-  unitCost            Decimal   @map("unit_cost") @db.Decimal(15, 4)
-  landedCost          Decimal   @default(0) @map("landed_cost") @db.Decimal(15, 4)
-  batchNumber         String?   @map("batch_number")
-  serialNumber        String?   @map("serial_number")
-  expiryDate          DateTime? @map("expiry_date")
+  id                  String  @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  grnId               String  @map("grn_id") @db.Uuid
+  variantId           String  @map("variant_id") @db.Uuid
+  purchaseOrderItemId String? @map("purchase_order_item_id") @db.Uuid
+  quantity            Decimal @db.Decimal(15, 3)
+  rejectedQuantity    Decimal @default(0) @map("rejected_quantity") @db.Decimal(15, 3)
+  unitCost            Decimal @map("unit_cost") @db.Decimal(15, 4)
+  landedCost          Decimal @default(0) @map("landed_cost") @db.Decimal(15, 4)
 
   grn     Grn            @relation(fields: [grnId], references: [id], onDelete: Cascade)
   variant ProductVariant @relation(fields: [variantId], references: [id])
@@ -1004,7 +991,6 @@ model PurchaseInvoice {
   dueDate              DateTime              @map("due_date")
   mode                 PurchaseInvoiceMode   @default(DIRECT)
   status               PurchaseInvoiceStatus @default(DRAFT)
-  warehouseId          String?               @map("warehouse_id") @db.Uuid
   pricesIncludeTax     Boolean               @default(false) @map("prices_include_tax")
   invoiceDiscountType  DiscountType?         @map("invoice_discount_type")
   invoiceDiscountValue Decimal               @default(0) @map("invoice_discount_value") @db.Decimal(15, 2)
@@ -1080,9 +1066,6 @@ model PurchaseInvoiceItem {
   vatAmount           Decimal      @default(0) @map("vat_amount") @db.Decimal(15, 2)
   landedCost          Decimal      @default(0) @map("landed_cost") @db.Decimal(15, 4)
   totalAmount         Decimal      @default(0) @map("total_amount") @db.Decimal(15, 2)
-  batchNumber         String?      @map("batch_number")
-  serialNumber        String?      @map("serial_number")
-  expiryDate          DateTime?    @map("expiry_date")
 
   purchaseInvoice PurchaseInvoice @relation(fields: [purchaseInvoiceId], references: [id], onDelete: Cascade)
   variant         ProductVariant  @relation(fields: [variantId], references: [id])
@@ -1117,7 +1100,6 @@ model PurchaseReturn {
   returnNumber      String               @map("return_number")
   returnDate        DateTime             @map("return_date")
   status            PurchaseReturnStatus @default(DRAFT)
-  warehouseId       String               @map("warehouse_id") @db.Uuid
   taxableAmount     Decimal              @default(0) @map("taxable_amount") @db.Decimal(15, 2)
   totalTax          Decimal              @default(0) @map("total_tax") @db.Decimal(15, 2)
   grandTotal        Decimal              @default(0) @map("grand_total") @db.Decimal(15, 2)

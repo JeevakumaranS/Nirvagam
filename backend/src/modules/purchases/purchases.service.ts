@@ -169,7 +169,6 @@ export class PurchasesService {
           orderNumber: number,
           orderDate: new Date(dto.orderDate || new Date()),
           expectedDate: dto.expectedDate ? new Date(dto.expectedDate) : null,
-          warehouseId: dto.warehouseId,
           status: 'DRAFT',
           createdById: user.id,
           items: {
@@ -199,7 +198,6 @@ export class PurchasesService {
     return this.prisma.$transaction(async (tx) => {
       if (!dto.supplierId) throw new BadRequestException('Supplier is required');
       if (!dto.items?.length) throw new BadRequestException('At least one PO item is required');
-      if (!dto.warehouseId) throw new BadRequestException('Warehouse is required');
       const number = dto.orderNumber || await this.nextNumber(tx, user.businessId, user.branchId, 'PO');
       return tx.purchaseOrder.create({
         data: {
@@ -210,7 +208,6 @@ export class PurchasesService {
           orderNumber: number,
           orderDate: new Date(dto.orderDate || new Date()),
           expectedDate: dto.expectedDate ? new Date(dto.expectedDate) : null,
-          warehouseId: dto.warehouseId,
           overReceiptTolerance: String(dto.overReceiptTolerance ?? 5),
           pricesIncludeTax: dto.pricesIncludeTax === true,
           invoiceDiscountType: dto.invoiceDiscountType || null,
@@ -261,8 +258,6 @@ export class PurchasesService {
         if (!['APPROVED', 'PARTIALLY_RECEIVED'].includes(po.status)) throw new BadRequestException('PO must be approved before GRN');
         supplierId = po.supplierId;
       }
-      const warehouseId = dto.warehouseId || (await tx.warehouse.findFirst({ where: { branchId: user.branchId, isDefault: true } }))?.id;
-      if (!warehouseId) throw new BadRequestException('A warehouse is required');
       const number = dto.grnNumber || await this.nextNumber(tx, user.businessId, user.branchId, 'GRN');
       const grn = await tx.grn.create({
         data: {
@@ -270,7 +265,6 @@ export class PurchasesService {
           branchId: user.branchId,
           supplierId,
           purchaseOrderId: po?.id || null,
-          warehouseId,
           grnNumber: number,
           grnDate: new Date(dto.grnDate || new Date()),
           status: 'DRAFT',
@@ -284,9 +278,6 @@ export class PurchasesService {
               rejectedQuantity: String(item.rejectedQuantity || 0),
               unitCost: String(item.unitCost || 0),
               landedCost: String(item.landedCost || item.unitCost || 0),
-              batchNumber: item.batchNumber,
-              serialNumber: item.serialNumber,
-              expiryDate: item.expiryDate ? new Date(item.expiryDate) : null,
             })),
           },
         },
@@ -311,13 +302,13 @@ export class PurchasesService {
           }
         }
         await tx.stockBalance.upsert({
-          where: { warehouseId_variantId: { warehouseId: grn.warehouseId, variantId: item.variantId } },
-          create: { warehouseId: grn.warehouseId, variantId: item.variantId, quantity: item.quantity, averageCost: item.landedCost },
+          where: { branchId_variantId: { branchId: grn.branchId, variantId: item.variantId } },
+          create: { branchId: grn.branchId, variantId: item.variantId, quantity: item.quantity, averageCost: item.landedCost },
           update: { quantity: { increment: item.quantity }, averageCost: item.landedCost },
         });
         await tx.stockMovement.create({
           data: {
-            warehouseId: grn.warehouseId,
+            branchId: grn.branchId,
             variantId: item.variantId,
             type: 'IN_PURCHASE',
             quantity: item.quantity,
@@ -325,9 +316,6 @@ export class PurchasesService {
             totalCost: String(Number(item.quantity) * Number(item.landedCost)),
             referenceId: grn.id,
             referenceDocumentType: 'GRN',
-            batchNumber: item.batchNumber,
-            serialNumber: item.serialNumber,
-            expiryDate: item.expiryDate,
             idempotencyKey: `GRN:${grn.id}:${item.id}:POST`,
             notes: `Goods received under ${grn.grnNumber}`,
           },
@@ -397,9 +385,6 @@ export class PurchasesService {
       }
 
       const number = dto.invoiceNumber || await this.nextNumber(tx, user.businessId, user.branchId, 'PI');
-      const warehouseId = dto.warehouseId || (await tx.warehouse.findFirst({ where: { branchId: user.branchId, isDefault: true } }))?.id;
-      if (mode === 'DIRECT' && !warehouseId) throw new BadRequestException('A warehouse is required for direct purchase invoices');
-
       const dueDate = dto.dueDate
         ? new Date(dto.dueDate)
         : new Date(new Date(dto.invoiceDate || new Date()).getTime() + Number(supplier.creditPeriodDays || 30) * 86400000);
@@ -416,7 +401,6 @@ export class PurchasesService {
           dueDate,
           mode,
           status: dto.post === true ? 'APPROVED' : 'DRAFT',
-          warehouseId: mode === 'DIRECT' ? warehouseId : null,
           pricesIncludeTax: dto.pricesIncludeTax === true,
           invoiceDiscountType: dto.invoiceDiscountType || null,
           invoiceDiscountValue: String(dto.invoiceDiscountValue || 0),
@@ -459,9 +443,6 @@ export class PurchasesService {
                 vatAmount: computed.vatAmount,
                 landedCost: computed.landedCost,
                 totalAmount: computed.totalAmount,
-                batchNumber: item.batchNumber,
-                serialNumber: item.serialNumber,
-                expiryDate: item.expiryDate ? new Date(item.expiryDate) : null,
               };
             }),
           },
@@ -529,13 +510,13 @@ export class PurchasesService {
       const items = await tx.purchaseInvoiceItem.findMany({ where: { purchaseInvoiceId: invoice.id } });
       for (const item of items) {
         await tx.stockBalance.upsert({
-          where: { warehouseId_variantId: { warehouseId: invoice.warehouseId!, variantId: item.variantId } },
-          create: { warehouseId: invoice.warehouseId!, variantId: item.variantId, quantity: item.quantity, averageCost: item.landedCost },
+          where: { branchId_variantId: { branchId: invoice.branchId, variantId: item.variantId } },
+          create: { branchId: invoice.branchId, variantId: item.variantId, quantity: item.quantity, averageCost: item.landedCost },
           update: { quantity: { increment: item.quantity }, averageCost: item.landedCost },
         });
         await tx.stockMovement.create({
           data: {
-            warehouseId: invoice.warehouseId!,
+            branchId: invoice.branchId,
             variantId: item.variantId,
             type: 'IN_PURCHASE',
             quantity: item.quantity,
@@ -543,9 +524,6 @@ export class PurchasesService {
             totalCost: String(Number(item.quantity) * Number(item.landedCost)),
             referenceId: invoice.id,
             referenceDocumentType: 'PURCHASE_INVOICE',
-            batchNumber: item.batchNumber,
-            serialNumber: item.serialNumber,
-            expiryDate: item.expiryDate,
             idempotencyKey: `INVOICE:${invoice.id}:${item.id}:POST`,
             notes: `Direct purchase invoice ${invoice.invoiceNumber}`,
           },
@@ -587,9 +565,9 @@ export class PurchasesService {
         for (const item of invoice.items) {
           await tx.stockMovement.create({
             data: {
-              warehouseId: invoice.warehouseId!,
+              branchId: invoice.branchId,
               variantId: item.variantId,
-              type: 'ADJUSTMENT_SUB',
+              type: 'MANUAL_OUT',
               quantity: item.quantity,
               unitCost: item.landedCost,
               totalCost: String(Number(item.quantity) * Number(item.landedCost)),
@@ -600,7 +578,7 @@ export class PurchasesService {
             },
           });
           await tx.stockBalance.update({
-            where: { warehouseId_variantId: { warehouseId: invoice.warehouseId!, variantId: item.variantId } },
+            where: { branchId_variantId: { branchId: invoice.branchId, variantId: item.variantId } },
             data: { quantity: { decrement: item.quantity } },
           });
         }
@@ -656,8 +634,6 @@ export class PurchasesService {
         };
       });
       const number = dto.returnNumber || await this.nextNumber(tx, user.businessId, user.branchId, 'PRN');
-      const returnWarehouseId = dto.warehouseId || invoice.warehouseId || (await tx.warehouse.findFirst({ where: { branchId: user.branchId, isDefault: true } }))?.id;
-      if (!returnWarehouseId) throw new BadRequestException('A warehouse is required for the purchase return');
       return tx.purchaseReturn.create({
         data: {
           businessId: user.businessId,
@@ -667,7 +643,6 @@ export class PurchasesService {
           returnNumber: number,
           returnDate: new Date(dto.returnDate || new Date()),
           status: 'DRAFT',
-          warehouseId: returnWarehouseId,
           taxableAmount: taxable.toFixed(2),
           totalTax: totalTax.toFixed(2),
           grandTotal: (taxable + totalTax).toFixed(2),
@@ -690,7 +665,7 @@ export class PurchasesService {
       assertPurchaseTransition('RETURN', document.status, 'POSTED');
       for (const item of document.items) {
         const balance = await tx.stockBalance.findUnique({
-          where: { warehouseId_variantId: { warehouseId: document.warehouseId, variantId: item.variantId } },
+          where: { branchId_variantId: { branchId: document.branchId, variantId: item.variantId } },
         });
         if (!balance || Number(balance.quantity) < Number(item.quantity)) throw new BadRequestException(`Insufficient stock for purchase return item ${item.variantId}`);
         await tx.stockBalance.update({
@@ -699,7 +674,7 @@ export class PurchasesService {
         });
         await tx.stockMovement.create({
           data: {
-            warehouseId: document.warehouseId,
+            branchId: document.branchId,
             variantId: item.variantId,
             type: 'RETURN_OUT_DEBIT_NOTE',
             quantity: item.quantity,
@@ -849,7 +824,7 @@ export class PurchasesService {
         if (row.status === 'POSTED') {
           for (const item of row.items) {
             await tx.stockBalance.update({
-              where: { warehouseId_variantId: { warehouseId: row.warehouseId, variantId: item.variantId } },
+              where: { branchId_variantId: { branchId: row.branchId, variantId: item.variantId } },
               data: { quantity: { decrement: item.quantity } },
             });
           }
