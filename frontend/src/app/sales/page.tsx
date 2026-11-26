@@ -182,7 +182,7 @@ export default function SalesPage() {
           name: prod.name,
           unitName: prod.unit?.symbol || '',
           quantity: 1,
-          unitPrice: Number(variant.salesPrice || 0),
+          unitPrice: Number(prod.retailPrice || 0),
           gstRate: Number(prod.taxRate?.rate || 18),
           discountPercent: 0,
           discountAmount: 0,
@@ -800,7 +800,7 @@ export default function SalesPage() {
                       {p.unit?.symbol || 'Unit'} · Stock: {p.totalStock}
                     </p>
                   </div>
-                  <span className="font-mono text-accent shrink-0">₹{p.salesPrice}</span>
+                  <span className="font-mono text-accent shrink-0">₹{p.retailPrice}</span>
                 </button>
               ))}
             </div>

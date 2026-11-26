@@ -1,15 +1,20 @@
-import { jwtExpirySecondsFromHours } from './jwt-expiry';
+import { jwtExpirySecondsFromConfig } from './jwt-expiry';
 
 describe('jwt expiry configuration', () => {
-  it('converts configured hours to the seconds expected by JWT signing', () => {
-    expect(jwtExpirySecondsFromHours('168')).toBe(168 * 60 * 60);
+  it.each([
+    ['168', 168 * 60 * 60],
+    ['15m', 15 * 60],
+    ['7d', 7 * 24 * 60 * 60],
+    ['30s', 30],
+  ])('converts %s to seconds for JWT signing', (value, seconds) => {
+    expect(jwtExpirySecondsFromConfig(value)).toBe(seconds);
   });
 
-  it.each([undefined, '', '0', '-1', '7d', '1.5'])(
-    'rejects invalid hour values: %s',
+  it.each([undefined, '', '0', '-1', '1.5', '7x', '9007199254740991d'])(
+    'rejects invalid expiry values: %s',
     (value) => {
-      expect(() => jwtExpirySecondsFromHours(value)).toThrow(
-        'JWT_EXPIRES_IN must be configured as a positive whole number of hours'
+      expect(() => jwtExpirySecondsFromConfig(value)).toThrow(
+        'JWT_EXPIRES_IN must be a positive whole number of hours or a duration such as 15m or 7d'
       );
     }
   );

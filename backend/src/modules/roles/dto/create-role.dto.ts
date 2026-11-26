@@ -9,7 +9,7 @@ export class CreateRoleDto {
   @MaxLength(100)
   name!: string;
 
-  @ApiProperty({ example: 'Manage stock counts and warehouse operations', required: false })
+  @ApiProperty({ example: 'Manage stock counts and branch inventory operations', required: false })
   @IsString()
   @IsOptional()
   @MaxLength(500)

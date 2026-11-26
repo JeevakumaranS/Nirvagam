@@ -26,11 +26,6 @@ export class CreateProductDto {
   @IsNumber()
   purchasePrice!: number;
 
-  @ApiProperty({ example: 899.0 })
-  @IsNumber()
-  @IsOptional()
-  salesPrice!: number;
-
   @ApiProperty({ example: 999.0, required: false })
   @IsNumber()
   @IsOptional()
@@ -40,11 +35,6 @@ export class CreateProductDto {
   @IsNumber()
   @IsOptional()
   minStockLevel?: number;
-
-  @ApiProperty({ example: 50, required: false })
-  @IsNumber()
-  @IsOptional()
-  openingStock?: number;
 
   @ApiProperty({ example: false, required: false })
   @IsBoolean()
@@ -64,14 +54,6 @@ export class CreateProductDto {
   @ApiProperty({ required: false })
   @IsString()
   @IsOptional()
-  categoryId?: string;
-
-  @IsString()
-  @IsOptional()
-  brandId?: string;
-
-  @IsString()
-  @IsOptional()
   description?: string;
 
   @IsNumber()
@@ -81,10 +63,6 @@ export class CreateProductDto {
   @IsNumber()
   @IsOptional()
   retailPrice?: number;
-
-  @IsNumber()
-  @IsOptional()
-  reorderLevel?: number;
 
   @IsString()
   @IsOptional()

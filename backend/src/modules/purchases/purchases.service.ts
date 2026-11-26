@@ -59,7 +59,6 @@ export class PurchasesService {
     const [branch, supplier] = await Promise.all([
       this.prisma.branch.findUnique({
         where: { id: branchId },
-        include: { warehouses: { where: { isDefault: true } } },
       }),
       this.prisma.supplier.findUnique({
         where: { id: dto.supplierId },
@@ -68,11 +67,6 @@ export class PurchasesService {
 
     if (!branch || !supplier) {
       throw new NotFoundException('Branch or Supplier not found');
-    }
-
-    const warehouse = branch.warehouses[0];
-    if (!warehouse) {
-      throw new BadRequestException('Default warehouse required for stock intake');
     }
 
     const supplierStateCode = supplier.stateCode || branch.stateCode;
@@ -241,8 +235,8 @@ export class PurchasesService {
         // Increment stock balance
         const balance = await tx.stockBalance.findUnique({
           where: {
-            warehouseId_variantId: {
-              warehouseId: warehouse.id,
+            branchId_variantId: {
+              branchId: branch.id,
               variantId: line.variantId,
             },
           },
@@ -256,7 +250,7 @@ export class PurchasesService {
         } else {
           await tx.stockBalance.create({
             data: {
-              warehouseId: warehouse.id,
+              branchId: branch.id,
               variantId: line.variantId,
               quantity: line.quantity,
               averageCost: line.unitPrice,
@@ -267,7 +261,7 @@ export class PurchasesService {
         // Record stock movement
         await tx.stockMovement.create({
           data: {
-            warehouseId: warehouse.id,
+            branchId: branch.id,
             variantId: line.variantId,
             type: StockMovementType.IN_PURCHASE,
             quantity: line.quantity,

@@ -1,11 +1,11 @@
-import { Controller, ForbiddenException, Get, Post, Body, Query, UseGuards, Patch, Delete, Param } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, UseGuards, Patch, Delete, Param } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
 import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { TenantResolverGuard } from '../../tenancy/tenant-resolver.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { AuthUser, PaginationParams, UserRoleName } from '@nirvagam/shared';
+import { AuthUser, PaginationParams } from '@nirvagam/shared';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RequirePermissions } from '../../common/decorators/permissions.decorator';
 
@@ -26,27 +26,10 @@ export class ProductsController {
 
   @Post()
   @RequirePermissions('product:create')
-  @ApiOperation({ summary: 'Create product, default variant and opening stock' })
+  @ApiOperation({ summary: 'Create product and default variant' })
   @ApiResponse({ status: 201, description: 'Product created' })
   async create(@CurrentUser() user: AuthUser, @Body() dto: CreateProductDto) {
-    if (
-      dto.openingStock &&
-      dto.openingStock > 0 &&
-      !user.roles.includes(UserRoleName.SUPER_ADMIN)
-    ) {
-      const requiredPermissions = ['inventory:edit', 'inventory:approve'];
-      const userPermissions = user.permissions || [];
-      const missingPermissions = requiredPermissions.filter(
-        (permission) => !userPermissions.includes(permission)
-      );
-      if (missingPermissions.length > 0) {
-        throw new ForbiddenException(
-          `Missing required permissions: ${missingPermissions.join(', ')}`
-        );
-      }
-    }
-
-    return this.productsService.create(user.businessId, user.branchId, dto);
+    return this.productsService.create(user.businessId, dto);
   }
 
   @Patch(':id')
@@ -68,17 +51,6 @@ export class ProductsController {
     return this.productsService.getUnits(user.businessId);
   }
 
-  @Get('meta/categories')
-  @RequirePermissions('product:view')
-  @ApiOperation({ summary: 'Get product categories' })
-  async getCategories(@CurrentUser() user: AuthUser) {
-    return this.productsService.getCategories(user.businessId);
-  }
-
-  @Post('meta/categories')
-  @RequirePermissions('product:create')
-  async createCategory(@CurrentUser() user: AuthUser, @Body() dto: any) { return this.productsService.createCategory(user.businessId, dto); }
-
   @Post('meta/units')
   @RequirePermissions('product:create')
   async createUnit(@CurrentUser() user: AuthUser, @Body() dto: any) { return this.productsService.createUnit(user.businessId, dto); }
@@ -90,17 +62,13 @@ export class ProductsController {
     return this.productsService.getTaxRates(user.businessId);
   }
 
-  @Post('inventory/warehouses')
-  @RequirePermissions('inventory:edit')
-  async createWarehouse(@CurrentUser() user: AuthUser, @Body() dto: any) { return this.productsService.createWarehouse(user.businessId, dto); }
-
   @Get('inventory/overview')
   @RequirePermissions('product:view')
   async overview(@CurrentUser() user: AuthUser) { return this.productsService.overview(user.businessId); }
 
-  @Get('inventory/warehouses')
+  @Get('inventory/branches')
   @RequirePermissions('product:view')
-  async warehouses(@CurrentUser() user: AuthUser) { return this.productsService.warehouses(user.businessId); }
+  async branches(@CurrentUser() user: AuthUser) { return this.productsService.branches(user.businessId); }
 
   @Get('inventory/balances')
   @RequirePermissions('product:view')

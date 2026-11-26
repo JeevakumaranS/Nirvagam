@@ -10,14 +10,13 @@ async function main() {
     const unit = await prisma.unit.findFirstOrThrow({ where: { businessId } });
     const taxRate = await prisma.taxRate.findFirstOrThrow({ where: { businessId } });
     const branch = await prisma.branch.findFirstOrThrow({ where: { businessId, isActive: true } });
-    const warehouse = await prisma.warehouse.findFirst({ where: { branchId: branch.id } }) || await prisma.warehouse.create({ data: { branchId: branch.id, name: 'Textile Main Warehouse', code: 'TXT-MAIN', isDefault: true } });
-    for (const item of [{ name: 'Organic Cotton Poplin', sku: 'TXT-COT-001', purchasePrice: 280, salesPrice: 599, openingStock: 120 }, { name: 'Linen Blend Saree Fabric', sku: 'TXT-LIN-002', purchasePrice: 640, salesPrice: 1299, openingStock: 35 }, { name: 'Indigo Denim Roll', sku: 'TXT-DNM-003', purchasePrice: 510, salesPrice: 999, openingStock: 8 }]) {
+    for (const item of [{ name: 'Organic Cotton Poplin', sku: 'TXT-COT-001', purchasePrice: 280, retailPrice: 599, quantity: 120 }, { name: 'Linen Blend Saree Fabric', sku: 'TXT-LIN-002', purchasePrice: 640, retailPrice: 1299, quantity: 35 }, { name: 'Indigo Denim Roll', sku: 'TXT-DNM-003', purchasePrice: 510, retailPrice: 999, quantity: 8 }]) {
       const exists = await prisma.product.findFirst({ where: { businessId, sku: item.sku } });
       if (exists) continue;
-      const product = await prisma.product.create({ data: { businessId, unitId: unit.id, taxRateId: taxRate.id, name: item.name, sku: item.sku, purchasePrice: item.purchasePrice, salesPrice: item.salesPrice, mrp: item.salesPrice, retailPrice: item.salesPrice, wholesalePrice: item.salesPrice * 0.9, minStockLevel: 10, reorderLevel: 15 } });
-      const variant = await prisma.productVariant.create({ data: { productId: product.id, name: 'Standard', sku: item.sku, purchasePrice: item.purchasePrice, salesPrice: item.salesPrice, mrp: item.salesPrice } });
-      await prisma.stockBalance.create({ data: { warehouseId: warehouse.id, variantId: variant.id, quantity: item.openingStock, averageCost: item.purchasePrice } });
-      await prisma.stockMovement.create({ data: { warehouseId: warehouse.id, variantId: variant.id, type: 'ADJUSTMENT_ADD', quantity: item.openingStock, unitCost: item.purchasePrice, totalCost: item.openingStock * item.purchasePrice, reason: 'Development opening stock', notes: 'Inventory seed' } });
+      const product = await prisma.product.create({ data: { businessId, unitId: unit.id, taxRateId: taxRate.id, name: item.name, sku: item.sku, purchasePrice: item.purchasePrice, mrp: item.retailPrice, retailPrice: item.retailPrice, wholesalePrice: item.retailPrice * 0.9, minStockLevel: 10 } });
+      const variant = await prisma.productVariant.create({ data: { productId: product.id, name: 'Standard', sku: item.sku, purchasePrice: item.purchasePrice, mrp: item.retailPrice } });
+      await prisma.stockBalance.create({ data: { branchId: branch.id, variantId: variant.id, quantity: item.quantity, averageCost: item.purchasePrice } });
+      await prisma.stockMovement.create({ data: { branchId: branch.id, variantId: variant.id, type: 'MANUAL_IN', quantity: item.quantity, unitCost: item.purchasePrice, totalCost: item.quantity * item.purchasePrice, reason: 'Development inventory seed', notes: 'Inventory seed' } });
     }
   } finally { await prisma.$disconnect(); }
 }
