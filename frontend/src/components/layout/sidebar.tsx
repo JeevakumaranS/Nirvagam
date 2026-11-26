@@ -38,7 +38,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
         { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
         { label: 'Sales & Billing', href: '/sales', icon: Receipt },
         { label: 'POS Checkout', href: '/pos', icon: ShoppingCart },
-        { label: 'Purchases & GRN', href: '/purchases', icon: Package },
+        { label: 'Purchase Management', href: '/purchases', icon: Package },
       ],
     },
     {
