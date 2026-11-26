@@ -28,6 +28,7 @@ export class CreateProductDto {
 
   @ApiProperty({ example: 899.0 })
   @IsNumber()
+  @IsOptional()
   salesPrice!: number;
 
   @ApiProperty({ example: 999.0, required: false })
@@ -64,4 +65,36 @@ export class CreateProductDto {
   @IsString()
   @IsOptional()
   categoryId?: string;
+
+  @IsString()
+  @IsOptional()
+  brandId?: string;
+
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @IsNumber()
+  @IsOptional()
+  wholesalePrice?: number;
+
+  @IsNumber()
+  @IsOptional()
+  retailPrice?: number;
+
+  @IsNumber()
+  @IsOptional()
+  reorderLevel?: number;
+
+  @IsString()
+  @IsOptional()
+  imageUrl?: string;
+
+  @IsString()
+  @IsOptional()
+  trackingMode?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  isActive?: boolean;
 }

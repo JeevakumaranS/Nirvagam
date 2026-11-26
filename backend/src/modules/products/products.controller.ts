@@ -1,4 +1,4 @@
-import { Controller, ForbiddenException, Get, Post, Body, Query, UseGuards } from '@nestjs/common';
+import { Controller, ForbiddenException, Get, Post, Body, Query, UseGuards, Patch, Delete, Param } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
 import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -49,6 +49,18 @@ export class ProductsController {
     return this.productsService.create(user.businessId, user.branchId, dto);
   }
 
+  @Patch(':id')
+  @RequirePermissions('product:edit')
+  async update(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: Partial<CreateProductDto>) {
+    return this.productsService.updateProduct(user.businessId, id, dto);
+  }
+
+  @Delete(':id')
+  @RequirePermissions('product:delete')
+  async remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.productsService.removeProduct(user.businessId, id);
+  }
+
   @Get('meta/units')
   @RequirePermissions('product:view')
   @ApiOperation({ summary: 'Get measurement units' })
@@ -63,10 +75,50 @@ export class ProductsController {
     return this.productsService.getCategories(user.businessId);
   }
 
+  @Post('meta/categories')
+  @RequirePermissions('product:create')
+  async createCategory(@CurrentUser() user: AuthUser, @Body() dto: any) { return this.productsService.createCategory(user.businessId, dto); }
+
+  @Post('meta/units')
+  @RequirePermissions('product:create')
+  async createUnit(@CurrentUser() user: AuthUser, @Body() dto: any) { return this.productsService.createUnit(user.businessId, dto); }
+
   @Get('meta/tax-rates')
   @RequirePermissions('product:view')
   @ApiOperation({ summary: 'Get GST tax slabs' })
   async getTaxRates(@CurrentUser() user: AuthUser) {
     return this.productsService.getTaxRates(user.businessId);
   }
+
+  @Post('inventory/warehouses')
+  @RequirePermissions('inventory:edit')
+  async createWarehouse(@CurrentUser() user: AuthUser, @Body() dto: any) { return this.productsService.createWarehouse(user.businessId, dto); }
+
+  @Get('inventory/overview')
+  @RequirePermissions('product:view')
+  async overview(@CurrentUser() user: AuthUser) { return this.productsService.overview(user.businessId); }
+
+  @Get('inventory/warehouses')
+  @RequirePermissions('product:view')
+  async warehouses(@CurrentUser() user: AuthUser) { return this.productsService.warehouses(user.businessId); }
+
+  @Get('inventory/balances')
+  @RequirePermissions('product:view')
+  async balances(@CurrentUser() user: AuthUser, @Query('search') search?: string) { return this.productsService.balances(user.businessId, search); }
+
+  @Get('inventory/movements')
+  @RequirePermissions('product:view')
+  async movements(@CurrentUser() user: AuthUser, @Query('search') search?: string) { return this.productsService.movements(user.businessId, search); }
+
+  @Get('inventory/reports')
+  @RequirePermissions('product:view')
+  async report(@CurrentUser() user: AuthUser, @Query('kind') kind?: string, @Query('method') method?: string) { return this.productsService.report(user.businessId, kind, method); }
+
+  @Post('inventory/operations')
+  @RequirePermissions('inventory:edit')
+  async operation(@CurrentUser() user: AuthUser, @Body() dto: any) { return this.productsService.stockOperation(user.businessId, user.id, dto); }
+
+  @Post('inventory/transfers')
+  @RequirePermissions('inventory:edit')
+  async transfer(@CurrentUser() user: AuthUser, @Body() dto: any) { return this.productsService.transfer(user.businessId, user.id, dto); }
 }
