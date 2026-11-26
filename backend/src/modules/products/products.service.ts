@@ -111,7 +111,7 @@ export class ProductsService {
     }
 
     const purchasePrice = Number(dto.purchasePrice || 0);
-    const salesPrice = Number(dto.salesPrice || 0);
+    const salesPrice = Number(dto.salesPrice ?? dto.retailPrice ?? 0);
     const mrp = Number(dto.mrp || salesPrice);
 
     return this.prisma.$transaction(async (tx) => {
@@ -127,12 +127,10 @@ export class ProductsService {
           barcode: dto.barcode,
           hsnCode: dto.hsnCode,
           purchasePrice,
-          salesPrice,
           mrp,
           wholesalePrice: Number(dto.wholesalePrice || salesPrice),
           retailPrice: Number(dto.retailPrice || salesPrice),
           minStockLevel: dto.minStockLevel || 0,
-          reorderLevel: dto.reorderLevel || dto.minStockLevel || 0,
           description: dto.description,
           imageUrl: dto.imageUrl,
           trackingMode: dto.trackingMode || 'NONE',
@@ -172,6 +170,7 @@ export class ProductsService {
 
           await tx.stockMovement.create({
             data: {
+              branchId: warehouse.branchId,
               warehouseId: warehouse.id,
               variantId: variant.id,
               type: StockMovementType.ADJUSTMENT_ADD,
@@ -268,13 +267,32 @@ export class ProductsService {
       const duplicate = await this.prisma.product.findFirst({ where: { businessId, sku: dto.sku, NOT: { id } } });
       if (duplicate) throw new ConflictException(`SKU "${dto.sku}" already exists`);
     }
-    return this.prisma.product.update({ where: { id }, data: {
-      name: dto.name, sku: dto.sku, barcode: dto.barcode, hsnCode: dto.hsnCode, description: dto.description,
-      categoryId: dto.categoryId, brandId: dto.brandId, unitId: dto.unitId, taxRateId: dto.taxRateId,
-      purchasePrice: dto.purchasePrice, salesPrice: dto.salesPrice, mrp: dto.mrp,
-      wholesalePrice: dto.wholesalePrice, retailPrice: dto.retailPrice, minStockLevel: dto.minStockLevel,
-      reorderLevel: dto.reorderLevel, imageUrl: dto.imageUrl, trackingMode: dto.trackingMode, isActive: dto.isActive,
-    } as any });
+    return this.prisma.$transaction(async (tx) => {
+      const updatedProduct = await tx.product.update({ where: { id }, data: {
+        name: dto.name, sku: dto.sku, barcode: dto.barcode, hsnCode: dto.hsnCode, description: dto.description,
+        categoryId: dto.categoryId, brandId: dto.brandId, unitId: dto.unitId, taxRateId: dto.taxRateId,
+        purchasePrice: dto.purchasePrice, mrp: dto.mrp,
+        retailPrice: dto.retailPrice ?? dto.salesPrice,
+        wholesalePrice: dto.wholesalePrice, minStockLevel: dto.minStockLevel,
+        imageUrl: dto.imageUrl, trackingMode: dto.trackingMode, isActive: dto.isActive,
+      } });
+
+      if (dto.salesPrice !== undefined) {
+        const defaultVariant = await tx.productVariant.findFirst({
+          where: { productId: id },
+          orderBy: { createdAt: 'asc' },
+          select: { id: true },
+        });
+        if (defaultVariant) {
+          await tx.productVariant.update({
+            where: { id: defaultVariant.id },
+            data: { salesPrice: dto.salesPrice },
+          });
+        }
+      }
+
+      return updatedProduct;
+    });
   }
 
   async removeProduct(businessId: string, id: string) {
@@ -291,7 +309,7 @@ export class ProductsService {
     const rows = products.map((p) => {
       const stock = p.variants.reduce((n, v) => n + v.stockBalances.reduce((s, b) => s + Number(b.quantity), 0), 0);
       const valuation = p.variants.reduce((n, v) => n + v.stockBalances.reduce((s, b) => s + Number(b.quantity) * Number(b.averageCost), 0), 0);
-      return { ...p, totalStock: stock, valuation, isLowStock: stock > 0 && stock <= Number(p.reorderLevel || p.minStockLevel), isOutOfStock: stock <= 0 };
+      return { ...p, totalStock: stock, valuation, isLowStock: stock > 0 && stock <= Number(p.minStockLevel), isOutOfStock: stock <= 0 };
     });
     const recentMovements = await this.prisma.stockMovement.findMany({
       where: { warehouse: { branch: { businessId } } }, include: { variant: { include: { product: true } }, warehouse: true }, orderBy: { createdAt: 'desc' }, take: 8,
@@ -331,7 +349,7 @@ export class ProductsService {
       const cost = Number(dto.unitCost ?? variant.purchasePrice);
       const averageCost = nextQty > 0 && !isOut ? ((currentQty * Number(current?.averageCost || cost)) + quantity * cost) / nextQty : Number(current?.averageCost || cost);
       await tx.stockBalance.upsert({ where: { warehouseId_variantId: { warehouseId: dto.warehouseId, variantId: dto.variantId } }, create: { warehouseId: dto.warehouseId, variantId: dto.variantId, quantity: nextQty, averageCost }, update: { quantity: nextQty, averageCost } });
-      return tx.stockMovement.create({ data: { warehouseId: dto.warehouseId, variantId: dto.variantId, type: isOut ? (dto.type === 'ADJUSTMENT_SUB' ? 'ADJUSTMENT_SUB' : 'MANUAL_OUT') : (dto.type === 'ADJUSTMENT' ? 'ADJUSTMENT_ADD' : 'MANUAL_IN'), quantity, unitCost: cost, totalCost: quantity * cost, notes: dto.reference || dto.notes, reason: dto.reason, performedById: userId, batchNumber: dto.batchNumber, expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : undefined, serialNumber: dto.serialNumber } });
+      return tx.stockMovement.create({ data: { branchId: warehouse.branchId, warehouseId: dto.warehouseId, variantId: dto.variantId, type: isOut ? (dto.type === 'ADJUSTMENT_SUB' ? 'ADJUSTMENT_SUB' : 'MANUAL_OUT') : (dto.type === 'ADJUSTMENT' ? 'ADJUSTMENT_ADD' : 'MANUAL_IN'), quantity, unitCost: cost, totalCost: quantity * cost, notes: dto.reference || dto.notes, reason: dto.reason, performedById: userId, batchNumber: dto.batchNumber, expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : undefined } });
     });
   }
 
@@ -347,14 +365,14 @@ export class ProductsService {
       await tx.stockBalance.update({ where: { id: balance.id }, data: { quantity: { decrement: qty } } });
       await tx.stockBalance.upsert({ where: { warehouseId_variantId: { warehouseId: to.id, variantId: dto.variantId } }, create: { warehouseId: to.id, variantId: dto.variantId, quantity: qty, averageCost: balance.averageCost }, update: { quantity: { increment: qty }, averageCost: balance.averageCost } });
       const common = { variantId: dto.variantId, quantity: qty, unitCost: balance.averageCost, totalCost: qty * Number(balance.averageCost), notes: dto.reason || 'Warehouse transfer', referenceId: undefined, performedById: userId };
-      await tx.stockMovement.create({ data: { warehouseId: from.id, type: 'OUT_TRANSFER', ...common } });
-      return tx.stockMovement.create({ data: { warehouseId: to.id, type: 'IN_TRANSFER', ...common } });
+      await tx.stockMovement.create({ data: { branchId: from.branchId, warehouseId: from.id, type: 'OUT_TRANSFER', ...common } });
+      return tx.stockMovement.create({ data: { branchId: to.branchId, warehouseId: to.id, type: 'IN_TRANSFER', ...common } });
     });
   }
 
   async report(businessId: string, kind = 'summary', method = 'weighted-average') {
     const rows = await this.balances(businessId);
-    if (kind === 'low-stock') return rows.filter((r: any) => Number(r.quantity) <= Number(r.variant.product.reorderLevel || r.variant.product.minStockLevel));
+    if (kind === 'low-stock') return rows.filter((r: any) => Number(r.quantity) <= Number(r.variant.product.minStockLevel));
     if (kind === 'expiry') return (await this.movements(businessId)).filter((m: any) => m.expiryDate && new Date(m.expiryDate) <= new Date(Date.now() + 90 * 86400000));
     if (kind === 'dead-stock') return rows.filter((r: any) => Number(r.quantity) > 0);
     if (method === 'fifo') {

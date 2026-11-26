@@ -26,10 +26,10 @@ export class CreateProductDto {
   @IsNumber()
   purchasePrice!: number;
 
-  @ApiProperty({ example: 899.0 })
+  @ApiProperty({ example: 899.0, required: false })
   @IsNumber()
   @IsOptional()
-  salesPrice!: number;
+  salesPrice?: number;
 
   @ApiProperty({ example: 999.0, required: false })
   @IsNumber()
@@ -81,10 +81,6 @@ export class CreateProductDto {
   @IsNumber()
   @IsOptional()
   retailPrice?: number;
-
-  @IsNumber()
-  @IsOptional()
-  reorderLevel?: number;
 
   @IsString()
   @IsOptional()

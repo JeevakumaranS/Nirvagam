@@ -190,6 +190,7 @@ model Branch {
   purchaseInvoices PurchaseInvoice[]
   expenses         Expense[]
   payments         Payment[]
+  stockMovements   StockMovement[]
 
   @@unique([businessId, code])
   @@map("branches")
@@ -432,12 +433,10 @@ model Product {
   hsnCode        String?  @map("hsn_code")
   description    String?
   purchasePrice  Decimal  @default(0) @map("purchase_price") @db.Decimal(15, 2)
-  salesPrice     Decimal  @default(0) @map("sales_price") @db.Decimal(15, 2)
   mrp            Decimal  @default(0) @db.Decimal(15, 2)
   wholesalePrice Decimal  @default(0) @map("wholesale_price") @db.Decimal(15, 2)
   retailPrice    Decimal  @default(0) @map("retail_price") @db.Decimal(15, 2)
   minStockLevel  Decimal  @default(0) @map("min_stock_level") @db.Decimal(15, 2)
-  reorderLevel   Decimal  @default(0) @map("reorder_level") @db.Decimal(15, 2)
   imageUrl       String?  @map("image_url")
   trackingMode   String   @default("NONE") @map("tracking_mode")
   isTaxInclusive Boolean  @default(false) @map("is_tax_inclusive")
@@ -562,13 +561,13 @@ model Warehouse {
 
 model StockBalance {
   id          String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  warehouseId String   @map("warehouse_id") @db.Uuid
+  warehouseId String?  @map("warehouse_id") @db.Uuid
   variantId   String   @map("variant_id") @db.Uuid
   quantity    Decimal  @default(0) @db.Decimal(15, 2)
   averageCost Decimal  @default(0) @map("average_cost") @db.Decimal(15, 2)
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  warehouse Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  warehouse Warehouse?     @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
   variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
   @@unique([warehouseId, variantId])
@@ -590,6 +589,7 @@ enum StockMovementType {
 
 model StockMovement {
   id          String            @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  branchId    String            @map("branch_id") @db.Uuid
   warehouseId String            @map("warehouse_id") @db.Uuid
   variantId   String            @map("variant_id") @db.Uuid
   type        StockMovementType
@@ -602,12 +602,13 @@ model StockMovement {
   reason      String?
   batchNumber String?           @map("batch_number")
   expiryDate  DateTime?         @map("expiry_date")
-  serialNumber String?          @map("serial_number")
   createdAt   DateTime          @default(now()) @map("created_at")
 
+  branch    Branch         @relation(fields: [branchId], references: [id], onDelete: Cascade)
   warehouse Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
   variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
+  @@index([branchId])
   @@map("stock_movements")
 }
 

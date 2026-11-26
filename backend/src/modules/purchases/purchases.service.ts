@@ -267,6 +267,7 @@ export class PurchasesService {
         // Record stock movement
         await tx.stockMovement.create({
           data: {
+            branchId: branch.id,
             warehouseId: warehouse.id,
             variantId: line.variantId,
             type: StockMovementType.IN_PURCHASE,

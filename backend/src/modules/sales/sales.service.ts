@@ -661,7 +661,7 @@ export class SalesService {
               reference: paymentInput.reference,
             },
           });
-          await tx.paymentAllocation.create({
+          await tx.paymentAllocation.createMany({
             data: { paymentId: payment.id, salesInvoiceId: invoice.id, amount: paymentInput.amount },
           });
 
@@ -744,6 +744,7 @@ export class SalesService {
 
           await tx.stockMovement.create({
             data: {
+              branchId: branch.id,
               warehouseId: warehouse.id,
               variantId: item.id,
               type: STOCK_IN_DOCUMENT_TYPES.has(invoiceType)
@@ -822,7 +823,7 @@ export class SalesService {
           reference: dto.reference,
         },
       });
-      await tx.paymentAllocation.create({
+      await tx.paymentAllocation.createMany({
         data: { paymentId: payment.id, salesInvoiceId: invoice.id, amount: dto.amount },
       });
 
@@ -1015,6 +1016,7 @@ export class SalesService {
 
           await tx.stockMovement.create({
             data: {
+              branchId: invoice.branchId,
               warehouseId: warehouse.id,
               variantId: item.variantId,
               type: STOCK_OUT_DOCUMENT_TYPES.has(invoice.invoiceType)

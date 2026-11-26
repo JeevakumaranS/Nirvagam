@@ -82,9 +82,18 @@ const today = () => new Date().toISOString().slice(0, 10);
 const defaultDueDate = () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 const normalizeNumericInput = (value: string) => value.replace(/^0+(?=\d)/, '');
 const formatNumericInput = (value: number) => (value === 0 ? '' : String(value));
+const formatItemNumericInput = (value: number) =>
+  formatNumericInput(Number(value.toFixed(2)));
 const parseNumericInput = (value: string) => {
   const parsed = Number(normalizeNumericInput(value));
   return Number.isFinite(parsed) ? parsed : 0;
+};
+const getProductUnitPrice = (product: any, variant = product?.variants?.[0]) => {
+  const variantSalesPrice = Number(variant?.salesPrice);
+  if (Number.isFinite(variantSalesPrice) && variantSalesPrice > 0) return variantSalesPrice;
+
+  const retailPrice = Number(product?.retailPrice);
+  return Number.isFinite(retailPrice) ? retailPrice : 0;
 };
 
 export default function SalesPage() {
@@ -138,10 +147,14 @@ export default function SalesPage() {
       name: string;
       unitName: string;
       quantity: number;
+      quantityInput: string;
       unitPrice: number;
+      unitPriceInput: string;
       gstRate: number;
       discountPercent: number;
+      discountPercentInput: string;
       discountAmount: number;
+      discountAmountInput: string;
     }>
   >([]);
 
@@ -237,11 +250,19 @@ export default function SalesPage() {
     const existingIdx = items.findIndex((i) => i.variantId === variant.id);
     if (existingIdx >= 0) {
       const copy = [...items];
-      copy[existingIdx].quantity += 1;
-      copy[existingIdx].discountAmount =
-        (copy[existingIdx].quantity * copy[existingIdx].unitPrice * copy[existingIdx].discountPercent) / 100;
+      const quantity = copy[existingIdx].quantity + 1;
+      const discountAmount =
+        (quantity * copy[existingIdx].unitPrice * copy[existingIdx].discountPercent) / 100;
+      copy[existingIdx] = {
+        ...copy[existingIdx],
+        quantity,
+        quantityInput: formatNumericInput(quantity),
+        discountAmount,
+        discountAmountInput: formatItemNumericInput(discountAmount),
+      };
       setItems(copy);
     } else {
+      const unitPrice = getProductUnitPrice(prod, variant);
       setItems([
         ...items,
         {
@@ -249,10 +270,14 @@ export default function SalesPage() {
           name: prod.name,
           unitName: prod.unit?.symbol || '',
           quantity: 1,
-          unitPrice: Number(variant.salesPrice || 0),
+          quantityInput: '1',
+          unitPrice,
+          unitPriceInput: formatNumericInput(unitPrice),
           gstRate: Number(prod.taxRate?.rate ?? 18),
           discountPercent: 0,
+          discountPercentInput: '',
           discountAmount: 0,
+          discountAmountInput: '',
         },
       ]);
     }
@@ -262,28 +287,71 @@ export default function SalesPage() {
     setItems(items.filter((_, idx) => idx !== index));
   };
 
-  const updateQuantity = (index: number, qty: number) => {
+  const updateQuantity = (index: number, input: string) => {
     const copy = [...items];
-    copy[index].quantity = Math.max(0.01, qty);
-    copy[index].discountAmount =
-      (copy[index].quantity * copy[index].unitPrice * copy[index].discountPercent) / 100;
+    const quantity = Math.max(0, parseNumericInput(input));
+    const discountAmount =
+      (quantity * copy[index].unitPrice * copy[index].discountPercent) / 100;
+    copy[index] = {
+      ...copy[index],
+      quantity,
+      quantityInput: input,
+      discountAmount,
+      discountAmountInput: formatItemNumericInput(discountAmount),
+    };
     setItems(copy);
   };
 
-  const updateItemDiscountPercent = (index: number, discountPercent: number) => {
+  const updateItemUnitPrice = (index: number, input: string) => {
     const copy = [...items];
-    copy[index].discountPercent = Math.min(100, Math.max(0, discountPercent));
-    copy[index].discountAmount =
-      (copy[index].quantity * copy[index].unitPrice * copy[index].discountPercent) / 100;
+    const unitPrice = Math.max(0, parseNumericInput(input));
+    const discountAmount =
+      (copy[index].quantity * unitPrice * copy[index].discountPercent) / 100;
+    copy[index] = {
+      ...copy[index],
+      unitPrice,
+      unitPriceInput: input,
+      discountAmount,
+      discountAmountInput: formatItemNumericInput(discountAmount),
+    };
     setItems(copy);
   };
 
-  const updateItemDiscountAmount = (index: number, discountAmount: number) => {
+  const updateItemDiscountPercent = (index: number, input: string) => {
+    const copy = [...items];
+    const enteredPercent = parseNumericInput(input);
+    const discountPercent = Math.min(100, Math.max(0, enteredPercent));
+    const discountAmount =
+      (copy[index].quantity * copy[index].unitPrice * discountPercent) / 100;
+    copy[index] = {
+      ...copy[index],
+      discountPercent,
+      discountPercentInput:
+        enteredPercent > 100 ? '100' : enteredPercent < 0 ? '0' : input,
+      discountAmount,
+      discountAmountInput: formatItemNumericInput(discountAmount),
+    };
+    setItems(copy);
+  };
+
+  const updateItemDiscountAmount = (index: number, input: string) => {
     const copy = [...items];
     const lineTotal = copy[index].quantity * copy[index].unitPrice;
-    copy[index].discountAmount = Math.min(lineTotal, Math.max(0, discountAmount));
-    copy[index].discountPercent =
-      lineTotal > 0 ? (copy[index].discountAmount / lineTotal) * 100 : 0;
+    const enteredAmount = parseNumericInput(input);
+    const discountAmount = Math.min(lineTotal, Math.max(0, enteredAmount));
+    const discountPercent = lineTotal > 0 ? (discountAmount / lineTotal) * 100 : 0;
+    copy[index] = {
+      ...copy[index],
+      discountAmount,
+      discountAmountInput:
+        enteredAmount > lineTotal
+          ? formatNumericInput(discountAmount)
+          : enteredAmount < 0
+            ? '0'
+            : input,
+      discountPercent,
+      discountPercentInput: formatItemNumericInput(discountPercent),
+    };
     setItems(copy);
   };
 
@@ -413,21 +481,27 @@ export default function SalesPage() {
       const response = await apiFetch(`/sales/invoices/${id}`);
       const originalInvoice = response?.data || response;
       setItems(
-        (originalInvoice.items || []).map((item: any) => ({
-          variantId: item.variantId,
-          name: item.variant?.product?.name || item.description || 'Invoice item',
-          unitName: item.unitName || item.variant?.product?.unit?.symbol || '',
-          quantity: Number(item.quantity),
-          unitPrice: Number(item.unitPrice),
-          gstRate: Number(item.gstRate),
-          discountPercent:
-            Number(item.quantity) * Number(item.unitPrice) > 0
-              ? (Number(item.discountAmount || 0) /
-                  (Number(item.quantity) * Number(item.unitPrice))) *
-                100
-              : 0,
-          discountAmount: Number(item.discountAmount || 0),
-        }))
+        (originalInvoice.items || []).map((item: any) => {
+          const quantity = Number(item.quantity);
+          const unitPrice = Number(item.unitPrice);
+          const discountAmount = Number(item.discountAmount || 0);
+          const lineTotal = quantity * unitPrice;
+          const discountPercent = lineTotal > 0 ? (discountAmount / lineTotal) * 100 : 0;
+          return {
+            variantId: item.variantId,
+            name: item.variant?.product?.name || item.description || 'Invoice item',
+            unitName: item.unitName || item.variant?.product?.unit?.symbol || '',
+            quantity,
+            quantityInput: formatNumericInput(quantity),
+            unitPrice,
+            unitPriceInput: formatNumericInput(unitPrice),
+            gstRate: Number(item.gstRate),
+            discountPercent,
+            discountPercentInput: formatItemNumericInput(discountPercent),
+            discountAmount,
+            discountAmountInput: formatItemNumericInput(discountAmount),
+          };
+        })
       );
       setCustomerId(originalInvoice.customerId);
     } catch (err: any) {
@@ -443,6 +517,14 @@ export default function SalesPage() {
     }
     if (items.length === 0) {
       toast({ type: 'warning', title: 'Cart Empty', message: 'Add at least one item to the invoice.' });
+      return;
+    }
+    if (items.some((item) => !Number.isFinite(item.quantity) || item.quantity <= 0)) {
+      toast({
+        type: 'warning',
+        title: 'Invalid Quantity',
+        message: 'Enter a quantity greater than 0 for every invoice item.',
+      });
       return;
     }
     if (adjustmentDocumentTypes.has(invoiceType) && !relatedInvoiceId) {
@@ -505,7 +587,15 @@ export default function SalesPage() {
       setInvoiceNumber('');
       loadData();
     } catch (err: any) {
-      toast({ type: 'error', title: 'Failed to create invoice', message: err.message });
+      const missingSalesAccounts =
+        err.message === 'Accounts receivable and sales revenue accounts must be configured';
+      toast({
+        type: 'error',
+        title: missingSalesAccounts ? 'Accounting setup required' : 'Failed to create invoice',
+        message: missingSalesAccounts
+          ? 'This business is missing Accounts Receivable (1030) and Sales Revenue (4010). Contact your administrator to configure these accounts, then try again.'
+          : err.message,
+      });
     } finally {
       setSubmitting(false);
     }
@@ -516,10 +606,18 @@ export default function SalesPage() {
     if (!paymentInvoice || Number(paymentAmount) <= 0) return;
     try {
       setPaymentSubmitting(true);
-      await apiFetch(`/sales/invoices/${paymentInvoice.id}/payments`, {
+      const response = await apiFetch(`/sales/invoices/${paymentInvoice.id}/payments`, {
         method: 'POST',
         body: JSON.stringify({ amount: Number(paymentAmount), mode: paymentMode }),
       });
+      const updatedInvoice = response?.data || response;
+      if (updatedInvoice?.id) {
+        setInvoices((currentInvoices) =>
+          currentInvoices.map((invoice) =>
+            invoice.id === updatedInvoice.id ? { ...invoice, ...updatedInvoice } : invoice
+          )
+        );
+      }
       toast({ type: 'success', title: 'Payment Recorded', message: 'Invoice balance and payment status updated.' });
       setPaymentInvoice(null);
       setPaymentAmount('');
@@ -596,21 +694,27 @@ export default function SalesPage() {
       setNotes(originalInvoice.notes || '');
       setTerms(originalInvoice.terms || '');
       setItems(
-        (originalInvoice.items || []).map((item: any) => ({
-          variantId: item.variantId,
-          name: item.variant?.product?.name || item.description || 'Invoice item',
-          unitName: item.unitName || item.variant?.product?.unit?.symbol || '',
-          quantity: Number(item.quantity),
-          unitPrice: Number(item.unitPrice),
-          gstRate: Number(item.gstRate),
-          discountPercent:
-            Number(item.quantity) * Number(item.unitPrice) > 0
-              ? (Number(item.discountAmount || 0) /
-                  (Number(item.quantity) * Number(item.unitPrice))) *
-                100
-              : 0,
-          discountAmount: Number(item.discountAmount || 0),
-        }))
+        (originalInvoice.items || []).map((item: any) => {
+          const quantity = Number(item.quantity);
+          const unitPrice = Number(item.unitPrice);
+          const discountAmount = Number(item.discountAmount || 0);
+          const lineTotal = quantity * unitPrice;
+          const discountPercent = lineTotal > 0 ? (discountAmount / lineTotal) * 100 : 0;
+          return {
+            variantId: item.variantId,
+            name: item.variant?.product?.name || item.description || 'Invoice item',
+            unitName: item.unitName || item.variant?.product?.unit?.symbol || '',
+            quantity,
+            quantityInput: formatNumericInput(quantity),
+            unitPrice,
+            unitPriceInput: formatNumericInput(unitPrice),
+            gstRate: Number(item.gstRate),
+            discountPercent,
+            discountPercentInput: formatItemNumericInput(discountPercent),
+            discountAmount,
+            discountAmountInput: formatItemNumericInput(discountAmount),
+          };
+        })
       );
       setIsDrawerOpen(true);
     } catch (err: any) {
@@ -989,7 +1093,7 @@ export default function SalesPage() {
                       {p.unit?.symbol || 'Unit'} · Stock: {p.totalStock}
                     </p>
                   </div>
-                  <span className="font-mono text-accent shrink-0">₹{p.salesPrice}</span>
+                  <span className="font-mono text-accent shrink-0">₹{getProductUnitPrice(p)}</span>
                 </button>
               ))}
             </div>
@@ -1005,118 +1109,112 @@ export default function SalesPage() {
                 Click any catalog item above to add it to this invoice.
               </div>
             ) : (
-              <div className="space-y-2">
-                {items.map((item, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between gap-2 p-2 bg-surface-secondary border border-border rounded text-xs"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-text-primary truncate">{item.name}</p>
-                      <div className="flex items-center gap-2">
-                        <p className="text-[11px] text-text-tertiary font-mono">
-                          ₹{item.unitPrice} / {item.unitName || 'unit'}
-                        </p>
-                        <Select
-                          aria-label={`GST rate for ${item.name}`}
-                          value={String(item.gstRate)}
-                          onChange={(e) => updateItemTaxRate(idx, Number(e.target.value))}
-                          options={[
-                            ...(!taxRateOptions.some(
-                              (taxRate) => Number(taxRate.value) === item.gstRate
-                            )
-                              ? [{
-                                  value: String(item.gstRate),
-                                  label: `${item.gstRate}% (product rate)`,
-                                }]
-                              : []),
-                            ...taxRateOptions,
-                          ]}
-                          disabled={!canChangeItemTax || taxRateOptions.length === 0}
-                          className="max-w-28"
-                        />
+                  <div className="overflow-x-auto">
+                    <div className="min-w-[640px] space-y-2">
+                      <div className="grid grid-cols-[minmax(120px,1fr)_78px_58px_58px_72px_58px_68px_76px_20px] gap-1 px-2 text-[9px] font-semibold uppercase tracking-wide text-text-tertiary">
+                        <span>Product</span>
+                        <span>GST</span>
+                        <span>Unit</span>
+                        <span>Qty</span>
+                        <span>Unit Price</span>
+                        <span>Disc. %</span>
+                        <span>Disc. Amt</span>
+                        <span>Line Total</span>
+                        <span aria-hidden="true" />
                       </div>
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      <Select
-                        aria-label={`Unit for ${item.name}`}
-                        value={item.unitName}
-                        onChange={(e) => {
-                          const copy = [...items];
-                          copy[idx].unitName = e.target.value;
-                          setItems(copy);
-                        }}
-                        options={units.map((unit) => ({
-                          value: unit.symbol,
-                          label: unit.symbol,
-                        }))}
-                        className="w-16"
-                      />
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={item.unitPrice}
-                        onChange={(e) => {
-                          const copy = [...items];
-                          copy[idx].unitPrice = Math.max(0, Number(e.target.value));
-                          copy[idx].discountAmount =
-                            (copy[idx].quantity *
-                              copy[idx].unitPrice *
-                              copy[idx].discountPercent) /
-                            100;
-                          setItems(copy);
-                        }}
-                        className="w-20 h-7 text-center font-mono border border-border rounded bg-background text-xs"
-                        aria-label={`Unit price of ${item.name}`}
-                      />
-                      <input
-                        type="number"
-                        min="0.01"
-                        step="0.01"
-                        value={item.quantity}
-                        onChange={(e) => updateQuantity(idx, Number(e.target.value))}
-                        className="w-16 h-7 text-center font-mono border border-border rounded bg-background text-xs"
-                        aria-label={`Quantity of ${item.name}`}
-                      />
-                      <input
-                        type="number"
-                        min="0"
-                        max="100"
-                        step="0.1"
-                        value={Number(item.discountPercent.toFixed(2))}
-                        onChange={(e) => updateItemDiscountPercent(idx, Number(e.target.value))}
-                        className="w-16 h-7 text-center font-mono border border-border rounded bg-background text-xs"
-                        aria-label={`Discount percentage on ${item.name}`}
-                        title="Discount percentage"
-                        placeholder="Disc %"
-                      />
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={Number(item.discountAmount.toFixed(2))}
-                        onChange={(e) => updateItemDiscountAmount(idx, Number(e.target.value))}
-                        className="w-16 h-7 text-center font-mono border border-border rounded bg-background text-xs"
-                        aria-label={`Discount amount on ${item.name}`}
-                        title="Item discount amount"
-                        placeholder="Disc ₹"
-                      />
-                      <span className="w-20 text-right font-mono font-medium">
-                        ₹{Math.max(0, item.quantity * item.unitPrice - item.discountAmount).toFixed(2)}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => removeItem(idx)}
-                        className="p-1 text-text-tertiary hover:text-red-500 rounded"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {items.map((item, idx) => (
+                        <div
+                          key={idx}
+                          className="grid grid-cols-[minmax(120px,1fr)_78px_58px_58px_72px_58px_68px_76px_20px] items-center gap-1 p-2 bg-surface-secondary border border-border rounded text-xs"
+                        >
+                          <p className="min-w-0 font-medium text-text-primary truncate">{item.name}</p>
+                          <Select
+                            aria-label={`GST rate for ${item.name}`}
+                            value={String(item.gstRate)}
+                            onChange={(e) => updateItemTaxRate(idx, Number(e.target.value))}
+                            options={[
+                              ...(!taxRateOptions.some(
+                                (taxRate) => Number(taxRate.value) === item.gstRate
+                              )
+                                ? [{
+                                    value: String(item.gstRate),
+                                    label: `${item.gstRate}% (product rate)`,
+                                  }]
+                                : []),
+                              ...taxRateOptions,
+                            ]}
+                            disabled={!canChangeItemTax || taxRateOptions.length === 0}
+                            className="min-w-0 px-1 pr-5"
+                          />
+                          <Select
+                            aria-label={`Unit for ${item.name}`}
+                            value={item.unitName}
+                            onChange={(e) => {
+                              const copy = [...items];
+                              copy[idx].unitName = e.target.value;
+                              setItems(copy);
+                            }}
+                            options={units.map((unit) => ({
+                              value: unit.symbol,
+                              label: unit.symbol,
+                            }))}
+                            className="min-w-0 px-1 pr-5"
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            step={Number.isInteger(item.quantity) ? 1 : 'any'}
+                            value={item.quantityInput}
+                            onChange={(e) => updateQuantity(idx, e.target.value)}
+                            className="w-full min-w-0 h-7 text-center font-mono border border-border rounded bg-background text-xs"
+                            aria-label={`Quantity of ${item.name}`}
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={item.unitPriceInput}
+                            onChange={(e) => updateItemUnitPrice(idx, e.target.value)}
+                            className="w-full min-w-0 h-7 text-center font-mono border border-border rounded bg-background text-xs"
+                            aria-label={`Unit price of ${item.name}`}
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.1"
+                            value={item.discountPercentInput}
+                            onChange={(e) => updateItemDiscountPercent(idx, e.target.value)}
+                            className="w-full min-w-0 h-7 text-center font-mono border border-border rounded bg-background text-xs"
+                            aria-label={`Discount percentage on ${item.name}`}
+                            title="Discount percentage"
+                          />
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={item.discountAmountInput}
+                            onChange={(e) => updateItemDiscountAmount(idx, e.target.value)}
+                            className="w-full min-w-0 h-7 text-center font-mono border border-border rounded bg-background text-xs"
+                            aria-label={`Discount amount on ${item.name}`}
+                            title="Item discount amount"
+                          />
+                          <span className="text-right font-mono font-medium whitespace-nowrap">
+                            ₹{Math.max(0, item.quantity * item.unitPrice - item.discountAmount).toFixed(2)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => removeItem(idx)}
+                            className="justify-self-center p-1 text-text-tertiary hover:text-red-500 rounded"
+                            title={`Remove ${item.name}`}
+                            aria-label={`Remove ${item.name}`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                ))}
-              </div>
             )}
           </div>
 
