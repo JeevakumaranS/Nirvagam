@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Drawer } from '@/components/ui/drawer';
+import { Modal } from '@/components/ui/modal';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableEmptyState } from '@/components/ui/table';
 import { useToast } from '@/components/ui/toast';
@@ -79,12 +80,22 @@ const paymentDocumentTypes = new Set<InvoiceType>([
 
 const today = () => new Date().toISOString().slice(0, 10);
 const defaultDueDate = () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+const normalizeNumericInput = (value: string) => value.replace(/^0+(?=\d)/, '');
+const parseNumericInput = (value: string) => {
+  const parsed = Number(normalizeNumericInput(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
 
 export default function SalesPage() {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
+  const [customerOptions, setCustomerOptions] = useState<any[]>([]);
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [customersLoading, setCustomersLoading] = useState(false);
+  const [customersError, setCustomersError] = useState<string | null>(null);
   const [products, setProducts] = useState<any[]>([]);
   const [units, setUnits] = useState<any[]>([]);
+  const [taxRates, setTaxRates] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -112,7 +123,11 @@ export default function SalesPage() {
   const [pricesIncludeTax, setPricesIncludeTax] = useState(false);
   const [invoiceDiscount, setInvoiceDiscount] = useState(0);
   const [invoiceDiscountPercent, setInvoiceDiscountPercent] = useState(0);
+  const [invoiceDiscountAmountInput, setInvoiceDiscountAmountInput] = useState('0');
+  const [invoiceDiscountPercentInput, setInvoiceDiscountPercentInput] = useState('0');
+  const [invoiceDiscountInputMode, setInvoiceDiscountInputMode] = useState<'amount' | 'percent'>('percent');
   const [additionalCharges, setAdditionalCharges] = useState(0);
+  const [additionalChargesInput, setAdditionalChargesInput] = useState('0');
   const [payments, setPayments] = useState<Array<{ amount: number; mode: PaymentMode }>>([]);
   const [notes, setNotes] = useState('Payment due in 30 days');
   const [terms, setTerms] = useState('');
@@ -135,18 +150,25 @@ export default function SalesPage() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [invRes, custRes, prodRes, unitRes, taxRes] = await Promise.all([
+      const [invRes, custRes, prodRes, unitRes, taxRes, taxRateRes] = await Promise.all([
         apiFetch('/sales/invoices', { params: { search } }),
         apiFetch('/customers'),
         apiFetch('/products'),
         apiFetch('/products/meta/units'),
         apiFetch('/sales/tax-context'),
+        apiFetch('/products/meta/tax-rates'),
       ]);
 
       setInvoices(invRes?.data || []);
-      setCustomers(custRes?.data || []);
+      const loadedCustomers = custRes?.data || [];
+      setCustomers((currentCustomers) => {
+        const customersById = new Map(currentCustomers.map((customer) => [customer.id, customer]));
+        loadedCustomers.forEach((customer: any) => customersById.set(customer.id, customer));
+        return Array.from(customersById.values());
+      });
       setProducts(prodRes?.data || []);
       setUnits(Array.isArray(unitRes) ? unitRes : unitRes?.data || []);
+      setTaxRates(Array.isArray(taxRateRes) ? taxRateRes : taxRateRes?.data || []);
       setTaxContext(taxRes?.data || taxRes);
 
       if (custRes?.data?.[0]?.id && !customerId) {
@@ -162,6 +184,50 @@ export default function SalesPage() {
   useEffect(() => {
     loadData();
   }, [search]);
+
+  useEffect(() => {
+    if (!isDrawerOpen) return;
+
+    let isCurrentRequest = true;
+    setCustomersLoading(true);
+    setCustomersError(null);
+    setCustomerOptions([]);
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await apiFetch('/customers', {
+          params: { search: customerSearch.trim() || undefined, limit: 100 },
+        });
+        const fetchedCustomers = Array.isArray(response?.data)
+          ? response.data
+          : Array.isArray(response)
+          ? response
+          : null;
+        if (!fetchedCustomers) {
+          throw new Error('Unexpected customer list response.');
+        }
+        if (!isCurrentRequest) return;
+
+        setCustomerOptions(fetchedCustomers);
+        setCustomers((currentCustomers) => {
+          const customersById = new Map(currentCustomers.map((customer) => [customer.id, customer]));
+          fetchedCustomers.forEach((customer: any) => customersById.set(customer.id, customer));
+          return Array.from(customersById.values());
+        });
+      } catch (err: any) {
+        if (!isCurrentRequest) return;
+        setCustomerOptions([]);
+        setCustomersError(err.message || 'Unable to load customers.');
+      } finally {
+        if (isCurrentRequest) setCustomersLoading(false);
+      }
+    }, customerSearch.trim() ? 250 : 0);
+
+    return () => {
+      isCurrentRequest = false;
+      window.clearTimeout(timer);
+    };
+  }, [isDrawerOpen, customerSearch]);
 
   const addItem = (prod: any, selectedVariant = prod.variants?.[0]) => {
     const variant = selectedVariant;
@@ -182,8 +248,8 @@ export default function SalesPage() {
           name: prod.name,
           unitName: prod.unit?.symbol || '',
           quantity: 1,
-          unitPrice: Number(prod.retailPrice || 0),
-          gstRate: Number(prod.taxRate?.rate || 18),
+          unitPrice: Number(variant.salesPrice || 0),
+          gstRate: Number(prod.taxRate?.rate ?? 18),
           discountPercent: 0,
           discountAmount: 0,
         },
@@ -220,7 +286,29 @@ export default function SalesPage() {
     setItems(copy);
   };
 
+  const updateItemTaxRate = (index: number, gstRate: number) => {
+    if (!Number.isFinite(gstRate) || gstRate < 0) return;
+    const copy = [...items];
+    copy[index].gstRate = gstRate;
+    setItems(copy);
+  };
+
   const selectedCustomer = customers.find((customer) => customer.id === customerId);
+  const canChangeItemTax = Boolean(
+    user?.permissions.includes('sales_invoice:create') || user?.roles.includes('SUPER_ADMIN')
+  );
+  const taxRateOptions = taxRates
+    .map((taxRate: any) => {
+      const rate = Number(taxRate.rate);
+      return {
+        value: String(rate),
+        label: `${taxRate.name} (${rate}%)`,
+      };
+    })
+    .filter((taxRate: { value: string }) => {
+      const rate = Number(taxRate.value);
+      return Number.isFinite(rate) && rate >= 0;
+    });
   const previewSellerRegistered =
     taxContext.registered &&
     invoiceType !== InvoiceType.BILL_OF_SUPPLY &&
@@ -234,6 +322,37 @@ export default function SalesPage() {
         : lineAmount)
     );
   }, 0);
+  useEffect(() => {
+    if (invoiceDiscountInputMode === 'percent') {
+        const amount = (invoiceDiscountableBase * invoiceDiscountPercent) / 100;
+        if (amount !== invoiceDiscount) setInvoiceDiscount(amount);
+        const amountText = String(amount);
+        if (amountText !== invoiceDiscountAmountInput) setInvoiceDiscountAmountInput(amountText);
+        return;
+    }
+
+    const amount = Math.max(0, invoiceDiscount);
+    if (invoiceDiscountableBase > 0 && amount > invoiceDiscountableBase) {
+        setInvoiceDiscount(invoiceDiscountableBase);
+        setInvoiceDiscountAmountInput(String(invoiceDiscountableBase));
+        setInvoiceDiscountPercent(100);
+        setInvoiceDiscountPercentInput('100');
+        return;
+    }
+
+    const percent = invoiceDiscountableBase > 0 ? (amount / invoiceDiscountableBase) * 100 : 0;
+    if (percent !== invoiceDiscountPercent) setInvoiceDiscountPercent(percent);
+    const percentText = String(percent);
+    if (percentText !== invoiceDiscountPercentInput) setInvoiceDiscountPercentInput(percentText);
+  }, [
+    invoiceDiscountableBase,
+    invoiceDiscountInputMode,
+    invoiceDiscountPercent,
+    invoiceDiscount,
+    invoiceDiscountAmountInput,
+    invoiceDiscountPercentInput,
+  ]);
+  const appliedInvoiceDiscount = Math.min(invoiceDiscountableBase, Math.max(0, invoiceDiscount));
   const gstCalculation = calculateGstInvoice(
     taxContext.stateCode || selectedCustomer?.billingStateCode || '',
     selectedCustomer?.shippingStateCode || selectedCustomer?.billingStateCode || '',
@@ -245,7 +364,7 @@ export default function SalesPage() {
       discountAmount: item.discountAmount,
       gstRate: item.gstRate,
     })),
-    invoiceDiscount,
+    appliedInvoiceDiscount,
     {
       pricesIncludeTax,
       sellerRegisteredForGst: previewSellerRegistered,
@@ -254,6 +373,14 @@ export default function SalesPage() {
   );
   const { totalTaxable, totalTax, totalCgst, totalSgst, totalIgst, roundOffAmount, netTotal: grandTotal } =
     gstCalculation;
+  const subtotal = items.reduce((total, item) => total + item.quantity * item.unitPrice, 0);
+  const totalDiscount =
+    items.reduce((total, item) => total + item.discountAmount, 0) + appliedInvoiceDiscount;
+  const paidAmount = paymentDocumentTypes.has(invoiceType)
+    ? payments.reduce((total, payment) => total + payment.amount, 0)
+    : 0;
+  const outstandingAmount = Math.max(0, grandTotal - paidAmount);
+  const hasExcessivePayment = paidAmount > grandTotal;
 
   const scanBarcode = () => {
     const code = barcodeInput.trim().toLowerCase();
@@ -321,6 +448,14 @@ export default function SalesPage() {
       toast({ type: 'warning', title: 'Original Invoice Required', message: 'Select the invoice being adjusted.' });
       return;
     }
+    if (hasExcessivePayment) {
+      toast({
+        type: 'warning',
+        title: 'Payment Exceeds Total',
+        message: 'Payments cannot exceed the invoice total.',
+      });
+      return;
+    }
 
     try {
       setSubmitting(true);
@@ -338,7 +473,7 @@ export default function SalesPage() {
           pricesIncludeTax,
           placeOfSupplyCode:
             selectedCustomer?.shippingStateCode || selectedCustomer?.billingStateCode,
-          discountAmount: invoiceDiscount,
+          discountAmount: appliedInvoiceDiscount,
           additionalCharges,
           payments: paymentDocumentTypes.has(invoiceType)
             ? payments.filter((payment) => payment.amount > 0)
@@ -438,15 +573,21 @@ export default function SalesPage() {
       setInvoiceDate(today());
       setDueDate(defaultDueDate());
       setPricesIncludeTax(Boolean(originalInvoice.pricesIncludeTax));
-      setInvoiceDiscount(Math.max(0, Number(originalInvoice.discountAmount || 0)));
+      const duplicatedDiscount = Math.max(0, Number(originalInvoice.discountAmount || 0));
+      setInvoiceDiscount(duplicatedDiscount);
+      setInvoiceDiscountAmountInput(String(duplicatedDiscount));
+      setInvoiceDiscountInputMode('amount');
       const taxableBeforeInvoiceDiscount =
         Number(originalInvoice.taxableAmount || 0) + Number(originalInvoice.discountAmount || 0);
-      setInvoiceDiscountPercent(
+      const duplicatedDiscountPercent =
         taxableBeforeInvoiceDiscount > 0
           ? (Number(originalInvoice.discountAmount || 0) / taxableBeforeInvoiceDiscount) * 100
-          : 0
-      );
-      setAdditionalCharges(Math.max(0, Number(originalInvoice.additionalCharges || 0)));
+          : 0;
+      setInvoiceDiscountPercent(duplicatedDiscountPercent);
+      setInvoiceDiscountPercentInput(String(duplicatedDiscountPercent));
+      const duplicatedAdditionalCharges = Math.max(0, Number(originalInvoice.additionalCharges || 0));
+      setAdditionalCharges(duplicatedAdditionalCharges);
+      setAdditionalChargesInput(String(duplicatedAdditionalCharges));
       setRecurrenceFrequency(
         originalInvoice.recurrenceFrequency || RecurrenceFrequency.MONTHLY
       );
@@ -494,6 +635,7 @@ export default function SalesPage() {
   );
 
   const openNewInvoice = () => {
+    setCustomerSearch('');
     setInvoiceType(InvoiceType.TAX_INVOICE);
     setInvoiceNumber('');
     setRelatedInvoiceId('');
@@ -503,7 +645,11 @@ export default function SalesPage() {
     setPricesIncludeTax(false);
     setInvoiceDiscount(0);
     setInvoiceDiscountPercent(0);
+    setInvoiceDiscountAmountInput('0');
+    setInvoiceDiscountPercentInput('0');
+    setInvoiceDiscountInputMode('percent');
     setAdditionalCharges(0);
+    setAdditionalChargesInput('0');
     setPayments([]);
     setNotes('Payment due in 30 days');
     setTerms('');
@@ -674,15 +820,18 @@ export default function SalesPage() {
         </Table>
       )}
 
-      {/* New Invoice Slide-over Drawer */}
-      <Drawer
+      {/* New Invoice Modal */}
+      <Modal
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
         title="Create Sales & Billing Document"
         description="Select a document type, customer, items, tax treatment, and payments."
-        width="xl"
+        maxWidth="2xl"
       >
-        <form onSubmit={handleCreateInvoice} className="space-y-4">
+        <form
+          onSubmit={handleCreateInvoice}
+          className="max-h-[calc(100vh-8rem)] overflow-y-auto space-y-4 pr-2"
+        >
           <Select
             label="Document Type *"
             value={invoiceType}
@@ -752,17 +901,56 @@ export default function SalesPage() {
             />
           </div>
 
-          <Select
-            label="Bill To Customer *"
-            value={customerId}
-            onChange={(e) => setCustomerId(e.target.value)}
-          >
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} {c.gstin ? `(${c.gstin})` : ''} - Bal: ₹{Number(c.outstandingBalance).toFixed(2)}
-              </option>
-            ))}
-          </Select>
+          <div className="space-y-2">
+            <Input
+              label="Search Customers"
+              placeholder="Search by name, company, phone, or GSTIN"
+              value={customerSearch}
+              onChange={(e) => setCustomerSearch(e.target.value)}
+            />
+            {customersLoading && (
+              <p role="status" className="text-xs text-text-tertiary">
+                Loading customers...
+              </p>
+            )}
+            {customersError && (
+              <p role="alert" className="text-xs text-danger">
+                Unable to load customers: {customersError}
+              </p>
+            )}
+            {!customersLoading && !customersError && customerOptions.length === 0 && (
+              <p className="text-xs text-text-tertiary">
+                {customerSearch.trim()
+                  ? 'No customers match your search.'
+                  : 'No customers have been added yet.'}
+              </p>
+            )}
+            <Select
+              label="Bill To Customer *"
+              value={customerId}
+              onChange={(e) => setCustomerId(e.target.value)}
+              required
+            >
+              <option value="">Select a customer</option>
+              {selectedCustomer &&
+                !customerOptions.some((customer) => customer.id === selectedCustomer.id) && (
+                  <option key={selectedCustomer.id} value={selectedCustomer.id}>
+                    {selectedCustomer.name} · {selectedCustomer.phone}
+                    {selectedCustomer.gstin ? ` · ${selectedCustomer.gstin}` : ''}
+                  </option>
+                )}
+              {customerOptions.map((customer) => (
+                <option key={customer.id} value={customer.id}>
+                  {customer.name}
+                  {customer.companyName ? ` · ${customer.companyName}` : ''}
+                  {customer.phone ? ` · ${customer.phone}` : ''}
+                  {customer.gstin ? ` · ${customer.gstin}` : ''}
+                  {' - Bal: ₹'}
+                  {Number(customer.outstandingBalance || 0).toFixed(2)}
+                </option>
+              ))}
+            </Select>
+          </div>
 
           {/* Catalog Item Picker */}
           <div className="space-y-2">
@@ -824,9 +1012,29 @@ export default function SalesPage() {
                   >
                     <div className="flex-1 min-w-0">
                       <p className="font-medium text-text-primary truncate">{item.name}</p>
-                      <p className="text-[11px] text-text-tertiary font-mono">
-                        ₹{item.unitPrice} / {item.unitName || 'unit'} · {item.gstRate}% GST
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-[11px] text-text-tertiary font-mono">
+                          ₹{item.unitPrice} / {item.unitName || 'unit'}
+                        </p>
+                        <Select
+                          aria-label={`GST rate for ${item.name}`}
+                          value={String(item.gstRate)}
+                          onChange={(e) => updateItemTaxRate(idx, Number(e.target.value))}
+                          options={[
+                            ...(!taxRateOptions.some(
+                              (taxRate) => Number(taxRate.value) === item.gstRate
+                            )
+                              ? [{
+                                  value: String(item.gstRate),
+                                  label: `${item.gstRate}% (product rate)`,
+                                }]
+                              : []),
+                            ...taxRateOptions,
+                          ]}
+                          disabled={!canChangeItemTax || taxRateOptions.length === 0}
+                          className="max-w-28"
+                        />
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-1.5">
@@ -915,38 +1123,59 @@ export default function SalesPage() {
           <div className="grid grid-cols-3 gap-3">
             <Input
               label="Invoice Discount %"
-              type="number"
-              min="0"
-              max="100"
-              step="0.1"
-              value={invoiceDiscountPercent}
+              type="text"
+              inputMode="decimal"
+              value={invoiceDiscountPercentInput}
+              onFocus={(e) => e.currentTarget.select()}
               onChange={(e) => {
-                const percent = Math.min(100, Math.max(0, Number(e.target.value)));
+                const enteredPercent = Math.max(0, parseNumericInput(e.target.value));
+                const percent = Math.min(100, enteredPercent);
+                setInvoiceDiscountPercentInput(
+                  enteredPercent > 100 ? String(percent) : normalizeNumericInput(e.target.value)
+                );
+                setInvoiceDiscountInputMode('percent');
                 setInvoiceDiscountPercent(percent);
-                setInvoiceDiscount((invoiceDiscountableBase * percent) / 100);
+                const amount = (invoiceDiscountableBase * percent) / 100;
+                setInvoiceDiscount(amount);
+                setInvoiceDiscountAmountInput(String(amount));
               }}
             />
             <Input
               label="Invoice Discount Amount"
-              type="number"
-              min="0"
-              step="0.01"
-              value={invoiceDiscount}
+              type="text"
+              inputMode="decimal"
+              value={invoiceDiscountAmountInput}
+              onFocus={(e) => e.currentTarget.select()}
               onChange={(e) => {
-                const amount = Math.min(invoiceDiscountableBase, Math.max(0, Number(e.target.value)));
+                const enteredAmount = Math.max(0, parseNumericInput(e.target.value));
+                const amount = invoiceDiscountableBase > 0
+                  ? Math.min(invoiceDiscountableBase, enteredAmount)
+                  : enteredAmount;
+                const amountText =
+                  invoiceDiscountableBase > 0 && amount < enteredAmount
+                    ? String(amount)
+                    : normalizeNumericInput(e.target.value);
+                setInvoiceDiscountAmountInput(amountText);
+                setInvoiceDiscountInputMode('amount');
                 setInvoiceDiscount(amount);
-                setInvoiceDiscountPercent(
-                  invoiceDiscountableBase > 0 ? (amount / invoiceDiscountableBase) * 100 : 0
-                );
+                const percent = invoiceDiscountableBase > 0
+                  ? (amount / invoiceDiscountableBase) * 100
+                  : 0;
+                setInvoiceDiscountPercent(percent);
+                setInvoiceDiscountPercentInput(String(percent));
               }}
             />
             <Input
               label="Other Charges"
-              type="number"
-              min="0"
-              step="0.01"
-              value={additionalCharges}
-              onChange={(e) => setAdditionalCharges(Math.max(0, Number(e.target.value)))}
+              type="text"
+              inputMode="decimal"
+              value={additionalChargesInput}
+              onFocus={(e) => e.currentTarget.select()}
+              onChange={(e) => {
+                const value = normalizeNumericInput(e.target.value);
+                setAdditionalChargesInput(value);
+                setAdditionalCharges(Math.max(0, parseNumericInput(value)));
+              }}
             />
           </div>
           <label className="flex items-center gap-2 text-xs text-text-secondary">
@@ -960,6 +1189,14 @@ export default function SalesPage() {
           </label>
 
           <div className="p-3 bg-surface-secondary border border-border rounded space-y-1.5 text-xs font-mono">
+            <div className="flex justify-between text-text-secondary">
+              <span>Subtotal:</span>
+              <span>₹ {subtotal.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between text-text-secondary">
+              <span>Total Discount:</span>
+              <span>₹ {totalDiscount.toFixed(2)}</span>
+            </div>
             <div className="flex justify-between text-text-secondary">
               <span>Taxable Value:</span>
               <span>₹ {totalTaxable.toFixed(2)}</span>
@@ -977,6 +1214,10 @@ export default function SalesPage() {
               <span>₹ {totalIgst.toFixed(2)}</span>
             </div>
             <div className="flex justify-between text-text-secondary">
+              <span>Other Charges:</span>
+              <span>₹ {additionalCharges.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between text-text-secondary">
               <span>Total GST:</span>
               <span>₹ {totalTax.toFixed(2)}</span>
             </div>
@@ -985,9 +1226,22 @@ export default function SalesPage() {
               <span>₹ {roundOffAmount.toFixed(2)}</span>
             </div>
             <div className="flex justify-between text-base font-semibold text-text-primary pt-1 border-t border-border">
-              <span>Net Grand Total:</span>
+              <span>Invoice Total:</span>
               <span className="text-accent">₹ {grandTotal.toFixed(2)}</span>
             </div>
+            <div className="flex justify-between text-text-secondary">
+              <span>Paid Amount:</span>
+              <span>₹ {paidAmount.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between text-text-secondary">
+              <span>Outstanding Amount:</span>
+              <span>₹ {outstandingAmount.toFixed(2)}</span>
+            </div>
+            {hasExcessivePayment && (
+              <p role="alert" className="text-danger">
+                Payments cannot exceed the invoice total.
+              </p>
+            )}
           </div>
 
           {paymentDocumentTypes.has(invoiceType) && (
@@ -1055,7 +1309,7 @@ export default function SalesPage() {
             </Button>
           </div>
         </form>
-      </Drawer>
+      </Modal>
 
       <Drawer
         isOpen={Boolean(paymentInvoice)}
