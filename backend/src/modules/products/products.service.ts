@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
-import { PaginationParams, StockMovementType } from '@nirvagam/shared';
+import { PaginationParams } from '@nirvagam/shared';
 
 @Injectable()
 export class ProductsService {
@@ -36,13 +36,9 @@ export class ProductsService {
         include: {
           unit: true,
           taxRate: true,
-          category: true,
-          brand: true,
           variants: {
             include: {
-              stockBalances: {
-                include: { warehouse: true },
-              },
+              stockBalances: true,
             },
           },
         },
@@ -80,7 +76,7 @@ export class ProductsService {
     };
   }
 
-  async create(businessId: string, branchId: string | undefined, dto: CreateProductDto) {
+  async create(businessId: string, dto: CreateProductDto) {
     await this.ensureInventoryMetadata(businessId);
     const existing = await this.prisma.product.findFirst({
       where: { businessId, sku: dto.sku.trim() },
@@ -111,8 +107,8 @@ export class ProductsService {
     }
 
     const purchasePrice = Number(dto.purchasePrice || 0);
-    const salesPrice = Number(dto.salesPrice || 0);
-    const mrp = Number(dto.mrp || salesPrice);
+    const retailPrice = Number(dto.retailPrice || 0);
+    const mrp = Number(dto.mrp || retailPrice);
 
     return this.prisma.$transaction(async (tx) => {
       const product = await tx.product.create({
@@ -120,19 +116,15 @@ export class ProductsService {
           businessId,
           unitId,
           taxRateId,
-          categoryId: dto.categoryId,
-          brandId: dto.brandId,
           name: dto.name,
           sku: dto.sku.trim(),
           barcode: dto.barcode,
           hsnCode: dto.hsnCode,
           purchasePrice,
-          salesPrice,
           mrp,
-          wholesalePrice: Number(dto.wholesalePrice || salesPrice),
-          retailPrice: Number(dto.retailPrice || salesPrice),
+          wholesalePrice: Number(dto.wholesalePrice || retailPrice),
+          retailPrice,
           minStockLevel: dto.minStockLevel || 0,
-          reorderLevel: dto.reorderLevel || dto.minStockLevel || 0,
           description: dto.description,
           imageUrl: dto.imageUrl,
           trackingMode: dto.trackingMode || 'NONE',
@@ -149,40 +141,9 @@ export class ProductsService {
           sku: dto.sku.trim(),
           barcode: dto.barcode,
           purchasePrice,
-          salesPrice,
           mrp,
         },
       });
-
-      // If opening stock provided, allocate to default warehouse
-      if (dto.openingStock && dto.openingStock > 0 && branchId) {
-        const warehouse = await tx.warehouse.findFirst({
-          where: { branchId, isDefault: true },
-        });
-
-        if (warehouse) {
-          await tx.stockBalance.create({
-            data: {
-              warehouseId: warehouse.id,
-              variantId: variant.id,
-              quantity: dto.openingStock,
-              averageCost: purchasePrice,
-            },
-          });
-
-          await tx.stockMovement.create({
-            data: {
-              warehouseId: warehouse.id,
-              variantId: variant.id,
-              type: StockMovementType.ADJUSTMENT_ADD,
-              quantity: dto.openingStock,
-              unitCost: purchasePrice,
-              totalCost: dto.openingStock * purchasePrice,
-              notes: 'Opening Stock Balance',
-            },
-          });
-        }
-      }
 
       return product;
     });
@@ -196,28 +157,17 @@ export class ProductsService {
     });
   }
 
-  async getCategories(businessId: string) {
-    return this.prisma.category.findMany({
-      where: { businessId },
-      orderBy: { name: 'asc' },
-    });
-  }
-
-  async createCategory(businessId: string, dto: any) {
-    if (!dto.name?.trim()) throw new BadRequestException('Category name is required');
-    return this.prisma.category.create({ data: { businessId, name: dto.name.trim(), slug: (dto.slug || dto.name).toLowerCase().trim().replace(/\s+/g, '-') } });
-  }
-
   async createUnit(businessId: string, dto: any) {
     if (!dto.name?.trim() || !dto.symbol?.trim()) throw new BadRequestException('Unit name and symbol are required');
     return this.prisma.unit.create({ data: { businessId, name: dto.name.trim(), symbol: dto.symbol.trim().toUpperCase(), decimalPlaces: Number(dto.decimalPlaces || 0), isDefault: Boolean(dto.isDefault) } });
   }
 
-  async createWarehouse(businessId: string, dto: any) {
-    const branch = await this.prisma.branch.findFirst({ where: { id: dto.branchId, businessId } });
-    if (!branch) throw new NotFoundException('Branch not found for this business');
-    if (!dto.name?.trim() || !dto.code?.trim()) throw new BadRequestException('Warehouse name and code are required');
-    return this.prisma.warehouse.create({ data: { branchId: branch.id, name: dto.name.trim(), code: dto.code.trim().toUpperCase(), address: dto.address, isDefault: Boolean(dto.isDefault) } });
+  async branches(businessId: string) {
+    return this.prisma.branch.findMany({
+      where: { businessId, isActive: true },
+      select: { id: true, name: true, code: true },
+      orderBy: { name: 'asc' },
+    });
   }
 
   async getTaxRates(businessId: string) {
@@ -264,17 +214,34 @@ export class ProductsService {
   async updateProduct(businessId: string, id: string, dto: Partial<CreateProductDto>) {
     const product = await this.prisma.product.findFirst({ where: { id, businessId } });
     if (!product) throw new NotFoundException('Product not found');
-    if (dto.sku && dto.sku !== product.sku) {
-      const duplicate = await this.prisma.product.findFirst({ where: { businessId, sku: dto.sku, NOT: { id } } });
-      if (duplicate) throw new ConflictException(`SKU "${dto.sku}" already exists`);
+    const sku = dto.sku?.trim();
+    if (dto.sku !== undefined && !sku) throw new BadRequestException('SKU is required');
+    if (sku && sku !== product.sku) {
+      const duplicate = await this.prisma.product.findFirst({ where: { businessId, sku, NOT: { id } } });
+      if (duplicate) throw new ConflictException(`SKU "${sku}" already exists`);
     }
-    return this.prisma.product.update({ where: { id }, data: {
-      name: dto.name, sku: dto.sku, barcode: dto.barcode, hsnCode: dto.hsnCode, description: dto.description,
-      categoryId: dto.categoryId, brandId: dto.brandId, unitId: dto.unitId, taxRateId: dto.taxRateId,
-      purchasePrice: dto.purchasePrice, salesPrice: dto.salesPrice, mrp: dto.mrp,
-      wholesalePrice: dto.wholesalePrice, retailPrice: dto.retailPrice, minStockLevel: dto.minStockLevel,
-      reorderLevel: dto.reorderLevel, imageUrl: dto.imageUrl, trackingMode: dto.trackingMode, isActive: dto.isActive,
-    } as any });
+    return this.prisma.$transaction(async (tx) => {
+      const updatedProduct = await tx.product.update({ where: { id }, data: {
+        name: dto.name, sku, barcode: dto.barcode, hsnCode: dto.hsnCode, description: dto.description,
+        unitId: dto.unitId, taxRateId: dto.taxRateId,
+        purchasePrice: dto.purchasePrice, mrp: dto.mrp,
+        wholesalePrice: dto.wholesalePrice, retailPrice: dto.retailPrice, minStockLevel: dto.minStockLevel,
+        imageUrl: dto.imageUrl, trackingMode: dto.trackingMode, isActive: dto.isActive,
+      } });
+      const variantData = {
+        sku,
+        barcode: dto.barcode,
+        purchasePrice: dto.purchasePrice,
+        mrp: dto.mrp,
+      };
+      if (Object.values(variantData).some((value) => value !== undefined)) {
+        await tx.productVariant.updateMany({
+          where: { productId: id, name: 'Standard' },
+          data: variantData,
+        });
+      }
+      return updatedProduct;
+    });
   }
 
   async removeProduct(businessId: string, id: string) {
@@ -291,77 +258,73 @@ export class ProductsService {
     const rows = products.map((p) => {
       const stock = p.variants.reduce((n, v) => n + v.stockBalances.reduce((s, b) => s + Number(b.quantity), 0), 0);
       const valuation = p.variants.reduce((n, v) => n + v.stockBalances.reduce((s, b) => s + Number(b.quantity) * Number(b.averageCost), 0), 0);
-      return { ...p, totalStock: stock, valuation, isLowStock: stock > 0 && stock <= Number(p.reorderLevel || p.minStockLevel), isOutOfStock: stock <= 0 };
+      return { ...p, totalStock: stock, valuation, isLowStock: stock > 0 && stock <= Number(p.minStockLevel), isOutOfStock: stock <= 0 };
     });
     const recentMovements = await this.prisma.stockMovement.findMany({
-      where: { warehouse: { branch: { businessId } } }, include: { variant: { include: { product: true } }, warehouse: true }, orderBy: { createdAt: 'desc' }, take: 8,
+      where: { branch: { businessId } }, include: { variant: { include: { product: true } }, branch: true }, orderBy: { createdAt: 'desc' }, take: 8,
     });
     return { totalProducts: products.length, inventoryValuation: rows.reduce((n, p) => n + p.valuation, 0), lowStockProducts: rows.filter(p => p.isLowStock).length, outOfStockProducts: rows.filter(p => p.isOutOfStock).length, recentMovements };
   }
 
-  async warehouses(businessId: string) {
-    return this.prisma.warehouse.findMany({ where: { branch: { businessId } }, include: { branch: true }, orderBy: { name: 'asc' } });
-  }
-
   async balances(businessId: string, search?: string) {
     return this.prisma.stockBalance.findMany({
-      where: { warehouse: { branch: { businessId } }, ...(search ? { variant: { product: { name: { contains: search, mode: 'insensitive' } } } } : {}) },
-      include: { warehouse: { include: { branch: true } }, variant: { include: { product: { include: { unit: true } } } } }, orderBy: { updatedAt: 'desc' },
+      where: { branch: { businessId }, ...(search ? { variant: { product: { name: { contains: search, mode: 'insensitive' } } } } : {}) },
+      include: { branch: true, variant: { include: { product: { include: { unit: true } } } } }, orderBy: { updatedAt: 'desc' },
     });
   }
 
   async movements(businessId: string, search?: string) {
-    return this.prisma.stockMovement.findMany({ where: { warehouse: { branch: { businessId } }, ...(search ? { variant: { product: { name: { contains: search, mode: 'insensitive' } } } } : {}) }, include: { warehouse: { include: { branch: true } }, variant: { include: { product: true } } }, orderBy: { createdAt: 'desc' }, take: 200 });
+    return this.prisma.stockMovement.findMany({ where: { branch: { businessId }, ...(search ? { variant: { product: { name: { contains: search, mode: 'insensitive' } } } } : {}) }, include: { branch: true, variant: { include: { product: true } } }, orderBy: { createdAt: 'desc' }, take: 200 });
   }
 
   async stockOperation(businessId: string, userId: string, dto: any) {
     const quantity = Number(dto.quantity);
-    if (!dto.variantId || !dto.warehouseId || !Number.isFinite(quantity) || quantity <= 0) throw new BadRequestException('Variant, warehouse and a positive quantity are required');
-    if (dto.type === 'ADJUSTMENT' && !dto.reason?.trim()) throw new BadRequestException('A reason is mandatory for stock adjustments');
+    if (!dto.variantId || !dto.branchId || !Number.isFinite(quantity) || quantity <= 0) throw new BadRequestException('Variant, branch and a positive quantity are required');
+    if (!['IN', 'OUT'].includes(dto.type)) throw new BadRequestException('Stock operation must be IN or OUT');
     return this.prisma.$transaction(async (tx) => {
-      const warehouse = await tx.warehouse.findFirst({ where: { id: dto.warehouseId, branch: { businessId } } });
-      if (!warehouse) throw new NotFoundException('Warehouse not found for this business');
+      const branch = await tx.branch.findFirst({ where: { id: dto.branchId, businessId, isActive: true } });
+      if (!branch) throw new NotFoundException('Branch not found for this business');
       const variant = await tx.productVariant.findFirst({ where: { id: dto.variantId, product: { businessId } } });
       if (!variant) throw new NotFoundException('Product variant not found for this business');
-      const current = await tx.stockBalance.findUnique({ where: { warehouseId_variantId: { warehouseId: dto.warehouseId, variantId: dto.variantId } } });
-      const isOut = dto.type === 'OUT' || dto.type === 'ADJUSTMENT_SUB';
+      const current = await tx.stockBalance.findUnique({ where: { branchId_variantId: { branchId: branch.id, variantId: dto.variantId } } });
+      const isOut = dto.type === 'OUT';
       const currentQty = Number(current?.quantity || 0);
       if (isOut && currentQty < quantity) throw new BadRequestException('Insufficient stock. Negative stock is not allowed');
       const nextQty = currentQty + (isOut ? -quantity : quantity);
       const cost = Number(dto.unitCost ?? variant.purchasePrice);
       const averageCost = nextQty > 0 && !isOut ? ((currentQty * Number(current?.averageCost || cost)) + quantity * cost) / nextQty : Number(current?.averageCost || cost);
-      await tx.stockBalance.upsert({ where: { warehouseId_variantId: { warehouseId: dto.warehouseId, variantId: dto.variantId } }, create: { warehouseId: dto.warehouseId, variantId: dto.variantId, quantity: nextQty, averageCost }, update: { quantity: nextQty, averageCost } });
-      return tx.stockMovement.create({ data: { warehouseId: dto.warehouseId, variantId: dto.variantId, type: isOut ? (dto.type === 'ADJUSTMENT_SUB' ? 'ADJUSTMENT_SUB' : 'MANUAL_OUT') : (dto.type === 'ADJUSTMENT' ? 'ADJUSTMENT_ADD' : 'MANUAL_IN'), quantity, unitCost: cost, totalCost: quantity * cost, notes: dto.reference || dto.notes, reason: dto.reason, performedById: userId, batchNumber: dto.batchNumber, expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : undefined, serialNumber: dto.serialNumber } });
+      await tx.stockBalance.upsert({ where: { branchId_variantId: { branchId: branch.id, variantId: dto.variantId } }, create: { branchId: branch.id, variantId: dto.variantId, quantity: nextQty, averageCost }, update: { quantity: nextQty, averageCost } });
+      return tx.stockMovement.create({ data: { branchId: branch.id, variantId: dto.variantId, type: isOut ? 'MANUAL_OUT' : 'MANUAL_IN', quantity, unitCost: cost, totalCost: quantity * cost, notes: dto.reference || dto.notes, reason: dto.reason, performedById: userId, batchNumber: dto.batchNumber, expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : undefined, serialNumber: dto.serialNumber } });
     });
   }
 
   async transfer(businessId: string, userId: string, dto: any) {
-    if (dto.fromWarehouseId === dto.toWarehouseId) throw new BadRequestException('Source and destination warehouses must differ');
+    if (dto.fromBranchId === dto.toBranchId) throw new BadRequestException('Source and destination branches must differ');
     return this.prisma.$transaction(async (tx) => {
-      const from = await tx.warehouse.findFirst({ where: { id: dto.fromWarehouseId, branch: { businessId } } });
-      const to = await tx.warehouse.findFirst({ where: { id: dto.toWarehouseId, branch: { businessId } } });
-      if (!from || !to) throw new NotFoundException('Transfer warehouse not found for this business');
+      const from = await tx.branch.findFirst({ where: { id: dto.fromBranchId, businessId, isActive: true } });
+      const to = await tx.branch.findFirst({ where: { id: dto.toBranchId, businessId, isActive: true } });
+      if (!from || !to) throw new NotFoundException('Transfer branch not found for this business');
       const qty = Number(dto.quantity); if (!Number.isFinite(qty) || qty <= 0) throw new BadRequestException('Transfer quantity must be positive');
-      const balance = await tx.stockBalance.findUnique({ where: { warehouseId_variantId: { warehouseId: from.id, variantId: dto.variantId } } });
+      const balance = await tx.stockBalance.findUnique({ where: { branchId_variantId: { branchId: from.id, variantId: dto.variantId } } });
       if (!balance || Number(balance.quantity) < qty) throw new BadRequestException('Insufficient stock for transfer');
       await tx.stockBalance.update({ where: { id: balance.id }, data: { quantity: { decrement: qty } } });
-      await tx.stockBalance.upsert({ where: { warehouseId_variantId: { warehouseId: to.id, variantId: dto.variantId } }, create: { warehouseId: to.id, variantId: dto.variantId, quantity: qty, averageCost: balance.averageCost }, update: { quantity: { increment: qty }, averageCost: balance.averageCost } });
-      const common = { variantId: dto.variantId, quantity: qty, unitCost: balance.averageCost, totalCost: qty * Number(balance.averageCost), notes: dto.reason || 'Warehouse transfer', referenceId: undefined, performedById: userId };
-      await tx.stockMovement.create({ data: { warehouseId: from.id, type: 'OUT_TRANSFER', ...common } });
-      return tx.stockMovement.create({ data: { warehouseId: to.id, type: 'IN_TRANSFER', ...common } });
+      await tx.stockBalance.upsert({ where: { branchId_variantId: { branchId: to.id, variantId: dto.variantId } }, create: { branchId: to.id, variantId: dto.variantId, quantity: qty, averageCost: balance.averageCost }, update: { quantity: { increment: qty }, averageCost: balance.averageCost } });
+      const common = { variantId: dto.variantId, quantity: qty, unitCost: balance.averageCost, totalCost: qty * Number(balance.averageCost), notes: dto.reason || 'Branch stock transfer', referenceId: undefined, performedById: userId };
+      await tx.stockMovement.create({ data: { branchId: from.id, type: 'OUT_TRANSFER', ...common } });
+      return tx.stockMovement.create({ data: { branchId: to.id, type: 'IN_TRANSFER', ...common } });
     });
   }
 
   async report(businessId: string, kind = 'summary', method = 'weighted-average') {
     const rows = await this.balances(businessId);
-    if (kind === 'low-stock') return rows.filter((r: any) => Number(r.quantity) <= Number(r.variant.product.reorderLevel || r.variant.product.minStockLevel));
+    if (kind === 'low-stock') return rows.filter((r: any) => Number(r.quantity) <= Number(r.variant.product.minStockLevel));
     if (kind === 'expiry') return (await this.movements(businessId)).filter((m: any) => m.expiryDate && new Date(m.expiryDate) <= new Date(Date.now() + 90 * 86400000));
     if (kind === 'dead-stock') return rows.filter((r: any) => Number(r.quantity) > 0);
     if (method === 'fifo') {
       const movements = await this.movements(businessId);
       return rows.map((r: any) => {
         let remaining = Number(r.quantity);
-        const inbound = movements.filter((m: any) => m.warehouseId === r.warehouseId && m.variantId === r.variantId && ['MANUAL_IN', 'IN_PURCHASE', 'IN_TRANSFER', 'ADJUSTMENT_ADD'].includes(m.type)).sort((a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+        const inbound = movements.filter((m: any) => m.branchId === r.branchId && m.variantId === r.variantId && ['MANUAL_IN', 'IN_PURCHASE', 'IN_TRANSFER'].includes(m.type)).sort((a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
         const fifoValue = inbound.reduce((total: number, m: any) => { if (remaining <= 0) return total; const used = Math.min(remaining, Number(m.quantity)); remaining -= used; return total + used * Number(m.unitCost); }, 0);
         return { ...r, valuation: fifoValue };
       });
