@@ -343,6 +343,7 @@ export interface PurchaseCalculationOptions {
   invoiceDiscountType?: PurchaseDiscountType;
   invoiceDiscountValue?: string;
   roundOff?: string;
+  taxRegime?: 'GST' | 'VAT';
   charges?: PurchaseCalculationCharge[];
 }
 
@@ -357,6 +358,8 @@ export interface PurchaseCalculationLineResult {
   igstAmount: string;
   vatAmount: string;
   taxAmount: string;
+  allocatedFreight: string;
+  allocatedCharges: string;
   landedCost: string;
   totalAmount: string;
   rule: Record<string, string>;
@@ -364,12 +367,15 @@ export interface PurchaseCalculationLineResult {
 
 export interface PurchaseCalculationResult {
   isInterState: boolean;
+  taxRegime: 'GST' | 'VAT';
   taxableAmount: string;
+  discountAmount: string;
   cgstAmount: string;
   sgstAmount: string;
   igstAmount: string;
   vatAmount: string;
   totalTax: string;
+  freightAmount: string;
   additionalCharges: string;
   roundOff: string;
   grandTotal: string;
@@ -427,9 +433,13 @@ export function calculatePurchaseDocument(
   lines: PurchaseCalculationLine[],
   options: PurchaseCalculationOptions
 ): PurchaseCalculationResult {
-  const isInterState = options.businessStateCode.trim().toUpperCase() !== options.supplierStateCode.trim().toUpperCase();
+  const taxRegime: 'GST' | 'VAT' = options.taxRegime === 'VAT' ? 'VAT' : 'GST';
+  const isInterState =
+    taxRegime === 'GST' &&
+    options.businessStateCode.trim().toUpperCase() !== options.supplierStateCode.trim().toUpperCase();
   const calculatedLines: PurchaseCalculationLineResult[] = [];
   let totalTaxable = 0n;
+  let totalLineDiscounts = 0n;
   let totalCgst = 0n;
   let totalSgst = 0n;
   let totalIgst = 0n;
@@ -437,6 +447,8 @@ export function calculatePurchaseDocument(
 
   const preDiscountTaxables: bigint[] = [];
   const grossAmounts: bigint[] = [];
+  const quantities: bigint[] = [];
+  const weights: bigint[] = [];
 
   for (const line of lines) {
     const quantity = decimalToUnits(line.quantity, THREE_SCALE);
@@ -457,6 +469,9 @@ export function calculatePurchaseDocument(
     }
     grossAmounts.push(gross);
     preDiscountTaxables.push(net);
+    quantities.push(quantity);
+    weights.push(decimalToUnits(line.weight || '0', THREE_SCALE));
+    totalLineDiscounts += lineDiscount;
   }
 
   const beforeInvoiceDiscount = preDiscountTaxables.reduce((sum, value) => sum + value, 0n);
@@ -467,6 +482,7 @@ export function calculatePurchaseDocument(
       : invoiceValue;
   invoiceDiscount = invoiceDiscount > beforeInvoiceDiscount ? beforeInvoiceDiscount : invoiceDiscount;
 
+  const lineTaxables: bigint[] = [];
   let allocatedDiscount = 0n;
   preDiscountTaxables.forEach((initialTaxable, index) => {
     const invoiceLineDiscount =
@@ -476,11 +492,79 @@ export function calculatePurchaseDocument(
           ? roundDivision(invoiceDiscount * initialTaxable, beforeInvoiceDiscount)
           : 0n;
     allocatedDiscount += invoiceLineDiscount;
+    const taxableValue = initialTaxable - invoiceLineDiscount;
+    lineTaxables.push(taxableValue);
+    totalTaxable += taxableValue;
+  });
 
+  // Step 5 & 6: Charges and Freight + Allocation to item landed cost
+  const charges = options.charges || [];
+  let chargeTax = 0n;
+  let additionalCharges = 0n;
+  let freightTotal = 0n;
+  const lineAllocatedFreight = new Array<bigint>(lines.length).fill(0n);
+  const lineAllocatedOtherCharges = new Array<bigint>(lines.length).fill(0n);
+  const taxSummaryMap = new Map<string, { taxable: bigint; tax: bigint }>();
+
+  const totalQty = quantities.reduce((s, q) => s + q, 0n);
+  const totalWeight = weights.reduce((s, w) => s + w, 0n);
+
+  const allocateAmount = (amount: bigint, method: 'VALUE' | 'QUANTITY' | 'WEIGHT', target: bigint[]) => {
+    if (lines.length === 0 || amount === 0n) return;
+    let basis: bigint[];
+    let basisSum: bigint;
+    if (method === 'QUANTITY' && totalQty > 0n) {
+      basis = quantities;
+      basisSum = totalQty;
+    } else if (method === 'WEIGHT' && totalWeight > 0n) {
+      basis = weights;
+      basisSum = totalWeight;
+    } else {
+      basis = lineTaxables;
+      basisSum = totalTaxable;
+    }
+
+    let allocated = 0n;
+    for (let i = 0; i < lines.length; i++) {
+      const share =
+        i === lines.length - 1
+          ? amount - allocated
+          : basisSum > 0n
+            ? roundDivision(amount * basis[i], basisSum)
+            : roundDivision(amount, BigInt(lines.length));
+      allocated += share;
+      target[i] += share;
+    }
+  };
+
+  for (const charge of charges) {
+    const amount = decimalToUnits(charge.amount, DECIMAL_SCALE);
+    additionalCharges += amount;
+    if (charge.type === 'FREIGHT') {
+      freightTotal += amount;
+      allocateAmount(amount, charge.allocationMethod || 'VALUE', lineAllocatedFreight);
+    } else {
+      allocateAmount(amount, charge.allocationMethod || 'VALUE', lineAllocatedOtherCharges);
+    }
+
+    if (charge.isTaxable) {
+      const chargeTaxRate = decimalToUnits(charge.taxRate || '0', DECIMAL_SCALE);
+      const thisChargeTax = roundDivision(amount * chargeTaxRate, 10000n);
+      chargeTax += thisChargeTax;
+      const key = unitsToDecimal(chargeTaxRate, DECIMAL_SCALE);
+      const existing = taxSummaryMap.get(key) || { taxable: 0n, tax: 0n };
+      existing.taxable += amount;
+      existing.tax += thisChargeTax;
+      taxSummaryMap.set(key, existing);
+    }
+  }
+
+  preDiscountTaxables.forEach((initialTaxable, index) => {
     const line = lines[index];
     const gross = grossAmounts[index];
-    const quantity = decimalToUnits(line.quantity, THREE_SCALE);
-    const rate = decimalToUnits(line.rate, DECIMAL_SCALE);
+    const quantity = quantities[index];
+    const taxableValue = lineTaxables[index];
+
     let lineDiscount = 0n;
     if (line.lineDiscountType === 'PERCENT') {
       lineDiscount = percentOf(gross, decimalToUnits(line.lineDiscountValue || '0', DECIMAL_SCALE));
@@ -489,17 +573,36 @@ export function calculatePurchaseDocument(
     }
     lineDiscount = lineDiscount > gross ? gross : lineDiscount;
 
-    const taxableValue = initialTaxable - invoiceLineDiscount;
+    const invoiceLineDiscount = initialTaxable - taxableValue;
     const taxRate = decimalToUnits(line.taxRate, DECIMAL_SCALE);
     const taxAmount = roundDivision(taxableValue * taxRate, 10000n);
-    const cgst = isInterState ? 0n : roundDivision(taxAmount, 2n);
-    const sgst = isInterState ? 0n : taxAmount - cgst;
-    const igst = isInterState ? taxAmount : 0n;
 
-    totalTaxable += taxableValue;
-    totalCgst += cgst;
-    totalSgst += sgst;
-    totalIgst += igst;
+    let cgst = 0n;
+    let sgst = 0n;
+    let igst = 0n;
+    let vat = 0n;
+
+    if (taxRegime === 'VAT') {
+      vat = taxAmount;
+      totalVat += vat;
+    } else if (isInterState) {
+      igst = taxAmount;
+      totalIgst += igst;
+    } else {
+      cgst = roundDivision(taxAmount, 2n);
+      sgst = taxAmount - cgst;
+      totalCgst += cgst;
+      totalSgst += sgst;
+    }
+
+    const totalLandedLine = taxableValue + lineAllocatedFreight[index] + lineAllocatedOtherCharges[index];
+    const landedUnitCost = roundDivision(totalLandedLine * THREE_SCALE, quantity || THREE_SCALE);
+
+    const key = unitsToDecimal(taxRate, DECIMAL_SCALE);
+    const existing = taxSummaryMap.get(key) || { taxable: 0n, tax: 0n };
+    existing.taxable += taxableValue;
+    existing.tax += taxAmount;
+    taxSummaryMap.set(key, existing);
 
     calculatedLines.push({
       id: line.id,
@@ -510,11 +613,14 @@ export function calculatePurchaseDocument(
       cgstAmount: money(cgst),
       sgstAmount: money(sgst),
       igstAmount: money(igst),
-      vatAmount: '0',
+      vatAmount: money(vat),
       taxAmount: money(taxAmount),
-      landedCost: money(roundDivision(taxableValue * THREE_SCALE, quantity || THREE_SCALE)),
+      allocatedFreight: money(lineAllocatedFreight[index]),
+      allocatedCharges: money(lineAllocatedOtherCharges[index]),
+      landedCost: money(landedUnitCost),
       totalAmount: money(taxableValue + taxAmount),
       rule: {
+        taxRegime,
         pricesIncludeTax: String(options.pricesIncludeTax === true),
         taxRate: unitsToDecimal(taxRate, DECIMAL_SCALE),
         lineDiscountType: line.lineDiscountType || 'AMOUNT',
@@ -522,41 +628,17 @@ export function calculatePurchaseDocument(
     });
   });
 
-  const charges = options.charges || [];
-  let chargeTax = 0n;
-  let additionalCharges = 0n;
-  const freightTotal = charges
-    .filter((charge) => charge.type === 'FREIGHT')
-    .reduce((sum, charge) => sum + decimalToUnits(charge.amount, DECIMAL_SCALE), 0n);
-
-  for (const charge of charges) {
-    const amount = decimalToUnits(charge.amount, DECIMAL_SCALE);
-    additionalCharges += amount;
-    if (charge.isTaxable) {
-      const chargeTaxRate = decimalToUnits(charge.taxRate || '0', DECIMAL_SCALE);
-      chargeTax += roundDivision(amount * chargeTaxRate, 10000n);
-    }
-  }
-
   if (chargeTax > 0n) {
-    if (isInterState) totalIgst += chargeTax;
-    else {
+    if (taxRegime === 'VAT') {
+      totalVat += chargeTax;
+    } else if (isInterState) {
+      totalIgst += chargeTax;
+    } else {
       const cgst = roundDivision(chargeTax, 2n);
       totalCgst += cgst;
       totalSgst += chargeTax - cgst;
     }
   }
-
-  const taxSummaryMap = new Map<string, { taxable: bigint; tax: bigint }>();
-  calculatedLines.forEach((line, index) => {
-    const lineTaxable = decimalToUnits(line.taxableValue, DECIMAL_SCALE);
-    const taxRate = decimalToUnits(lines[index].taxRate, DECIMAL_SCALE);
-    const key = unitsToDecimal(taxRate, DECIMAL_SCALE);
-    const existing = taxSummaryMap.get(key) || { taxable: 0n, tax: 0n };
-    existing.taxable += lineTaxable;
-    existing.tax += decimalToUnits(line.taxAmount, DECIMAL_SCALE);
-    taxSummaryMap.set(key, existing);
-  });
 
   const rawGrand = totalTaxable + totalCgst + totalSgst + totalIgst + totalVat + additionalCharges;
   const roundOff = decimalToUnits(options.roundOff || '0', DECIMAL_SCALE);
@@ -564,12 +646,15 @@ export function calculatePurchaseDocument(
 
   return {
     isInterState,
+    taxRegime,
     taxableAmount: money(totalTaxable),
+    discountAmount: money(totalLineDiscounts + invoiceDiscount),
     cgstAmount: money(totalCgst),
     sgstAmount: money(totalSgst),
     igstAmount: money(totalIgst),
     vatAmount: money(totalVat),
     totalTax: money(totalCgst + totalSgst + totalIgst + totalVat),
+    freightAmount: money(freightTotal),
     additionalCharges: money(additionalCharges),
     roundOff: money(roundOff),
     grandTotal: money(grandTotal),
@@ -580,6 +665,7 @@ export function calculatePurchaseDocument(
     })),
     items: calculatedLines,
     rule: {
+      taxRegime,
       pricesIncludeTax: options.pricesIncludeTax === true,
       invoiceDiscountType: options.invoiceDiscountType || 'AMOUNT',
       invoiceDiscountValue: options.invoiceDiscountValue || '0',

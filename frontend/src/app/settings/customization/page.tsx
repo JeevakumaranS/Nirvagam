@@ -23,6 +23,9 @@ import {
   Lock,
   ArrowUpRight,
   Database,
+  Ruler,
+  Trash2,
+  Receipt,
 } from 'lucide-react';
 
 export default function CustomizationPage() {
@@ -31,8 +34,12 @@ export default function CustomizationPage() {
   const [metadata, setMetadata] = useState<any>(null);
   const [history, setHistory] = useState<any[]>([]);
   const [templates, setTemplates] = useState<any[]>([]);
+  const [units, setUnits] = useState<any[]>([]);
+  const [newUnit, setNewUnit] = useState({ symbol: '', name: '', decimalPlaces: '0' });
+  const [chargeTypes, setChargeTypes] = useState<any[]>([]);
+  const [newChargeType, setNewChargeType] = useState({ name: '', chargeType: 'OTHER' });
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'fields' | 'entities' | 'templates' | 'history'>('fields');
+  const [activeTab, setActiveTab] = useState<'units' | 'charges' | 'fields' | 'entities' | 'templates' | 'history'>('units');
 
   // Modals
   const [isAddFieldModalOpen, setIsAddFieldModalOpen] = useState(false);
@@ -60,7 +67,102 @@ export default function CustomizationPage() {
   useEffect(() => {
     loadEntities();
     loadTemplates();
+    loadUnits();
+    loadChargeTypes();
   }, []);
+
+  async function loadChargeTypes() {
+    try {
+      const res = await apiFetch('/purchases/charge-types');
+      setChargeTypes(Array.isArray(res) ? res : []);
+    } catch {}
+  }
+
+  async function handleToggleChargeType(id: string, isActive: boolean) {
+    try {
+      await apiFetch(`/purchases/charge-types/${id}/toggle`, {
+        method: 'PATCH',
+        body: JSON.stringify({ isActive }),
+      });
+      setChargeTypes((prev) => prev.map((c) => (c.id === id ? { ...c, isActive } : c)));
+    } catch (err: any) {
+      alert(err.message || 'Failed to update charge');
+    }
+  }
+
+  async function handleCreateChargeType(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newChargeType.name.trim()) return;
+    try {
+      await apiFetch('/purchases/charge-types', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: newChargeType.name.trim(),
+          chargeType: newChargeType.chargeType,
+        }),
+      });
+      setNewChargeType({ name: '', chargeType: 'OTHER' });
+      loadChargeTypes();
+    } catch (err: any) {
+      alert(err.message || 'Failed to create charge');
+    }
+  }
+
+  async function handleDeleteChargeType(id: string) {
+    try {
+      await apiFetch(`/purchases/charge-types/${id}`, { method: 'DELETE' });
+      setChargeTypes((prev) => prev.filter((c) => c.id !== id));
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete charge');
+    }
+  }
+
+  async function loadUnits() {
+    try {
+      const res = await apiFetch('/products/meta/units');
+      setUnits(Array.isArray(res) ? res : []);
+    } catch {}
+  }
+
+  async function handleToggleUnit(id: string, isActive: boolean) {
+    try {
+      await apiFetch(`/products/meta/units/${id}/toggle`, {
+        method: 'PATCH',
+        body: JSON.stringify({ isActive }),
+      });
+      setUnits((prev) => prev.map((u) => (u.id === id ? { ...u, isActive } : u)));
+    } catch (err: any) {
+      alert(err.message || 'Failed to update unit');
+    }
+  }
+
+  async function handleCreateCustomUnit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newUnit.symbol.trim() || !newUnit.name.trim()) return;
+    try {
+      await apiFetch('/products/meta/units', {
+        method: 'POST',
+        body: JSON.stringify({
+          symbol: newUnit.symbol.trim().toUpperCase(),
+          name: newUnit.name.trim(),
+          decimalPlaces: Number(newUnit.decimalPlaces || 0),
+        }),
+      });
+      setNewUnit({ symbol: '', name: '', decimalPlaces: '0' });
+      loadUnits();
+    } catch (err: any) {
+      alert(err.message || 'Failed to create unit');
+    }
+  }
+
+  async function handleDeleteUnit(id: string) {
+    try {
+      await apiFetch(`/products/meta/units/${id}`, { method: 'DELETE' });
+      setUnits((prev) => prev.filter((u) => u.id !== id));
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete unit');
+    }
+  }
 
   useEffect(() => {
     if (selectedEntity) {
@@ -231,10 +333,10 @@ export default function CustomizationPage() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-[17px] font-semibold text-text-primary tracking-[-0.01em]">
-            Schema Customization & Extensibility
+            Settings
           </h2>
           <p className="text-[12px] text-text-secondary mt-0.5">
-            Metadata-driven custom fields, physical column promotion, and isolated custom tables (ct_*).
+            Configure active measurement units, custom fields, and workspace schema settings.
           </p>
         </div>
 
@@ -263,6 +365,28 @@ export default function CustomizationPage() {
 
       {/* Segmented Navigation Tabs */}
       <div className="inline-flex p-1 rounded-lg bg-black/5 dark:bg-white/5 border border-border/60">
+        <button
+          onClick={() => setActiveTab('units')}
+          className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all flex items-center gap-1.5 ${
+            activeTab === 'units'
+              ? 'bg-surface text-accent shadow-subtle'
+              : 'text-text-secondary hover:text-text-primary'
+          }`}
+        >
+          <Ruler className="w-3.5 h-3.5" />
+          Units of Measure ({units.filter((u) => u.isActive).length}/{units.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('charges')}
+          className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all flex items-center gap-1.5 ${
+            activeTab === 'charges'
+              ? 'bg-surface text-accent shadow-subtle'
+              : 'text-text-secondary hover:text-text-primary'
+          }`}
+        >
+          <Receipt className="w-3.5 h-3.5" />
+          Additional Charges ({chargeTypes.filter((c) => c.isActive).length}/{chargeTypes.length})
+        </button>
         <button
           onClick={() => setActiveTab('fields')}
           className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all ${
@@ -304,6 +428,133 @@ export default function CustomizationPage() {
           Change History
         </button>
       </div>
+
+      {/* TAB 0: UNITS OF MEASURE */}
+      {activeTab === 'units' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+          <div className="lg:col-span-2 bg-surface border border-border/80 rounded-xl p-5 space-y-4">
+            <div>
+              <h3 className="text-sm font-semibold text-text-primary">Measurement Units</h3>
+              <p className="text-xs text-text-secondary mt-0.5">
+                Enable or disable which units are available in Purchase Requests, Orders, GRNs, Invoices, and Products.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {units.map((u) => (
+                <div key={u.id} className="flex items-center justify-between p-3 rounded-lg border border-border/70 bg-surface-secondary/30">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-bold text-xs text-accent">{u.symbol}</span>
+                      <span className="text-xs font-medium text-text-primary">{u.name}</span>
+                      {!u.isSystem && <Badge size="sm" variant="neutral">Custom</Badge>}
+                    </div>
+                    <div className="text-[10px] text-text-tertiary mt-0.5">Decimals: {u.decimalPlaces}</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Switch checked={u.isActive} onChange={(val) => handleToggleUnit(u.id, val)} />
+                    {!u.isSystem && (
+                      <button type="button" onClick={() => handleDeleteUnit(u.id)} className="text-danger p-1 hover:bg-danger/10 rounded">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <form onSubmit={handleCreateCustomUnit} className="bg-surface border border-border/80 rounded-xl p-5 space-y-3">
+            <h3 className="text-sm font-semibold text-text-primary">Add Custom Unit</h3>
+            <p className="text-xs text-text-secondary">Define additional units specific to your business.</p>
+            <Input
+              label="Unit Symbol *"
+              placeholder="e.g. BUNDLE, DOZEN, SQFT"
+              value={newUnit.symbol}
+              onChange={(e) => setNewUnit({ ...newUnit, symbol: e.target.value })}
+              required
+            />
+            <Input
+              label="Unit Name *"
+              placeholder="e.g. Bundle, Dozen, Square Feet"
+              value={newUnit.name}
+              onChange={(e) => setNewUnit({ ...newUnit, name: e.target.value })}
+              required
+            />
+            <Input
+              label="Decimal Places"
+              type="number"
+              min="0"
+              max="3"
+              value={newUnit.decimalPlaces}
+              onChange={(e) => setNewUnit({ ...newUnit, decimalPlaces: e.target.value })}
+            />
+            <Button type="submit" variant="primary" size="sm" className="w-full" icon={<Plus className="w-3.5 h-3.5" />}>
+              Add Custom Unit
+            </Button>
+          </form>
+        </div>
+      )}
+
+      {/* TAB 0B: ADDITIONAL CHARGES */}
+      {activeTab === 'charges' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+          <div className="lg:col-span-2 bg-surface border border-border/80 rounded-xl p-5 space-y-4">
+            <div>
+              <h3 className="text-sm font-semibold text-text-primary">Purchase Additional Charges</h3>
+              <p className="text-xs text-text-secondary mt-0.5">
+                Enable or disable which additional charges appear in the Add Charge dropdown on Purchase Orders and Invoices.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {chargeTypes.map((c) => (
+                <div key={c.id} className="flex items-center justify-between p-3 rounded-lg border border-border/70 bg-surface-secondary/30">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-text-primary">{c.name}</span>
+                      {!c.isSystem && <Badge size="sm" variant="neutral">Custom</Badge>}
+                    </div>
+                    <div className="text-[10px] text-text-tertiary mt-0.5 font-mono">{c.chargeType}</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Switch checked={c.isActive} onChange={(val) => handleToggleChargeType(c.id, val)} />
+                    {!c.isSystem && (
+                      <button type="button" onClick={() => handleDeleteChargeType(c.id)} className="text-danger p-1 hover:bg-danger/10 rounded">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <form onSubmit={handleCreateChargeType} className="bg-surface border border-border/80 rounded-xl p-5 space-y-3">
+            <h3 className="text-sm font-semibold text-text-primary">Add Custom Charge</h3>
+            <p className="text-xs text-text-secondary">Define additional purchase charges specific to your business.</p>
+            <Input
+              label="Charge Name *"
+              placeholder="e.g. Packaging, Toll, Insurance"
+              value={newChargeType.name}
+              onChange={(e) => setNewChargeType({ ...newChargeType, name: e.target.value })}
+              required
+            />
+            <Select
+              label="Category"
+              value={newChargeType.chargeType}
+              onChange={(e) => setNewChargeType({ ...newChargeType, chargeType: e.target.value })}
+            >
+              <option value="FREIGHT">Transportation / Freight</option>
+              <option value="LOADING">Loading / Unloading</option>
+              <option value="PACKING">Packing</option>
+              <option value="INSURANCE">Insurance</option>
+              <option value="OTHER">Other</option>
+            </Select>
+            <Button type="submit" variant="primary" size="sm" className="w-full" icon={<Plus className="w-3.5 h-3.5" />}>
+              Add Custom Charge
+            </Button>
+          </form>
+        </div>
+      )}
 
       {/* TAB 1: FIELDS & ATTRIBUTES */}
       {activeTab === 'fields' && (

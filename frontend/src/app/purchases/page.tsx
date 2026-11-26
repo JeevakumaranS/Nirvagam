@@ -1,357 +1,784 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect } from 'react';
-import { apiFetch } from '@/lib/api';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Select } from '@/components/ui/select';
-import { Drawer } from '@/components/ui/drawer';
-import { Badge } from '@/components/ui/badge';
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableEmptyState } from '@/components/ui/table';
-import { useToast } from '@/components/ui/toast';
-import { Package, Plus, Search, RefreshCw, Trash2 } from 'lucide-react';
-import { Skeleton } from '@/components/ui/skeleton';
+import React, { useCallback, useEffect, useState } from "react";
+import { apiFetch } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { Modal } from "@/components/ui/modal";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableEmptyState,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { useToast } from "@/components/ui/toast";
+import {
+  PurchaseDocumentDrawer,
+  PurchaseDocKind,
+} from "@/components/purchases/purchase-document-drawer";
+import { PurchasePrintModal } from "@/components/purchases/purchase-print-modal";
+import { PurchaseFinancialsReports } from "@/components/purchases/purchase-financials-reports";
+import { PurchaseSettingsApprovals } from "@/components/purchases/purchase-settings-approvals";
+import {
+  Plus,
+  RefreshCw,
+  Search,
+  Printer,
+  ArrowRight,
+  CreditCard,
+  RotateCcw,
+  CheckCircle2,
+  XCircle,
+  Send,
+} from "lucide-react";
+
+type MainTab =
+  | "invoices"
+  | "requests"
+  | "orders"
+  | "grns"
+  | "returns"
+  | "payments"
+  | "approvals"
+  | "reports"
+  | "settings";
 
 export default function PurchasesPage() {
-  const [purchases, setPurchases] = useState<any[]>([]);
+  const { toast } = useToast();
+  const [tab, setTab] = useState<MainTab>("invoices");
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+
+  const [rows, setRows] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [warehouses, setWarehouses] = useState<any[]>([]);
+  const [branchStateCode, setBranchStateCode] = useState("33");
+  const [taxRegime, setTaxRegime] = useState<"GST" | "VAT">("GST");
 
-  // Form State
-  const [supplierId, setSupplierId] = useState('');
-  const [billNumber, setBillNumber] = useState('');
-  const [items, setItems] = useState<
-    Array<{ variantId: string; name: string; quantity: number; unitPrice: number; gstRate: number }>
-  >([]);
+  // Drawer state
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerKind, setDrawerKind] = useState<PurchaseDocKind>("INVOICE");
+  const [drawerMode, setDrawerMode] = useState<"DIRECT" | "AGAINST_PO_GRN">(
+    "DIRECT",
+  );
+  const [drawerPrefill, setDrawerPrefill] = useState<any>(null);
 
-  const { toast } = useToast();
+  // Print modal
+  const [printState, setPrintState] = useState<{
+    open: boolean;
+    type: "PO" | "GRN" | "INVOICE" | "RETURN" | "PAYMENT";
+    id: string | null;
+  }>({
+    open: false,
+    type: "INVOICE",
+    id: null,
+  });
 
-  const loadData = async () => {
+  // Payment modal
+  const [payModal, setPayModal] = useState<{
+    open: boolean;
+    invoice?: any;
+    isAdvance?: boolean;
+  }>({ open: false });
+  const [paySupplierId, setPaySupplierId] = useState("");
+  const [payAmount, setPayAmount] = useState("");
+  const [payMode, setPayMode] = useState<
+    "BANK_TRANSFER" | "CASH" | "UPI" | "CHEQUE"
+  >("BANK_TRANSFER");
+  const [payRef, setPayRef] = useState("");
+
+  const loadMasterData = useCallback(async () => {
+    try {
+      const [suppRes, prodRes, whRes, settingsRes] = await Promise.all([
+        apiFetch("/suppliers"),
+        apiFetch("/products"),
+        apiFetch("/inventory/warehouses").catch(() => []),
+        apiFetch("/purchases/settings").catch(() => null),
+      ]);
+      setSuppliers(suppRes?.data || (Array.isArray(suppRes) ? suppRes : []));
+      setProducts(prodRes?.data || (Array.isArray(prodRes) ? prodRes : []));
+      const whList = whRes?.data || (Array.isArray(whRes) ? whRes : []);
+      setWarehouses(whList);
+      if (settingsRes?.taxRegime) setTaxRegime(settingsRes.taxRegime);
+      if (whList?.[0]?.branch?.stateCode)
+        setBranchStateCode(whList[0].branch.stateCode);
+    } catch {}
+  }, []);
+
+  const loadTabList = useCallback(async () => {
+    if (["approvals", "reports", "settings"].includes(tab)) {
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
-      const [purRes, suppRes, prodRes] = await Promise.all([
-        apiFetch('/purchases/invoices', { params: { search } }),
-        apiFetch('/suppliers'),
-        apiFetch('/products'),
-      ]);
-
-      setPurchases(purRes?.data || []);
-      setSuppliers(suppRes?.data || []);
-      setProducts(prodRes?.data || []);
-
-      if (suppRes?.data?.[0]?.id && !supplierId) {
-        setSupplierId(suppRes.data[0].id);
-      }
+      const res = await apiFetch(`/purchases/${tab}`, { params: { search } });
+      setRows(res?.data || (Array.isArray(res) ? res : []));
     } catch (err: any) {
-      toast({ type: 'error', title: 'Error', message: err.message });
+      toast({
+        type: "error",
+        title: "Failed to load data",
+        message: err.message,
+      });
     } finally {
       setLoading(false);
     }
-  };
+  }, [tab, search, toast]);
 
   useEffect(() => {
-    loadData();
-  }, [search]);
+    loadMasterData();
+  }, [loadMasterData]);
 
-  const addItem = (prod: any) => {
-    const variant = prod.variants?.[0];
-    if (!variant) return;
+  useEffect(() => {
+    loadTabList();
+  }, [loadTabList]);
 
-    const existingIdx = items.findIndex((i) => i.variantId === variant.id);
-    if (existingIdx >= 0) {
-      const copy = [...items];
-      copy[existingIdx].quantity += 1;
-      setItems(copy);
-    } else {
-      setItems([
-        ...items,
-        {
-          variantId: variant.id,
-          name: prod.name,
-          quantity: 10,
-          unitPrice: Number(variant.purchasePrice || 0),
-          gstRate: Number(prod.taxRate?.rate || 18),
-        },
-      ]);
-    }
+  const openNewDoc = (
+    kind: PurchaseDocKind,
+    mode: "DIRECT" | "AGAINST_PO_GRN" = "DIRECT",
+    prefill: any = null,
+  ) => {
+    setDrawerKind(kind);
+    setDrawerMode(mode);
+    setDrawerPrefill(prefill);
+    setDrawerOpen(true);
   };
 
-  const removeItem = (index: number) => {
-    setItems(items.filter((_, idx) => idx !== index));
-  };
-
-  const updateQuantity = (index: number, qty: number) => {
-    const copy = [...items];
-    copy[index].quantity = Math.max(1, qty);
-    setItems(copy);
-  };
-
-  let totalTaxable = 0;
-  let totalTax = 0;
-  items.forEach((i) => {
-    const taxable = i.quantity * i.unitPrice;
-    const tax = (taxable * i.gstRate) / 100;
-    totalTaxable += taxable;
-    totalTax += tax;
-  });
-  const grandTotal = Math.round(totalTaxable + totalTax);
-
-  const handleCreatePurchase = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!supplierId || !billNumber.trim()) {
-      toast({ type: 'warning', title: 'Missing details', message: 'Supplier and Bill Number are required.' });
-      return;
-    }
-    if (items.length === 0) {
-      toast({ type: 'warning', title: 'No items', message: 'Add items received from vendor.' });
-      return;
-    }
-
+  const runAction = async (url: string, successTitle: string, body?: any) => {
     try {
-      setSubmitting(true);
-      await apiFetch('/purchases/invoices', {
-        method: 'POST',
+      await apiFetch(url, {
+        method: "POST",
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+      toast({ type: "success", title: successTitle });
+      loadTabList();
+    } catch (err: any) {
+      toast({ type: "error", title: "Action failed", message: err.message });
+    }
+  };
+
+  const handleCancel = async (url: string) => {
+    const reason = window.prompt("Enter mandatory cancellation reason:");
+    if (!reason?.trim()) return;
+    await runAction(url, "Document cancelled", { reason });
+  };
+
+  const handleCreateReturn = async (invoice: any) => {
+    if (!invoice.items?.length) return;
+    const reason =
+      window.prompt("Enter reason for Purchase Return (Debit Note):") ||
+      "Damaged / Returned goods";
+    try {
+      const ret = await apiFetch("/purchases/returns", {
+        method: "POST",
         body: JSON.stringify({
-          supplierId,
-          supplierBillNumber: billNumber.trim(),
-          invoiceDate: new Date().toISOString().slice(0, 10),
-          mode: 'DIRECT',
-          post: true,
-          items: items.map((i) => ({
+          purchaseInvoiceId: invoice.id,
+          reason,
+          items: invoice.items.map((i: any) => ({
             variantId: i.variantId,
+            invoiceItemId: i.id,
             quantity: i.quantity,
-            unitRate: i.unitPrice,
-            taxRate: i.gstRate,
-            discountType: 'AMOUNT',
-            discountValue: 0,
           })),
         }),
       });
-
+      await apiFetch(`/purchases/returns/${ret.id}/post`, { method: "POST" });
       toast({
-        type: 'success',
-        title: 'Vendor Bill Recorded',
-        message: 'Stock balance incremented and Accounts Payable entry posted.',
+        type: "success",
+        title: "Purchase Return Posted",
+        message: "Stock and supplier ledger reversed.",
       });
-      setIsDrawerOpen(false);
-      setBillNumber('');
-      setItems([]);
-      loadData();
+      setTab("returns");
+      loadTabList();
     } catch (err: any) {
-      toast({ type: 'error', title: 'Failed to record bill', message: err.message });
-    } finally {
-      setSubmitting(false);
+      toast({ type: "error", title: "Return failed", message: err.message });
     }
+  };
+
+  const handleSavePayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await apiFetch("/purchases/payments", {
+        method: "POST",
+        body: JSON.stringify({
+          supplierId: payModal.invoice?.supplierId || paySupplierId,
+          paymentType: payModal.isAdvance ? "ADVANCE" : "BILL_PAYMENT",
+          mode: payMode,
+          amount: payAmount,
+          reference: payRef || undefined,
+          allocations: payModal.invoice
+            ? [{ purchaseInvoiceId: payModal.invoice.id, amount: payAmount }]
+            : [],
+        }),
+      });
+      toast({
+        type: "success",
+        title: "Payment Posted",
+        message: "Accounts Payable & Supplier Ledger updated.",
+      });
+      setPayModal({ open: false });
+      setPayAmount("");
+      setPayRef("");
+      loadTabList();
+    } catch (err: any) {
+      toast({ type: "error", title: "Payment failed", message: err.message });
+    }
+  };
+
+  const statusBadge = (status: string) => {
+    const variant =
+      status === "APPROVED" ||
+      status === "POSTED" ||
+      status === "PAID" ||
+      status === "FULLY_RECEIVED"
+        ? "success"
+        : status === "CANCELLED" || status === "REJECTED"
+          ? "danger"
+          : status === "PENDING_APPROVAL" ||
+              status === "PARTIALLY_PAID" ||
+              status === "PARTIALLY_RECEIVED"
+            ? "warning"
+            : "neutral";
+    return (
+      <Badge size="sm" variant={variant}>
+        {status}
+      </Badge>
+    );
   };
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      {/* Header */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div>
-          <h2 className="text-base font-semibold text-text-primary">Purchase Management</h2>
+          <h2 className="text-base font-semibold text-text-primary">
+            Purchase Management
+          </h2>
           <p className="text-xs text-text-secondary mt-0.5">
-            Vendor bills, stock intake, Input Tax Credit (ITC) tracking and Accounts Payable ledgers.
+            Complete procurement lifecycle: PR → PO → GRN → Purchase Invoice
+            (Direct & Linked) → Returns → Supplier Payments & Ledger.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="secondary" onClick={loadData} icon={<RefreshCw className="w-3.5 h-3.5" />}>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={loadTabList}
+            icon={<RefreshCw className="w-3.5 h-3.5" />}
+          >
             Refresh
           </Button>
           <Button
             size="sm"
             variant="primary"
-            onClick={() => setIsDrawerOpen(true)}
+            onClick={() => openNewDoc("INVOICE", "DIRECT")}
             icon={<Plus className="w-3.5 h-3.5" />}
           >
-            Record Purchase Bill
+            Direct Purchase Invoice
           </Button>
+          {tab === "requests" && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => openNewDoc("PR")}
+              icon={<Plus className="w-3.5 h-3.5" />}
+            >
+              New Purchase Request
+            </Button>
+          )}
+          {tab === "orders" && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => openNewDoc("PO")}
+              icon={<Plus className="w-3.5 h-3.5" />}
+            >
+              New Purchase Order
+            </Button>
+          )}
+          {tab === "grns" && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => openNewDoc("GRN")}
+              icon={<Plus className="w-3.5 h-3.5" />}
+            >
+              New GRN
+            </Button>
+          )}
+          {tab === "payments" && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setPaySupplierId(suppliers[0]?.id || "");
+                setPayAmount("");
+                setPayModal({ open: true, isAdvance: true });
+              }}
+              icon={<CreditCard className="w-3.5 h-3.5" />}
+            >
+              Record Advance Payment
+            </Button>
+          )}
         </div>
       </div>
 
-      <div className="flex items-center gap-2 max-w-sm">
-        <Input
-          placeholder="Filter by bill # or vendor..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          prefixIcon={<Search className="w-3.5 h-3.5" />}
-        />
+      {/* Navigation Tabs */}
+      <div className="flex flex-wrap gap-1 p-1 bg-surface-secondary/70 rounded-xl border border-border text-xs">
+        {[
+          { id: "invoices", label: "Purchase Invoices" },
+          { id: "requests", label: "Purchase Requests (PR)" },
+          { id: "orders", label: "Purchase Orders (PO)" },
+          { id: "grns", label: "Goods Received (GRN)" },
+          { id: "returns", label: "Returns (Debit Notes)" },
+          { id: "payments", label: "Payments & Advances" },
+          { id: "approvals", label: "Approvals" },
+          { id: "reports", label: "Supplier Ledger & Reports" },
+          { id: "settings", label: "Settings" },
+        ].map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id as MainTab)}
+            className={`px-3 py-1.5 rounded-lg font-medium transition-all ${tab === t.id ? "bg-surface text-accent shadow-xs" : "text-text-secondary hover:text-text-primary"}`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      {loading ? (
-        <div className="space-y-2">
-          <Skeleton className="h-9 w-full" />
-          <Skeleton className="h-12 w-full" />
-        </div>
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Vendor Bill #</TableHead>
-              <TableHead>Supplier / Mill</TableHead>
-              <TableHead>Bill Date</TableHead>
-              <TableHead className="text-right">Taxable</TableHead>
-              <TableHead className="text-right">Eligible ITC</TableHead>
-              <TableHead className="text-right">Grand Total</TableHead>
-              <TableHead className="text-center">Status</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {purchases.length === 0 ? (
-              <TableEmptyState message="No purchase bills recorded. Click 'Record Purchase Bill' to register vendor inventory." />
-            ) : (
-              purchases.map((bill) => (
-                <TableRow key={bill.id}>
-                  <TableCell className="font-mono text-accent font-semibold">{bill.supplierBillNumber || bill.billNumber}</TableCell>
-                  <TableCell className="font-medium text-text-primary">{bill.supplier?.name}</TableCell>
-                  <TableCell className="text-text-secondary">
-                    {new Date(bill.invoiceDate || bill.billDate).toLocaleDateString()}
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-xs">
-                    ₹ {Number(bill.taxableAmount).toFixed(2)}
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-xs text-emerald-600 dark:text-emerald-400">
-                    ₹ {Number(bill.totalTax).toFixed(2)}
-                  </TableCell>
-                  <TableCell className="text-right font-mono font-semibold text-text-primary">
-                    ₹ {Number(bill.grandTotal).toFixed(2)}
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <Badge size="sm" variant="accent">{bill.status}</Badge>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+      {/* Sub-views */}
+      {tab === "approvals" && <PurchaseSettingsApprovals mode="approvals" />}
+      {tab === "settings" && <PurchaseSettingsApprovals mode="settings" />}
+      {tab === "reports" && (
+        <PurchaseFinancialsReports suppliers={suppliers} products={products} />
       )}
 
-      {/* Record Purchase Drawer */}
-      <Drawer
-        isOpen={isDrawerOpen}
-        onClose={() => setIsDrawerOpen(false)}
-        title="Direct Purchase Invoice"
-        description="Direct mode: receive goods and post accounting immediately. Against PO/GRN invoices are linked to existing documents."
-        width="xl"
-      >
-        <form onSubmit={handleCreatePurchase} className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <Select
-              label="Supplier / Vendor *"
-              value={supplierId}
-              onChange={(e) => setSupplierId(e.target.value)}
-            >
-              {suppliers.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} ({s.city})
-                </option>
-              ))}
-            </Select>
-
+      {!["approvals", "reports", "settings"].includes(tab) && (
+        <>
+          <div className="max-w-sm">
             <Input
-              label="Vendor Bill Number *"
-              value={billNumber}
-              onChange={(e) => setBillNumber(e.target.value)}
-              placeholder="e.g. SREE-2026-904"
-              required
+              placeholder="Search document number..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              prefixIcon={<Search className="w-3.5 h-3.5" />}
             />
           </div>
 
-          <div className="space-y-2">
-            <p className="text-xs font-semibold text-text-primary uppercase tracking-wider font-mono">
-              Add Received Products
-            </p>
-            <div className="grid grid-cols-2 gap-2 max-h-36 overflow-y-auto p-1 bg-surface-secondary border border-border rounded">
-              {products.map((p) => (
-                <button
-                  type="button"
-                  key={p.id}
-                  onClick={() => addItem(p)}
-                  className="flex items-center justify-between p-2 rounded text-left text-xs bg-background border border-border hover:border-accent transition-colors"
-                >
-                  <div className="truncate mr-2">
-                    <p className="font-medium truncate">{p.name}</p>
-                    <p className="text-[10px] text-text-tertiary font-mono">Cost: ₹{p.purchasePrice}</p>
-                  </div>
-                  <span className="font-mono text-accent shrink-0">+ Add</span>
-                </button>
+          {loading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-9 w-full" />
+              <Skeleton className="h-12 w-full" />
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Document</TableHead>
+                  <TableHead>Supplier</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                  <TableHead className="text-center">Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.length === 0 ? (
+                  <TableEmptyState message={`No ${tab} records found.`} />
+                ) : (
+                  rows.map((row) => (
+                    <TableRow key={row.id}>
+                      <TableCell className="font-mono text-accent font-semibold">
+                        {row.invoiceNumber ||
+                          row.orderNumber ||
+                          row.grnNumber ||
+                          row.requestNumber ||
+                          row.returnNumber ||
+                          row.paymentNumber}
+                        {row.supplierBillNumber && (
+                          <div className="text-[10px] text-text-tertiary">
+                            Bill: {row.supplierBillNumber}
+                          </div>
+                        )}
+                        {row.mode && (
+                          <Badge
+                            size="sm"
+                            variant="neutral"
+                            className="ml-1.5 text-[9px]"
+                          >
+                            {row.mode}
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="font-medium text-text-primary">
+                        {row.supplier?.name || row.department || "—"}
+                      </TableCell>
+                      <TableCell className="text-xs text-text-secondary">
+                        {new Date(
+                          row.invoiceDate ||
+                            row.orderDate ||
+                            row.grnDate ||
+                            row.requestDate ||
+                            row.returnDate ||
+                            row.paymentDate,
+                        ).toLocaleDateString()}
+                      </TableCell>
+                      <TableCell className="text-right font-mono font-semibold">
+                        ₹{" "}
+                        {Number(
+                          row.grandTotal ?? row.totalAmount ?? row.amount ?? 0,
+                        ).toFixed(2)}
+                        {row.balanceAmount !== undefined &&
+                          Number(row.balanceAmount) > 0 && (
+                            <div className="text-[10px] text-warning font-normal">
+                              Bal: ₹{Number(row.balanceAmount).toFixed(2)}
+                            </div>
+                          )}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {statusBadge(row.status)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          {/* PR Actions */}
+                          {tab === "requests" && row.status === "DRAFT" && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() =>
+                                runAction(
+                                  `/purchases/requests/${row.id}/submit`,
+                                  "PR Submitted",
+                                )
+                              }
+                              icon={<Send className="w-3 h-3" />}
+                            >
+                              Submit
+                            </Button>
+                          )}
+                          {tab === "requests" && row.status === "APPROVED" && (
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              onClick={() =>
+                                openNewDoc("PO", "AGAINST_PO_GRN", {
+                                  purchaseRequestId: row.id,
+                                  supplierId: row.supplierId,
+                                  items: row.items?.map((i: any) => ({
+                                    ...i,
+                                    unitRate: i.preferredRate || 0,
+                                  })),
+                                })
+                              }
+                              icon={<ArrowRight className="w-3 h-3" />}
+                            >
+                              Convert to PO
+                            </Button>
+                          )}
+
+                          {/* PO Actions */}
+                          {tab === "orders" && row.status === "DRAFT" && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() =>
+                                runAction(
+                                  `/purchases/orders/${row.id}/submit`,
+                                  "PO Submitted",
+                                )
+                              }
+                              icon={<Send className="w-3 h-3" />}
+                            >
+                              Submit
+                            </Button>
+                          )}
+                          {tab === "orders" &&
+                            (row.status === "APPROVED" ||
+                              row.status === "PARTIALLY_RECEIVED") && (
+                              <Button
+                                size="sm"
+                                variant="primary"
+                                onClick={() =>
+                                  openNewDoc("GRN", "AGAINST_PO_GRN", {
+                                    purchaseOrderId: row.id,
+                                    supplierId: row.supplierId,
+                                    warehouseId: row.warehouseId,
+                                    items: row.items
+                                      ?.filter(
+                                        (i: any) =>
+                                          Number(i.quantity) >
+                                          Number(i.receivedQuantity),
+                                      )
+                                      .map((i: any) => ({
+                                        variantId: i.variantId,
+                                        purchaseOrderItemId: i.id,
+                                        quantity:
+                                          Number(i.quantity) -
+                                          Number(i.receivedQuantity),
+                                        unitRate: i.unitRate,
+                                      })),
+                                  })
+                                }
+                                icon={<ArrowRight className="w-3 h-3" />}
+                              >
+                                Create GRN
+                              </Button>
+                            )}
+
+                          {/* GRN Actions */}
+                          {tab === "grns" && row.status === "DRAFT" && (
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              onClick={() =>
+                                runAction(
+                                  `/purchases/grns/${row.id}/post`,
+                                  "GRN Posted",
+                                )
+                              }
+                              icon={<CheckCircle2 className="w-3 h-3" />}
+                            >
+                              Post GRN
+                            </Button>
+                          )}
+                          {tab === "grns" && row.status === "POSTED" && (
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              onClick={() =>
+                                openNewDoc("INVOICE", "AGAINST_PO_GRN", {
+                                  purchaseOrderId: row.purchaseOrderId,
+                                  grnIds: [row.id],
+                                  supplierId: row.supplierId,
+                                  warehouseId: row.warehouseId,
+                                  items: row.items
+                                    ?.filter(
+                                      (i: any) =>
+                                        Number(i.quantity) >
+                                        Number(i.invoicedQuantity || 0),
+                                    )
+                                    .map((i: any) => ({
+                                      variantId: i.variantId,
+                                      grnItemId: i.id,
+                                      purchaseOrderItemId:
+                                        i.purchaseOrderItemId,
+                                      quantity:
+                                        Number(i.quantity) -
+                                        Number(i.invoicedQuantity || 0),
+                                      unitRate: i.unitCost,
+                                    })),
+                                })
+                              }
+                              icon={<ArrowRight className="w-3 h-3" />}
+                            >
+                              Create Invoice
+                            </Button>
+                          )}
+
+                          {/* Invoice Actions */}
+                          {tab === "invoices" && row.status === "DRAFT" && (
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              onClick={() =>
+                                runAction(
+                                  `/purchases/invoices/${row.id}/post`,
+                                  "Invoice Posted",
+                                )
+                              }
+                              icon={<CheckCircle2 className="w-3 h-3" />}
+                            >
+                              Post
+                            </Button>
+                          )}
+                          {tab === "invoices" &&
+                            (row.status === "APPROVED" ||
+                              row.status === "PARTIALLY_PAID") && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="primary"
+                                  onClick={() => {
+                                    setPayAmount(String(row.balanceAmount));
+                                    setPayModal({
+                                      open: true,
+                                      invoice: row,
+                                      isAdvance: false,
+                                    });
+                                  }}
+                                  icon={<CreditCard className="w-3 h-3" />}
+                                >
+                                  Pay
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() => handleCreateReturn(row)}
+                                  icon={<RotateCcw className="w-3 h-3" />}
+                                >
+                                  Return
+                                </Button>
+                              </>
+                            )}
+
+                          {/* Print */}
+                          {[
+                            "orders",
+                            "grns",
+                            "invoices",
+                            "returns",
+                            "payments",
+                          ].includes(tab) && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() =>
+                                setPrintState({
+                                  open: true,
+                                  type:
+                                    tab === "orders"
+                                      ? "PO"
+                                      : tab === "grns"
+                                        ? "GRN"
+                                        : tab === "invoices"
+                                          ? "INVOICE"
+                                          : tab === "returns"
+                                            ? "RETURN"
+                                            : "PAYMENT",
+                                  id: row.id,
+                                })
+                              }
+                              icon={<Printer className="w-3 h-3" />}
+                            >
+                              Print
+                            </Button>
+                          )}
+
+                          {/* Cancel */}
+                          {["requests", "orders", "grns", "invoices"].includes(
+                            tab,
+                          ) &&
+                            ![
+                              "CANCELLED",
+                              "PAID",
+                              "CONVERTED",
+                              "CLOSED",
+                            ].includes(row.status) && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() =>
+                                  handleCancel(
+                                    `/purchases/${tab}/${row.id}/cancel`,
+                                  )
+                                }
+                                className="text-danger"
+                                icon={<XCircle className="w-3 h-3" />}
+                              >
+                                Cancel
+                              </Button>
+                            )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          )}
+        </>
+      )}
+
+      {/* Document Drawer */}
+      <PurchaseDocumentDrawer
+        isOpen={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        kind={drawerKind}
+        initialMode={drawerMode}
+        prefill={drawerPrefill}
+        suppliers={suppliers}
+        products={products}
+        warehouses={warehouses}
+        branchStateCode={branchStateCode}
+        taxRegime={taxRegime}
+        onSaved={loadTabList}
+      />
+
+      {/* Print Voucher Modal */}
+      <PurchasePrintModal
+        isOpen={printState.open}
+        onClose={() => setPrintState({ ...printState, open: false })}
+        documentType={printState.type}
+        documentId={printState.id}
+      />
+
+      {/* Payment Modal */}
+      <Modal
+        isOpen={payModal.open}
+        onClose={() => setPayModal({ open: false })}
+        title={
+          payModal.isAdvance
+            ? "Record Supplier Advance Payment"
+            : `Pay Invoice ${payModal.invoice?.invoiceNumber}`
+        }
+      >
+        <form onSubmit={handleSavePayment} className="space-y-3">
+          {payModal.isAdvance && (
+            <Select
+              label="Supplier *"
+              value={paySupplierId}
+              onChange={(e) => setPaySupplierId(e.target.value)}
+            >
+              {suppliers.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
               ))}
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <p className="text-xs font-semibold text-text-primary uppercase tracking-wider font-mono">
-              Received Items ({items.length})
-            </p>
-            {items.length === 0 ? (
-              <div className="py-6 text-center text-xs text-text-tertiary border border-dashed border-border rounded">
-                Click items above to add to this purchase bill.
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {items.map((item, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between gap-2 p-2 bg-surface-secondary border border-border rounded text-xs"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-text-primary truncate">{item.name}</p>
-                      <p className="text-[11px] text-text-tertiary font-mono">₹{item.unitPrice} purchase cost</p>
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        type="number"
-                        min="1"
-                        value={item.quantity}
-                        onChange={(e) => updateQuantity(idx, Number(e.target.value))}
-                        className="w-16 h-7 text-center font-mono border border-border rounded bg-background text-xs"
-                      />
-                      <span className="w-20 text-right font-mono font-medium">
-                        ₹{(item.quantity * item.unitPrice).toFixed(2)}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => removeItem(idx)}
-                        className="p-1 text-text-tertiary hover:text-red-500 rounded"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="p-3 bg-surface-secondary border border-border rounded space-y-1.5 text-xs font-mono">
-            <div className="flex justify-between text-text-secondary">
-              <span>Taxable Value:</span>
-              <span>₹ {totalTaxable.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between text-text-secondary">
-              <span>Input Tax Credit (ITC):</span>
-              <span>₹ {totalTax.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between text-base font-semibold text-text-primary pt-1 border-t border-border">
-              <span>Bill Grand Total:</span>
-              <span className="text-accent">₹ {grandTotal.toFixed(2)}</span>
-            </div>
-          </div>
-
-          <div className="pt-2 flex justify-end gap-2">
-            <Button type="button" variant="secondary" onClick={() => setIsDrawerOpen(false)}>
+            </Select>
+          )}
+          <Input
+            label="Amount (₹) *"
+            type="number"
+            step="0.01"
+            value={payAmount}
+            onChange={(e) => setPayAmount(e.target.value)}
+            required
+          />
+          <Select
+            label="Payment Mode"
+            value={payMode}
+            onChange={(e) => setPayMode(e.target.value as any)}
+          >
+            <option value="BANK_TRANSFER">Bank Transfer</option>
+            <option value="CASH">Cash</option>
+            <option value="UPI">UPI</option>
+            <option value="CHEQUE">Cheque</option>
+          </Select>
+          <Input
+            label="Reference / UTR #"
+            value={payRef}
+            onChange={(e) => setPayRef(e.target.value)}
+            placeholder="Optional transaction reference"
+          />
+          <div className="pt-3 flex justify-end gap-2 border-t border-border">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setPayModal({ open: false })}
+            >
               Cancel
             </Button>
-            <Button type="submit" variant="primary" loading={submitting}>
-              Intake Goods & Post Bill
+            <Button type="submit" variant="primary">
+              Post Payment
             </Button>
           </div>
         </form>
-      </Drawer>
+      </Modal>
     </div>
   );
 }

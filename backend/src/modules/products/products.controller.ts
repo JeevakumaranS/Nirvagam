@@ -47,13 +47,27 @@ export class ProductsController {
   @Get('meta/units')
   @RequirePermissions('product:view')
   @ApiOperation({ summary: 'Get measurement units' })
-  async getUnits(@CurrentUser() user: AuthUser) {
-    return this.productsService.getUnits(user.businessId);
+  async getUnits(@CurrentUser() user: AuthUser, @Query('activeOnly') activeOnly?: string) {
+    return this.productsService.getUnits(user.businessId, activeOnly === 'true');
   }
 
   @Post('meta/units')
   @RequirePermissions('product:create')
   async createUnit(@CurrentUser() user: AuthUser, @Body() dto: any) { return this.productsService.createUnit(user.businessId, dto); }
+
+  @Patch('meta/units/:id/toggle')
+  @RequirePermissions('product:edit')
+  @ApiOperation({ summary: 'Enable or disable a measurement unit for the tenant' })
+  async toggleUnit(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: { isActive: boolean }) {
+    return this.productsService.toggleUnit(user.businessId, id, Boolean(dto.isActive));
+  }
+
+  @Delete('meta/units/:id')
+  @RequirePermissions('product:delete')
+  @ApiOperation({ summary: 'Delete a custom measurement unit' })
+  async deleteUnit(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.productsService.deleteUnit(user.businessId, id);
+  }
 
   @Get('meta/tax-rates')
   @RequirePermissions('product:view')

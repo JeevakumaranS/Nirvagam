@@ -56,7 +56,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
         { label: 'Business Profile', href: '/settings/business', icon: Building2 },
         { label: 'Team Members', href: '/settings/users', icon: Users2 },
         { label: 'Roles & Access', href: '/settings/roles', icon: ShieldCheck },
-        { label: 'Customization', href: '/settings/customization', icon: SlidersHorizontal },
+        { label: 'Settings', href: '/settings/customization', icon: SlidersHorizontal },
       ],
     },
   ];

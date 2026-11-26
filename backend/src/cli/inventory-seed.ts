@@ -14,7 +14,7 @@ async function main() {
       const exists = await prisma.product.findFirst({ where: { businessId, sku: item.sku } });
       if (exists) continue;
       const product = await prisma.product.create({ data: { businessId, unitId: unit.id, taxRateId: taxRate.id, name: item.name, sku: item.sku, purchasePrice: item.purchasePrice, mrp: item.retailPrice, retailPrice: item.retailPrice, wholesalePrice: item.retailPrice * 0.9, minStockLevel: 10 } });
-      const variant = await prisma.productVariant.create({ data: { productId: product.id, name: 'Standard', sku: item.sku, purchasePrice: item.purchasePrice, mrp: item.retailPrice } });
+      const variant = await prisma.productVariant.create({ data: { productId: product.id, name: 'Standard', sku: item.sku, purchasePrice: item.purchasePrice, salesPrice: item.retailPrice, mrp: item.retailPrice } });
       await prisma.stockBalance.create({ data: { branchId: branch.id, variantId: variant.id, quantity: item.quantity, averageCost: item.purchasePrice } });
       await prisma.stockMovement.create({ data: { branchId: branch.id, variantId: variant.id, type: 'MANUAL_IN', quantity: item.quantity, unitCost: item.purchasePrice, totalCost: item.quantity * item.purchasePrice, reason: 'Development inventory seed', notes: 'Inventory seed' } });
     }

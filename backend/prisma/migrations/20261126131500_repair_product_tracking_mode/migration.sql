@@ -1,0 +1,2 @@
+ALTER TABLE "products"
+  ADD COLUMN IF NOT EXISTS "tracking_mode" TEXT NOT NULL DEFAULT 'NONE';

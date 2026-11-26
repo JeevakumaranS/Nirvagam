@@ -141,6 +141,7 @@ export class ProductsService {
           sku: dto.sku.trim(),
           barcode: dto.barcode,
           purchasePrice,
+          salesPrice: retailPrice,
           mrp,
         },
       });
@@ -149,17 +150,41 @@ export class ProductsService {
     });
   }
 
-  async getUnits(businessId: string) {
+  async getUnits(businessId: string, activeOnly = false) {
     await this.ensureInventoryMetadata(businessId);
     return this.prisma.unit.findMany({
-      where: { businessId },
-      orderBy: { name: 'asc' },
+      where: { businessId, ...(activeOnly ? { isActive: true } : {}) },
+      orderBy: [{ isSystem: 'desc' }, { symbol: 'asc' }],
     });
   }
 
   async createUnit(businessId: string, dto: any) {
     if (!dto.name?.trim() || !dto.symbol?.trim()) throw new BadRequestException('Unit name and symbol are required');
-    return this.prisma.unit.create({ data: { businessId, name: dto.name.trim(), symbol: dto.symbol.trim().toUpperCase(), decimalPlaces: Number(dto.decimalPlaces || 0), isDefault: Boolean(dto.isDefault) } });
+    return this.prisma.unit.create({
+      data: {
+        businessId,
+        name: dto.name.trim(),
+        symbol: dto.symbol.trim().toUpperCase(),
+        decimalPlaces: Number(dto.decimalPlaces || 0),
+        isDefault: Boolean(dto.isDefault),
+        isActive: true,
+        isSystem: false,
+      },
+    });
+  }
+
+  async toggleUnit(businessId: string, id: string, isActive: boolean) {
+    const existing = await this.prisma.unit.findFirst({ where: { id, businessId } });
+    if (!existing) throw new NotFoundException('Unit not found');
+    return this.prisma.unit.update({ where: { id }, data: { isActive } });
+  }
+
+  async deleteUnit(businessId: string, id: string) {
+    const existing = await this.prisma.unit.findFirst({ where: { id, businessId } });
+    if (!existing) throw new NotFoundException('Unit not found');
+    if (existing.isSystem) throw new BadRequestException('Standard system units cannot be deleted; disable them instead');
+    await this.prisma.unit.delete({ where: { id } });
+    return { deleted: true };
   }
 
   async branches(businessId: string) {
@@ -197,11 +222,21 @@ export class ProductsService {
       this.prisma.taxRate.count({ where: { businessId } }),
     ]);
     if (unitCount === 0) {
-      await this.prisma.unit.createMany({ data: [
-        { businessId, name: 'Pieces', symbol: 'PCS', decimalPlaces: 0, isDefault: true },
-        { businessId, name: 'Meter', symbol: 'MTR', decimalPlaces: 2, isDefault: false },
-        { businessId, name: 'Kilogram', symbol: 'KG', decimalPlaces: 3, isDefault: false },
-      ] });
+      await this.prisma.unit.createMany({
+        data: [
+          { businessId, name: 'Pieces', symbol: 'PCS', decimalPlaces: 0, isDefault: true, isActive: true, isSystem: true },
+          { businessId, name: 'Box', symbol: 'BOX', decimalPlaces: 0, isDefault: false, isActive: true, isSystem: true },
+          { businessId, name: 'Kilograms', symbol: 'KG', decimalPlaces: 3, isDefault: false, isActive: true, isSystem: true },
+          { businessId, name: 'Gram', symbol: 'GRAM', decimalPlaces: 2, isDefault: false, isActive: true, isSystem: true },
+          { businessId, name: 'Litres', symbol: 'LTR', decimalPlaces: 3, isDefault: false, isActive: true, isSystem: true },
+          { businessId, name: 'Millilitres', symbol: 'ML', decimalPlaces: 2, isDefault: false, isActive: true, isSystem: true },
+          { businessId, name: 'Metres', symbol: 'MTR', decimalPlaces: 2, isDefault: false, isActive: true, isSystem: true },
+          { businessId, name: 'Feet', symbol: 'FEET', decimalPlaces: 2, isDefault: false, isActive: true, isSystem: true },
+          { businessId, name: 'Roll', symbol: 'ROLL', decimalPlaces: 0, isDefault: false, isActive: true, isSystem: true },
+          { businessId, name: 'Set', symbol: 'SET', decimalPlaces: 0, isDefault: false, isActive: true, isSystem: true },
+          { businessId, name: 'Pack', symbol: 'PACK', decimalPlaces: 0, isDefault: false, isActive: true, isSystem: true },
+        ],
+      });
     }
     if (taxCount === 0) {
       await this.prisma.taxRate.createMany({ data: [0, 5, 12, 18, 28].map((rate) => ({
@@ -232,6 +267,7 @@ export class ProductsService {
         sku,
         barcode: dto.barcode,
         purchasePrice: dto.purchasePrice,
+        salesPrice: dto.retailPrice,
         mrp: dto.mrp,
       };
       if (Object.values(variantData).some((value) => value !== undefined)) {
