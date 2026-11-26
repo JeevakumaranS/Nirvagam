@@ -47,7 +47,7 @@ export function CommandPalette() {
     { name: 'Dashboard Overview', icon: LayoutDashboard, href: '/dashboard', section: 'Commercial' },
     { name: 'Sales & Billing (GST Invoices)', icon: Receipt, href: '/sales', section: 'Commercial' },
     { name: 'POS Fast Billing Counter', icon: ShoppingCart, href: '/pos', section: 'Commercial' },
-    { name: 'Purchases & Goods Receipts (GRN)', icon: Package, href: '/purchases', section: 'Commercial' },
+    { name: 'Purchase Management', icon: Package, href: '/purchases', section: 'Commercial' },
     { name: 'Inventory & Stock Catalog', icon: Layers, href: '/inventory', section: 'Operations' },
     { name: 'Customers & Vendors Directory', icon: Users2, href: '/partners', section: 'Operations' },
     { name: 'Double-Entry Accounting & Ledger', icon: BookOpen, href: '/accounting', section: 'Operations' },
