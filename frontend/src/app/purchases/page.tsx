@@ -458,7 +458,9 @@ export default function PurchasesPage() {
                               Submit
                             </Button>
                           )}
-                          {tab === "requests" && row.status === "APPROVED" && (
+                          {tab === "requests" &&
+                            row.status === "APPROVED" &&
+                            !row.isConvertedToPo && (
                             <Button
                               size="sm"
                               variant="primary"

@@ -312,7 +312,17 @@ export class ProductsService {
           brand: true,
           variants: {
             include: {
-              stockBalances: { include: { branch: true } },
+              stockBalances: {
+                select: {
+                  id: true,
+                  branchId: true,
+                  variantId: true,
+                  quantity: true,
+                  averageCost: true,
+                  updatedAt: true,
+                  branch: true,
+                },
+              },
             },
           },
         },
@@ -381,11 +391,11 @@ export class ProductsService {
     let taxRateId = dto.taxRateId;
     if (!taxRateId) {
       const defaultTax = await this.prisma.taxRate.findFirst({
-        where: { businessId, isDefault: true },
+        where: { businessId, isDefault: true, isActive: true },
       });
       taxRateId =
         defaultTax?.id ||
-        (await this.prisma.taxRate.findFirst({ where: { businessId } }))?.id;
+        (await this.prisma.taxRate.findFirst({ where: { businessId, isActive: true } }))?.id;
     }
 
     if (!unitId || !taxRateId) {
@@ -395,7 +405,9 @@ export class ProductsService {
     }
     const [unit, taxRate] = await Promise.all([
       this.prisma.unit.findFirst({ where: { id: unitId, businessId } }),
-      this.prisma.taxRate.findFirst({ where: { id: taxRateId, businessId } }),
+      this.prisma.taxRate.findFirst({
+        where: { id: taxRateId, businessId, isActive: true },
+      }),
     ]);
     if (!unit || !taxRate)
       throw new BadRequestException(
@@ -640,12 +652,125 @@ export class ProductsService {
     }));
   }
 
-  async getTaxRates(businessId: string) {
+  async getTaxRates(businessId: string, activeOnly = true) {
     await this.ensureInventoryMetadata(businessId);
     return this.prisma.taxRate.findMany({
-      where: { businessId, isActive: true },
+      where: { businessId, ...(activeOnly ? { isActive: true } : {}) },
       orderBy: { rate: "asc" },
     });
+  }
+
+  async createTaxRate(
+    businessId: string,
+    dto: { name: string; rate: number },
+  ) {
+    const name = dto.name.trim();
+    const rate = Number(dto.rate);
+    if (!name) throw new BadRequestException("Tax name is required");
+    if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
+      throw new BadRequestException("Tax rate must be between 0 and 100");
+    }
+    const duplicate = await this.prisma.taxRate.findFirst({
+      where: { businessId, name },
+    });
+    if (duplicate) throw new ConflictException("A tax rate with this name already exists");
+
+    return this.prisma.taxRate.create({
+      data: {
+        businessId,
+        name,
+        rate,
+        cgstRate: rate / 2,
+        sgstRate: rate / 2,
+        igstRate: rate,
+        isActive: true,
+        isDefault: false,
+      },
+    });
+  }
+
+  async updateTaxRate(
+    businessId: string,
+    id: string,
+    dto: { name?: string; rate?: number },
+  ) {
+    const existing = await this.prisma.taxRate.findFirst({
+      where: { id, businessId },
+    });
+    if (!existing) throw new NotFoundException("Tax rate not found");
+    const name = dto.name?.trim();
+    const rate = dto.rate === undefined ? undefined : Number(dto.rate);
+    if (dto.name !== undefined && !name) {
+      throw new BadRequestException("Tax name is required");
+    }
+    if (rate !== undefined && (!Number.isFinite(rate) || rate < 0 || rate > 100)) {
+      throw new BadRequestException("Tax rate must be between 0 and 100");
+    }
+    if (name && name !== existing.name) {
+      const duplicate = await this.prisma.taxRate.findFirst({
+        where: { businessId, name, id: { not: id } },
+      });
+      if (duplicate) throw new ConflictException("A tax rate with this name already exists");
+    }
+
+    return this.prisma.taxRate.update({
+      where: { id },
+      data: {
+        ...(name !== undefined ? { name } : {}),
+        ...(rate !== undefined
+          ? {
+              rate,
+              cgstRate: rate / 2,
+              sgstRate: rate / 2,
+              igstRate: rate,
+            }
+          : {}),
+      },
+    });
+  }
+
+  async toggleTaxRate(businessId: string, id: string, isActive: boolean) {
+    const existing = await this.prisma.taxRate.findFirst({
+      where: { id, businessId },
+    });
+    if (!existing) throw new NotFoundException("Tax rate not found");
+    if (existing.isActive && !isActive) {
+      const activeCount = await this.prisma.taxRate.count({
+        where: { businessId, isActive: true },
+      });
+      if (activeCount <= 1) {
+        throw new ConflictException("At least one tax rate must remain active");
+      }
+    }
+    return this.prisma.taxRate.update({
+      where: { id },
+      data: { isActive },
+    });
+  }
+
+  async deleteTaxRate(businessId: string, id: string) {
+    const existing = await this.prisma.taxRate.findFirst({
+      where: { id, businessId },
+    });
+    if (!existing) throw new NotFoundException("Tax rate not found");
+    const productCount = await this.prisma.product.count({
+      where: { businessId, taxRateId: id },
+    });
+    if (productCount > 0) {
+      throw new ConflictException(
+        "This tax rate is assigned to existing products and cannot be deleted",
+      );
+    }
+    if (existing.isActive) {
+      const activeCount = await this.prisma.taxRate.count({
+        where: { businessId, isActive: true },
+      });
+      if (activeCount <= 1) {
+        throw new ConflictException("At least one tax rate must remain active");
+      }
+    }
+    await this.prisma.taxRate.delete({ where: { id } });
+    return { deleted: true };
   }
 
   /** Makes the inventory form usable for businesses created before inventory defaults existed. */
@@ -719,7 +844,7 @@ export class ProductsService {
     }
     if (dto.taxRateId) {
       const taxRate = await this.prisma.taxRate.findFirst({
-        where: { id: dto.taxRateId, businessId },
+        where: { id: dto.taxRateId, businessId, isActive: true },
       });
       if (!taxRate)
         throw new BadRequestException(

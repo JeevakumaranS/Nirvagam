@@ -167,7 +167,7 @@ export class PurchaseCoreService {
         businessId,
         startDate: { lte: date },
         endDate: { gte: date },
-        isClosed: true,
+        isLocked: true,
       },
     });
     if (closed) {
@@ -259,6 +259,7 @@ export class PurchaseCoreService {
     tx: any,
     params: {
       branchId: string;
+      warehouseId?: string;
       variantId: string;
       quantity: number;
       landedUnitCost: number;
@@ -275,6 +276,7 @@ export class PurchaseCoreService {
   ) {
     const existing = await tx.stockBalance.findUnique({
       where: { branchId_variantId: { branchId: params.branchId, variantId: params.variantId } },
+      select: { id: true, quantity: true, averageCost: true },
     });
 
     const oldQty = Number(existing?.quantity || 0);
@@ -301,6 +303,7 @@ export class PurchaseCoreService {
         quantity: newQty.toFixed(2),
         averageCost: nextAvgCost.toFixed(2),
       },
+      select: { id: true },
     });
 
     await tx.stockMovement.create({
@@ -316,11 +319,9 @@ export class PurchaseCoreService {
         referenceDocumentType: params.referenceDocumentType,
         idempotencyKey: params.idempotencyKey,
         performedById: params.performedById || null,
-        batchNumber: params.batchNumber || null,
-        serialNumber: params.serialNumber || null,
-        expiryDate: params.expiryDate || null,
         notes: params.notes,
       },
+      select: { id: true },
     });
   }
 
@@ -332,6 +333,7 @@ export class PurchaseCoreService {
     tx: any,
     params: {
       branchId: string;
+      warehouseId?: string;
       variantId: string;
       quantity: number;
       unitCost: number;
@@ -347,6 +349,7 @@ export class PurchaseCoreService {
   ): Promise<number> {
     const balance = await tx.stockBalance.findUnique({
       where: { branchId_variantId: { branchId: params.branchId, variantId: params.variantId } },
+      select: { id: true, quantity: true, averageCost: true },
     });
 
     const currentQty = Number(balance?.quantity || 0);
@@ -367,6 +370,7 @@ export class PurchaseCoreService {
           remainingQuantity: { gt: 0 },
         },
         orderBy: { createdAt: 'asc' },
+        select: { id: true, remainingQuantity: true, unitCost: true },
       });
       let remainingToConsume = params.quantity;
       let fifoCost = 0;
@@ -379,6 +383,7 @@ export class PurchaseCoreService {
         await tx.stockMovement.update({
           where: { id: layer.id },
           data: { remainingQuantity: (avail - take).toFixed(3) },
+          select: { id: true },
         });
       }
       if (remainingToConsume > 0) {
@@ -391,6 +396,7 @@ export class PurchaseCoreService {
       await tx.stockBalance.update({
         where: { id: balance.id },
         data: { quantity: (currentQty - params.quantity).toFixed(2) },
+        select: { id: true },
       });
     } else {
       await tx.stockBalance.create({
@@ -400,6 +406,7 @@ export class PurchaseCoreService {
           quantity: (-params.quantity).toFixed(2),
           averageCost: params.unitCost.toFixed(2),
         },
+        select: { id: true },
       });
     }
 
@@ -420,6 +427,7 @@ export class PurchaseCoreService {
         performedById: params.performedById || null,
         notes: params.notes,
       },
+      select: { id: true },
     });
 
     return totalOutCost;

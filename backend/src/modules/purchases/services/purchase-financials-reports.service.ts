@@ -41,7 +41,10 @@ export class PurchaseFinancialsReportsService {
           variantId: query.variantId,
           purchaseInvoice: { businessId: user.businessId, isDeleted: false, status: { not: 'CANCELLED' } },
         },
-        include: { purchaseInvoice: { select: { supplierId: true, invoiceDate: true } } },
+        select: {
+          unitRate: true,
+          purchaseInvoice: { select: { supplierId: true, invoiceDate: true } },
+        },
         orderBy: { purchaseInvoice: { invoiceDate: 'desc' } },
       });
       for (const item of items) {
@@ -462,27 +465,142 @@ export class PurchaseFinancialsReportsService {
     if (documentType === 'PO') {
       doc = await this.prisma.purchaseOrder.findFirst({
         where: { id, businessId: user.businessId },
-        include: { supplier: true, branch: true, charges: true, items: { include: { variant: { include: { product: true } } } } },
+        select: {
+          id: true,
+          orderNumber: true,
+          orderDate: true,
+          status: true,
+          currencyCode: true,
+          taxableAmount: true,
+          totalTax: true,
+          additionalCharges: true,
+          grandTotal: true,
+          supplier: true,
+          branch: true,
+          charges: true,
+          items: {
+            select: {
+              id: true,
+              variantId: true,
+              itemName: true,
+              description: true,
+              quantity: true,
+              unitRate: true,
+              taxRate: true,
+              totalAmount: true,
+              variant: { select: { name: true, product: { select: { name: true } } } },
+            },
+          },
+        },
       });
     } else if (documentType === 'GRN') {
       doc = await this.prisma.grn.findFirst({
         where: { id, businessId: user.businessId },
-        include: { supplier: true, branch: true, purchaseOrder: true, items: { include: { variant: { include: { product: true } } } } },
+        select: {
+          id: true,
+          grnNumber: true,
+          grnDate: true,
+          status: true,
+          totalAmount: true,
+          taxableAmount: true,
+          totalTax: true,
+          grandTotal: true,
+          supplier: true,
+          branch: true,
+          items: {
+            select: {
+              id: true,
+              variantId: true,
+              itemName: true,
+              quantity: true,
+              unitCost: true,
+              taxRate: true,
+              variant: { select: { name: true, product: { select: { name: true } } } },
+            },
+          },
+        },
       });
     } else if (documentType === 'INVOICE') {
       doc = await this.prisma.purchaseInvoice.findFirst({
         where: { id, businessId: user.businessId },
-        include: { supplier: true, branch: true, charges: true, purchaseOrder: true, items: { include: { variant: { include: { product: true } } } } },
+        select: {
+          invoiceNumber: true,
+          supplierBillNumber: true,
+          invoiceDate: true,
+          status: true,
+          mode: true,
+          currencyCode: true,
+          taxableAmount: true,
+          totalTax: true,
+          additionalCharges: true,
+          grandTotal: true,
+          supplier: true,
+          branch: true,
+          charges: true,
+          items: {
+            select: {
+              id: true,
+              variantId: true,
+              itemName: true,
+              description: true,
+              quantity: true,
+              unitRate: true,
+              taxRate: true,
+              totalAmount: true,
+              variant: { select: { name: true, product: { select: { name: true } } } },
+            },
+          },
+        },
       });
     } else if (documentType === 'RETURN') {
       doc = await this.prisma.purchaseReturn.findFirst({
         where: { id, businessId: user.businessId },
-        include: { supplier: true, branch: true, items: { include: { variant: { include: { product: true } } } } },
+        select: {
+          returnNumber: true,
+          returnDate: true,
+          status: true,
+          currencyCode: true,
+          taxableAmount: true,
+          totalTax: true,
+          grandTotal: true,
+          supplier: true,
+          branch: true,
+          items: {
+            select: {
+              id: true,
+              variantId: true,
+              itemName: true,
+              description: true,
+              quantity: true,
+              unitRate: true,
+              taxRate: true,
+              totalAmount: true,
+              variant: { select: { name: true, product: { select: { name: true } } } },
+            },
+          },
+        },
       });
     } else if (documentType === 'PAYMENT') {
       doc = await this.prisma.purchasePayment.findFirst({
         where: { id, businessId: user.businessId },
-        include: { supplier: true, branch: true, allocations: { include: { purchaseInvoice: true } } },
+        select: {
+          paymentNumber: true,
+          paymentDate: true,
+          status: true,
+          currencyCode: true,
+          amount: true,
+          supplier: true,
+          branch: true,
+          allocations: {
+            select: {
+              id: true,
+              amount: true,
+              purchaseInvoice: {
+                select: { invoiceNumber: true, supplierBillNumber: true },
+              },
+            },
+          },
+        },
       });
     }
     if (!doc) throw new NotFoundException(`${documentType} not found`);
