@@ -289,16 +289,13 @@ export class PurchaseProcurementService {
   }
 
   private async createOrderInternal(tx: any, user: any, branchId: string, dto: CreatePurchaseOrderDto) {
-    const [supplier, branch, settings, defaultWarehouse] = await Promise.all([
+    const [supplier, branch, settings] = await Promise.all([
       tx.supplier.findUnique({ where: { id: dto.supplierId } }),
       tx.branch.findUnique({ where: { id: branchId } }),
       this.core.getSettings(user.businessId, tx),
-      tx.warehouse.findFirst({ where: { branchId, isDefault: true } }),
     ]);
     if (!supplier) throw new NotFoundException('Supplier not found');
     if (!branch) throw new NotFoundException('Branch not found');
-    const warehouseId = dto.warehouseId || defaultWarehouse?.id;
-    if (!warehouseId) throw new BadRequestException('A warehouse is required for the purchase order');
 
     const lines: PurchaseCalculationLine[] = dto.items.map((item, idx) => ({
       id: item.variantId || item.itemName || `line-${idx}`,
@@ -339,7 +336,6 @@ export class PurchaseProcurementService {
         expectedDate: dto.expectedDate ? new Date(dto.expectedDate) : null,
         status: 'DRAFT',
         currencyCode: dto.currencyCode || 'INR',
-        warehouseId,
         overReceiptTolerance: String(dto.overReceiptTolerance ?? settings.defaultOverReceiptTolerance ?? 5),
         pricesIncludeTax: dto.pricesIncludeTax === true,
         invoiceDiscountType: dto.invoiceDiscountType || null,
@@ -456,7 +452,6 @@ export class PurchaseProcurementService {
         where: { id },
         data: {
           supplierId: supplier.id,
-          warehouseId: dto.warehouseId || existing.warehouseId,
           orderDate: dto.orderDate ? new Date(dto.orderDate) : existing.orderDate,
           expectedDate: dto.expectedDate ? new Date(dto.expectedDate) : existing.expectedDate,
           overReceiptTolerance: String(dto.overReceiptTolerance ?? existing.overReceiptTolerance),
@@ -646,12 +641,6 @@ export class PurchaseProcurementService {
         }
       }
 
-      const warehouseId =
-        dto.warehouseId ||
-        purchaseOrder?.warehouseId ||
-        (await tx.warehouse.findFirst({ where: { branchId, isDefault: true } }))?.id;
-      if (!warehouseId) throw new BadRequestException('A warehouse is required for GRN');
-
       const grnNumber = dto.grnNumber || (await this.core.nextNumber(tx, user.businessId, branchId, 'GRN'));
       const totalAmount = dto.items.reduce(
         (sum, item) => sum + Number(item.quantity) * Number(item.landedCost ?? item.unitCost ?? 0),
@@ -664,7 +653,6 @@ export class PurchaseProcurementService {
           branchId,
           supplierId: purchaseOrder?.supplierId || dto.supplierId,
           purchaseOrderId: purchaseOrder?.id || null,
-          warehouseId,
           grnNumber,
           grnDate: new Date(dto.grnDate || new Date()),
           status: 'DRAFT',
@@ -720,7 +708,6 @@ export class PurchaseProcurementService {
       return tx.grn.update({
         where: { id },
         data: {
-          warehouseId: dto.warehouseId || existing.warehouseId,
           grnDate: dto.grnDate ? new Date(dto.grnDate) : existing.grnDate,
           totalAmount: totalAmount.toFixed(2),
           notes: dto.notes ?? existing.notes,
@@ -797,7 +784,6 @@ export class PurchaseProcurementService {
       if (item.variantId) {
         await this.core.applyStockIn(tx, {
           branchId: grn.branchId,
-          warehouseId: grn.warehouseId,
           variantId: item.variantId,
           quantity: qty,
           landedUnitCost: unitLanded,
@@ -895,12 +881,8 @@ export class PurchaseProcurementService {
         const settings = await this.core.getSettings(user.businessId, tx);
         for (const item of grn.items) {
           if (item.variantId) {
-            if (!grn.warehouseId) {
-              throw new BadRequestException('A warehouse is required to post GRNs');
-            }
             await this.core.applyStockOut(tx, {
               branchId: grn.branchId,
-              warehouseId: grn.warehouseId,
               variantId: item.variantId,
               quantity: Number(item.quantity),
               unitCost: Number(item.landedCost || item.unitCost || 0),

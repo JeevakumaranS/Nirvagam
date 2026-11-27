@@ -105,11 +105,10 @@ export class PurchaseBillingService {
       });
       if (duplicate) throw new ConflictException(`Duplicate supplier invoice number "${dto.supplierBillNumber}"`);
 
-      const [supplier, branch, settings, defaultWarehouse] = await Promise.all([
+      const [supplier, branch, settings] = await Promise.all([
         tx.supplier.findUnique({ where: { id: dto.supplierId } }),
         tx.branch.findUnique({ where: { id: branchId } }),
         this.core.getSettings(user.businessId, tx),
-        tx.warehouse.findFirst({ where: { branchId, isDefault: true } }),
       ]);
       if (!supplier) throw new NotFoundException('Supplier not found');
       if (!branch) throw new NotFoundException('Branch not found');
@@ -124,10 +123,6 @@ export class PurchaseBillingService {
       }
 
       const mode = dto.mode === 'DIRECT' ? 'DIRECT' : 'AGAINST_PO_GRN';
-      const warehouseId = dto.warehouseId || defaultWarehouse?.id;
-      if (mode === 'DIRECT' && !warehouseId) {
-        throw new BadRequestException('A warehouse is required for Direct Purchase Invoices');
-      }
 
       if (mode === 'AGAINST_PO_GRN') {
         if (!dto.grnIds?.length && !dto.purchaseOrderId) {
@@ -191,7 +186,6 @@ export class PurchaseBillingService {
           mode,
           currencyCode: dto.currencyCode || 'INR',
           status: 'DRAFT',
-          warehouseId: mode === 'DIRECT' ? warehouseId : warehouseId || null,
           pricesIncludeTax: dto.pricesIncludeTax === true,
           invoiceDiscountType: dto.invoiceDiscountType || null,
           invoiceDiscountValue: String(dto.invoiceDiscountValue || 0),
@@ -501,7 +495,6 @@ export class PurchaseBillingService {
         if (item.variantId) {
           await this.core.applyStockIn(tx, {
             branchId: invoice.branchId,
-            warehouseId: invoice.warehouseId!,
             variantId: item.variantId,
             quantity: Number(item.quantity),
             landedUnitCost: Number(item.landedCost),
@@ -584,12 +577,11 @@ export class PurchaseBillingService {
 
       if (invoice.postedAt) {
         const settings = await this.core.getSettings(user.businessId, tx);
-        if (invoice.mode === 'DIRECT' && invoice.warehouseId) {
+        if (invoice.mode === 'DIRECT') {
           for (const item of invoice.items) {
             if (item.variantId) {
               await this.core.applyStockOut(tx, {
                 branchId: invoice.branchId,
-                warehouseId: invoice.warehouseId,
                 variantId: item.variantId,
                 quantity: Number(item.quantity),
                 unitCost: Number(item.landedCost),
@@ -688,7 +680,7 @@ export class PurchaseBillingService {
     const branchId = this.core.requireBranch(user);
     return this.prisma.$transaction(async (tx) => {
       const invoice = await tx.purchaseInvoice.findFirst({
-        where: { id: dto.purchaseInvoiceId, businessId: user.businessId, isDeleted: false },
+        where: { id: dto.purchaseInvoiceId, businessId: user.businessId, branchId, isDeleted: false },
         include: { items: true, supplier: true, branch: true },
       });
       if (!invoice) throw new NotFoundException('Original purchase invoice not found');
@@ -697,11 +689,6 @@ export class PurchaseBillingService {
       }
 
       const settings = await this.core.getSettings(user.businessId, tx);
-      const warehouseId =
-        dto.warehouseId ||
-        invoice.warehouseId ||
-        (await tx.warehouse.findFirst({ where: { branchId, isDefault: true } }))?.id;
-      if (!warehouseId) throw new BadRequestException('A warehouse is required for purchase return');
 
       const lines: PurchaseCalculationLine[] = dto.items.map((item) => {
         const orig = invoice.items.find(
@@ -743,7 +730,6 @@ export class PurchaseBillingService {
           returnDate: new Date(dto.returnDate || new Date()),
           currencyCode: invoice.currencyCode,
           status: 'DRAFT',
-          warehouseId,
           taxableAmount: calc.taxableAmount,
           cgstAmount: calc.cgstAmount,
           sgstAmount: calc.sgstAmount,
@@ -819,12 +805,8 @@ export class PurchaseBillingService {
 
       for (const item of doc.items) {
         if (item.variantId) {
-          if (!doc.warehouseId) {
-            throw new BadRequestException('A warehouse is required to post purchase returns');
-          }
           await this.core.applyStockOut(tx, {
             branchId: doc.branchId,
-            warehouseId: doc.warehouseId,
             variantId: item.variantId,
             quantity: Number(item.quantity),
             unitCost: Number(item.unitRate),

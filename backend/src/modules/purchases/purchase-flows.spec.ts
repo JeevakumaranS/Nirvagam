@@ -20,7 +20,6 @@ describe('Module 3 Purchase Management Integration Flows', () => {
       },
       branch: { id: 'br1', businessId: 'b1', name: 'HQ', stateCode: '33' },
       supplier: { id: 'sup1', businessId: 'b1', name: 'Mill Co', stateCode: '33', creditPeriodDays: 30 },
-      warehouse: { id: 'wh1', branchId: 'br1', isDefault: true },
       accounts: [
         { id: 'coa-ap', code: '2010', businessId: 'b1', isActive: true },
         { id: 'coa-inv', code: '1020', businessId: 'b1', isActive: true },
@@ -68,7 +67,6 @@ describe('Module 3 Purchase Management Integration Flows', () => {
       },
       branch: { findUnique: jest.fn(async () => state.branch) },
       supplier: { findUnique: jest.fn(async () => state.supplier) },
-      warehouse: { findFirst: jest.fn(async () => state.warehouse) },
       approvalRule: { findMany: jest.fn(async () => state.approvalRules), findUnique: jest.fn(async ({ where }: any) => state.approvalRules.find((r: any) => r.id === where.id)) },
       approvalRequest: {
         create: jest.fn(async ({ data }: any) => {
@@ -106,9 +104,9 @@ describe('Module 3 Purchase Management Integration Flows', () => {
         }),
       },
       stockBalance: {
-        findUnique: jest.fn(async ({ where }: any) => state.stockBalances.get(`${where.warehouseId_variantId.warehouseId}:${where.warehouseId_variantId.variantId}`) || null),
+        findUnique: jest.fn(async ({ where }: any) => state.stockBalances.get(`${where.branchId_variantId.branchId}:${where.branchId_variantId.variantId}`) || null),
         upsert: jest.fn(async ({ where, create, update }: any) => {
-          const k = `${where.warehouseId_variantId.warehouseId}:${where.warehouseId_variantId.variantId}`;
+          const k = `${where.branchId_variantId.branchId}:${where.branchId_variantId.variantId}`;
           const cur = state.stockBalances.get(k);
           const next = cur ? { ...cur, ...update } : { id: `sb-${state.seq++}`, ...create };
           state.stockBalances.set(k, next);
@@ -210,7 +208,10 @@ describe('Module 3 Purchase Management Integration Flows', () => {
       },
       purchaseInvoice: {
         findFirst: jest.fn(async ({ where }: any) => {
-          if (where?.id) return state.invoices.get(where.id) || null;
+          if (where?.id) {
+            const invoice = state.invoices.get(where.id);
+            return invoice ? { ...invoice, paymentAllocations: [] } : null;
+          }
           return null;
         }),
         findUnique: jest.fn(async ({ where }: any) => state.invoices.get(where.id) || null),
@@ -220,6 +221,7 @@ describe('Module 3 Purchase Management Integration Flows', () => {
             ...data,
             items: (data.items?.create || []).map((i: any, idx: number) => ({ id: `ii-${idx}`, ...i })),
             allocations: [],
+            paymentAllocations: [],
             supplier: state.supplier,
             branch: state.branch,
             version: 1,
@@ -236,7 +238,9 @@ describe('Module 3 Purchase Management Integration Flows', () => {
       },
       purchaseInvoiceGrn: { count: jest.fn(async () => 0) },
       purchaseReturn: {
-        count: jest.fn(async () => 0),
+        count: jest.fn(async ({ where }: any) => Array.from(state.returns.values()).filter(
+          (ret: any) => ret.purchaseInvoiceId === where.purchaseInvoiceId && ret.status !== 'CANCELLED',
+        ).length),
         create: jest.fn(async ({ data }: any) => {
           const ret = { id: `ret-${state.seq++}`, ...data, items: (data.items?.create || []).map((i: any, idx: number) => ({ id: `ri-${idx}`, ...i })), supplier: state.supplier, version: 1 };
           state.returns.set(ret.id, ret);
@@ -295,7 +299,7 @@ describe('Module 3 Purchase Management Integration Flows', () => {
     });
     expect(grn.status).toBe('POSTED');
     expect(state.pos.get(po.id).status).toBe('PARTIALLY_RECEIVED');
-    expect(state.stockBalances.get('wh1:v1').quantity).toBe('6.00');
+    expect(state.stockBalances.get('br1:v1').quantity).toBe('6.00');
 
     // 4. Partial Invoice against GRN (4 of 6 invoiced) -> Clears GRN Accrual, never double counts stock
     const inv = await billing.createInvoice(user, {
@@ -308,7 +312,7 @@ describe('Module 3 Purchase Management Integration Flows', () => {
       items: [{ variantId: 'v1', grnItemId: grn.items[0].id, purchaseOrderItemId: po.items[0].id, quantity: '4', unitRate: '100', taxRate: '18' }],
     });
     expect(inv.status).toBe('APPROVED');
-    expect(state.stockBalances.get('wh1:v1').quantity).toBe('6.00'); // Still 6!
+    expect(state.stockBalances.get('br1:v1').quantity).toBe('6.00'); // Still 6!
 
     // 5. Partial Payment
     await billing.createPayment(user, {
@@ -332,7 +336,7 @@ describe('Module 3 Purchase Management Integration Flows', () => {
       post: true,
       items: [{ variantId: 'v1', quantity: '5', unitRate: '100', taxRate: '18' }],
     });
-    expect(state.stockBalances.get('wh1:v1').quantity).toBe('5.00');
+    expect(state.stockBalances.get('br1:v1').quantity).toBe('5.00');
 
     // Cannot cancel invoice if return exists; first test return
     const ret = await billing.createReturn(user, {
@@ -342,7 +346,7 @@ describe('Module 3 Purchase Management Integration Flows', () => {
     });
     const postedRet = await billing.postReturn(user, ret.id);
     expect(postedRet.status).toBe('POSTED');
-    expect(state.stockBalances.get('wh1:v1').quantity).toBe('3.00');
+    expect(state.stockBalances.get('br1:v1').quantity).toBe('3.00');
 
     // Verify journal lines for return are balanced (AP debit = Inventory + CGST + SGST credit)
     const retLines = state.journalLines.filter((l: any) => l.journalEntryId === postedRet.journalEntryId);

@@ -12,6 +12,8 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableEmp
 import { useToast } from '@/components/ui/toast';
 import { InvoiceType, PaymentMode, RecurrenceFrequency, calculateGstInvoice } from '@nirvagam/shared';
 import {
+  Camera,
+  ChevronDown,
   CheckCircle,
   Copy,
   CreditCard,
@@ -79,7 +81,6 @@ const paymentDocumentTypes = new Set<InvoiceType>([
 ]);
 
 const today = () => new Date().toISOString().slice(0, 10);
-const defaultDueDate = () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 const normalizeNumericInput = (value: string) => value.replace(/^0+(?=\d)/, '');
 const formatNumericInput = (value: number) => (value === 0 ? '' : String(value));
 const formatItemNumericInput = (value: number) =>
@@ -101,9 +102,12 @@ export default function SalesPage() {
   const [customers, setCustomers] = useState<any[]>([]);
   const [customerOptions, setCustomerOptions] = useState<any[]>([]);
   const [customerSearch, setCustomerSearch] = useState('');
+  const [customerMenuOpen, setCustomerMenuOpen] = useState(false);
   const [customersLoading, setCustomersLoading] = useState(false);
   const [customersError, setCustomersError] = useState<string | null>(null);
   const [products, setProducts] = useState<any[]>([]);
+  const [productSearch, setProductSearch] = useState('');
+  const [productMenuOpen, setProductMenuOpen] = useState(false);
   const [units, setUnits] = useState<any[]>([]);
   const [taxRates, setTaxRates] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -124,12 +128,12 @@ export default function SalesPage() {
   const [customerId, setCustomerId] = useState('');
   const [invoiceType, setInvoiceType] = useState<InvoiceType>(InvoiceType.TAX_INVOICE);
   const [invoiceNumber, setInvoiceNumber] = useState('');
+  const [invoiceTaxRate, setInvoiceTaxRate] = useState('');
   const [relatedInvoiceId, setRelatedInvoiceId] = useState('');
   const [recurrenceFrequency, setRecurrenceFrequency] = useState<RecurrenceFrequency>(
     RecurrenceFrequency.MONTHLY
   );
   const [invoiceDate, setInvoiceDate] = useState(today());
-  const [dueDate, setDueDate] = useState(defaultDueDate());
   const [pricesIncludeTax, setPricesIncludeTax] = useState(false);
   const [invoiceDiscount, setInvoiceDiscount] = useState(0);
   const [invoiceDiscountPercent, setInvoiceDiscountPercent] = useState(0);
@@ -138,8 +142,11 @@ export default function SalesPage() {
   const [invoiceDiscountInputMode, setInvoiceDiscountInputMode] = useState<'amount' | 'percent'>('percent');
   const [additionalCharges, setAdditionalCharges] = useState(0);
   const [additionalChargesInput, setAdditionalChargesInput] = useState('');
-  const [payments, setPayments] = useState<Array<{ amount: number; mode: PaymentMode }>>([]);
-  const [notes, setNotes] = useState('Payment due in 30 days');
+  const [payments, setPayments] = useState<Array<{ amount: number; mode: PaymentMode }>>([
+    { amount: 0, mode: PaymentMode.CASH },
+  ]);
+  const [paymentAmountManuallyChanged, setPaymentAmountManuallyChanged] = useState(false);
+  const [notes, setNotes] = useState('');
   const [terms, setTerms] = useState('');
   const [items, setItems] = useState<
     Array<{
@@ -184,10 +191,6 @@ export default function SalesPage() {
       setUnits(Array.isArray(unitRes) ? unitRes : unitRes?.data || []);
       setTaxRates(Array.isArray(taxRateRes) ? taxRateRes : taxRateRes?.data || []);
       setTaxContext(taxRes?.data || taxRes);
-
-      if (custRes?.data?.[0]?.id && !customerId) {
-        setCustomerId(custRes.data[0].id);
-      }
     } catch (err: any) {
       toast({ type: 'error', title: 'Error', message: err.message });
     } finally {
@@ -283,6 +286,18 @@ export default function SalesPage() {
     }
   };
 
+  const selectCustomer = (customer: any) => {
+    setCustomerId(customer.id);
+    setCustomerSearch('');
+    setCustomerMenuOpen(false);
+  };
+
+  const selectProduct = (product: any) => {
+    addItem(product);
+    setProductSearch('');
+    setProductMenuOpen(false);
+  };
+
   const removeItem = (index: number) => {
     setItems(items.filter((_, idx) => idx !== index));
   };
@@ -363,6 +378,31 @@ export default function SalesPage() {
   };
 
   const selectedCustomer = customers.find((customer) => customer.id === customerId);
+  const customerSearchTerm = customerSearch.trim().toLowerCase();
+  const matchingCustomerOptions = customerSearchTerm
+    ? customerOptions.filter((customer) =>
+        [customer.name, customer.companyName, customer.phone, customer.gstin].some((value) =>
+          String(value || '').toLowerCase().includes(customerSearchTerm)
+        )
+      )
+    : customerOptions;
+  const productSearchTerm = productSearch.trim().toLowerCase();
+  const productOptions = productSearchTerm
+    ? products
+        .filter((product) =>
+          [
+            product.name,
+            product.sku,
+            product.barcode,
+            ...(product.variants || []).flatMap((variant: any) => [
+              variant.name,
+              variant.sku,
+              variant.barcode,
+            ]),
+          ].some((value) => String(value || '').toLowerCase().includes(productSearchTerm))
+        )
+        .slice(0, 20)
+    : [];
   const canChangeItemTax = Boolean(
     user?.permissions.includes('sales_invoice:create') || user?.roles.includes('SUPER_ADMIN')
   );
@@ -378,6 +418,8 @@ export default function SalesPage() {
       const rate = Number(taxRate.value);
       return Number.isFinite(rate) && rate >= 0;
     });
+  const getEffectiveGstRate = (item: (typeof items)[number]) =>
+    invoiceTaxRate === '' ? item.gstRate : Number(invoiceTaxRate);
   const previewSellerRegistered =
     taxContext.registered &&
     invoiceType !== InvoiceType.BILL_OF_SUPPLY &&
@@ -386,8 +428,8 @@ export default function SalesPage() {
     const lineAmount = Math.max(0, item.quantity * item.unitPrice - item.discountAmount);
     return (
       total +
-      (pricesIncludeTax && previewSellerRegistered && item.gstRate > 0
-        ? lineAmount / (1 + item.gstRate / 100)
+      (pricesIncludeTax && previewSellerRegistered && getEffectiveGstRate(item) > 0
+        ? lineAmount / (1 + getEffectiveGstRate(item) / 100)
         : lineAmount)
     );
   }, 0);
@@ -431,7 +473,7 @@ export default function SalesPage() {
       quantity: item.quantity,
       unitPrice: item.unitPrice,
       discountAmount: item.discountAmount,
-      gstRate: item.gstRate,
+      gstRate: getEffectiveGstRate(item),
     })),
     appliedInvoiceDiscount,
     {
@@ -450,6 +492,32 @@ export default function SalesPage() {
     : 0;
   const outstandingAmount = Math.max(0, grandTotal - paidAmount);
   const hasExcessivePayment = paidAmount > grandTotal;
+
+  useEffect(() => {
+    if (!paymentDocumentTypes.has(invoiceType) || paymentAmountManuallyChanged) return;
+
+    const amount = Math.max(0, grandTotal);
+    setPayments((currentPayments) => {
+      const currentPayment = currentPayments[0] || { amount: 0, mode: PaymentMode.CASH };
+      if (currentPayments.length === 1 && currentPayment.amount === amount) {
+        return currentPayments;
+      }
+      return [{ ...currentPayment, amount }];
+    });
+  }, [grandTotal, invoiceType, paymentAmountManuallyChanged]);
+
+  const gstBreakdown = Array.from(
+    gstCalculation.items.reduce(
+      (rates, item) => {
+        const breakdown = rates.get(item.gstRate) || { taxableValue: 0, taxAmount: 0 };
+        breakdown.taxableValue += item.taxableValue;
+        breakdown.taxAmount += item.cgstAmount + item.sgstAmount + item.igstAmount;
+        rates.set(item.gstRate, breakdown);
+        return rates;
+      },
+      new Map<number, { taxableValue: number; taxAmount: number }>()
+    )
+  ).sort(([firstRate], [secondRate]) => firstRate - secondRate);
 
   const scanBarcode = () => {
     const code = barcodeInput.trim().toLowerCase();
@@ -476,6 +544,7 @@ export default function SalesPage() {
 
   const handleRelatedInvoiceSelect = async (id: string) => {
     setRelatedInvoiceId(id);
+    setInvoiceTaxRate('');
     if (!id) return;
     try {
       const response = await apiFetch(`/sales/invoices/${id}`);
@@ -552,7 +621,6 @@ export default function SalesPage() {
           recurrenceFrequency:
             invoiceType === InvoiceType.RECURRING_INVOICE ? recurrenceFrequency : undefined,
           invoiceDate,
-          dueDate,
           pricesIncludeTax,
           placeOfSupplyCode:
             selectedCustomer?.shippingStateCode || selectedCustomer?.billingStateCode,
@@ -567,7 +635,7 @@ export default function SalesPage() {
             variantId: i.variantId,
             quantity: i.quantity,
             unitPrice: i.unitPrice,
-            gstRate: i.gstRate,
+            gstRate: getEffectiveGstRate(i),
             discountAmount: i.discountAmount,
             unitName: i.unitName,
           })),
@@ -583,7 +651,13 @@ export default function SalesPage() {
       });
       setIsDrawerOpen(false);
       setItems([]);
-      setPayments([]);
+      setPayments([{ amount: 0, mode: PaymentMode.CASH }]);
+      setPaymentAmountManuallyChanged(false);
+      setCustomerId('');
+      setCustomerSearch('');
+      setCustomerMenuOpen(false);
+      setProductSearch('');
+      setProductMenuOpen(false);
       setInvoiceNumber('');
       loadData();
     } catch (err: any) {
@@ -669,8 +743,8 @@ export default function SalesPage() {
       );
       setRelatedInvoiceId('');
       setInvoiceNumber('');
+      setInvoiceTaxRate('');
       setInvoiceDate(today());
-      setDueDate(defaultDueDate());
       setPricesIncludeTax(Boolean(originalInvoice.pricesIncludeTax));
       const duplicatedDiscount = Math.max(0, Number(originalInvoice.discountAmount || 0));
       setInvoiceDiscount(duplicatedDiscount);
@@ -690,7 +764,8 @@ export default function SalesPage() {
       setRecurrenceFrequency(
         originalInvoice.recurrenceFrequency || RecurrenceFrequency.MONTHLY
       );
-      setPayments([]);
+      setPayments([{ amount: 0, mode: PaymentMode.CASH }]);
+      setPaymentAmountManuallyChanged(false);
       setNotes(originalInvoice.notes || '');
       setTerms(originalInvoice.terms || '');
       setItems(
@@ -740,13 +815,17 @@ export default function SalesPage() {
   );
 
   const openNewInvoice = () => {
+    setCustomerId('');
     setCustomerSearch('');
+    setCustomerMenuOpen(false);
+    setProductSearch('');
+    setProductMenuOpen(false);
     setInvoiceType(InvoiceType.TAX_INVOICE);
     setInvoiceNumber('');
+    setInvoiceTaxRate('');
     setRelatedInvoiceId('');
     setRecurrenceFrequency(RecurrenceFrequency.MONTHLY);
     setInvoiceDate(today());
-    setDueDate(defaultDueDate());
     setPricesIncludeTax(false);
     setInvoiceDiscount(0);
     setInvoiceDiscountPercent(0);
@@ -755,8 +834,9 @@ export default function SalesPage() {
     setInvoiceDiscountInputMode('percent');
     setAdditionalCharges(0);
     setAdditionalChargesInput('');
-    setPayments([]);
-    setNotes('Payment due in 30 days');
+    setPayments([{ amount: 0, mode: PaymentMode.CASH }]);
+    setPaymentAmountManuallyChanged(false);
+    setNotes('');
     setTerms('');
     setItems([]);
     setIsDrawerOpen(true);
@@ -931,7 +1011,7 @@ export default function SalesPage() {
         onClose={() => setIsDrawerOpen(false)}
         title="Create Sales & Billing Document"
         description="Select a document type, customer, items, tax treatment, and payments."
-        maxWidth="2xl"
+        maxWidth="3xl"
       >
         <form
           onSubmit={handleCreateInvoice}
@@ -989,113 +1069,188 @@ export default function SalesPage() {
             />
           )}
 
-          <div className="grid grid-cols-2 gap-3">
-            <Input
-              label="Document Date"
-              type="date"
-              value={invoiceDate}
-              onChange={(e) => setInvoiceDate(e.target.value)}
-              required
-            />
-            <Input
-              label="Due Date"
-              type="date"
-              value={dueDate}
-              onChange={(e) => setDueDate(e.target.value)}
-              required
-            />
-          </div>
+          <Input
+            label="Document Date"
+            type="date"
+            value={invoiceDate}
+            onChange={(e) => setInvoiceDate(e.target.value)}
+            required
+          />
 
-          <div className="space-y-2">
+          <div className="relative">
             <Input
-              label="Search Customers"
-              placeholder="Search by name, company, phone, or GSTIN"
-              value={customerSearch}
-              onChange={(e) => setCustomerSearch(e.target.value)}
-            />
-            {customersLoading && (
-              <p role="status" className="text-xs text-text-tertiary">
-                Loading customers...
-              </p>
-            )}
-            {customersError && (
-              <p role="alert" className="text-xs text-danger">
-                Unable to load customers: {customersError}
-              </p>
-            )}
-            {!customersLoading && !customersError && customerOptions.length === 0 && (
-              <p className="text-xs text-text-tertiary">
-                {customerSearch.trim()
-                  ? 'No customers match your search.'
-                  : 'No customers have been added yet.'}
-              </p>
-            )}
-            <Select
               label="Bill To Customer *"
-              value={customerId}
-              onChange={(e) => setCustomerId(e.target.value)}
-              required
-            >
-              <option value="">Select a customer</option>
-              {selectedCustomer &&
-                !customerOptions.some((customer) => customer.id === selectedCustomer.id) && (
-                  <option key={selectedCustomer.id} value={selectedCustomer.id}>
-                    {selectedCustomer.name} · {selectedCustomer.phone}
-                    {selectedCustomer.gstin ? ` · ${selectedCustomer.gstin}` : ''}
-                  </option>
+              placeholder="Search customers by name, company, phone, or GSTIN"
+              value={customerSearch || (!customerMenuOpen ? selectedCustomer?.name || '' : '')}
+              onFocus={() => {
+                setCustomerSearch('');
+                setCustomerMenuOpen(true);
+              }}
+              onBlur={() => setCustomerMenuOpen(false)}
+              onChange={(e) => {
+                setCustomerSearch(e.target.value);
+                setCustomerId('');
+                setCustomerMenuOpen(true);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && customerMenuOpen) {
+                  e.preventDefault();
+                  if (matchingCustomerOptions[0]) selectCustomer(matchingCustomerOptions[0]);
+                }
+              }}
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={customerMenuOpen}
+              aria-controls="sales-customer-options"
+              required={!customerId}
+            />
+            {customerMenuOpen && (
+              <div
+                id="sales-customer-options"
+                role="listbox"
+                className="absolute left-0 right-0 top-full z-30 mt-1 max-h-56 overflow-y-auto rounded-md border border-border bg-surface shadow-lg"
+              >
+                {customersLoading ? (
+                  <p role="status" className="px-3 py-2 text-xs text-text-tertiary">
+                    Loading customers...
+                  </p>
+                ) : customersError ? (
+                  <p role="alert" className="px-3 py-2 text-xs text-danger">
+                    Unable to load customers: {customersError}
+                  </p>
+                ) : matchingCustomerOptions.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-text-tertiary">
+                    {customerSearch.trim()
+                      ? 'No customers match your search.'
+                      : 'No customers have been added yet.'}
+                  </p>
+                ) : (
+                  matchingCustomerOptions.map((customer) => (
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={customer.id === customerId}
+                      key={customer.id}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => selectCustomer(customer)}
+                      className="block w-full border-b border-border/60 px-3 py-2 text-left last:border-0 hover:bg-surface-secondary"
+                    >
+                      <span className="block text-xs font-medium text-text-primary">
+                        {customer.name}
+                        {customer.companyName ? ` · ${customer.companyName}` : ''}
+                      </span>
+                      <span className="block text-[10px] text-text-tertiary">
+                        {[customer.phone, customer.gstin].filter(Boolean).join(' · ') ||
+                          'No contact/GSTIN'}
+                      </span>
+                    </button>
+                  ))
                 )}
-              {customerOptions.map((customer) => (
-                <option key={customer.id} value={customer.id}>
-                  {customer.name}
-                  {customer.companyName ? ` · ${customer.companyName}` : ''}
-                  {customer.phone ? ` · ${customer.phone}` : ''}
-                  {customer.gstin ? ` · ${customer.gstin}` : ''}
-                  {' - Bal: ₹'}
-                  {Number(customer.outstandingBalance || 0).toFixed(2)}
-                </option>
-              ))}
-            </Select>
+              </div>
+            )}
           </div>
 
           {/* Catalog Item Picker */}
           <div className="space-y-2">
             <p className="text-xs font-semibold text-text-primary uppercase tracking-wider font-mono">
-              Quick Add From Catalog
+              Add Products
             </p>
             <div className="flex items-end gap-2">
-              <Input
-                label="Barcode / SKU"
-                value={barcodeInput}
-                onChange={(e) => setBarcodeInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    scanBarcode();
-                  }
-                }}
-                placeholder="Scan or enter product code"
-              />
-              <Button type="button" size="sm" variant="secondary" onClick={scanBarcode}>
-                Add
-              </Button>
-            </div>
-            <div className="grid grid-cols-2 gap-2 max-h-36 overflow-y-auto p-1 bg-surface-secondary border border-border rounded">
-              {products.map((p) => (
-                <button
-                  type="button"
-                  key={p.id}
-                  onClick={() => addItem(p)}
-                  className="flex items-center justify-between p-2 rounded text-left text-xs bg-background border border-border hover:border-accent transition-colors"
-                >
-                  <div className="truncate mr-2">
-                    <p className="font-medium truncate">{p.name}</p>
-                    <p className="text-[10px] text-text-tertiary font-mono">
-                      {p.unit?.symbol || 'Unit'} · Stock: {p.totalStock}
-                    </p>
+              <div className="relative flex-1">
+                <Input
+                  label="Product"
+                  placeholder="Search products by name, SKU, or barcode"
+                  value={productSearch}
+                  onFocus={() => setProductMenuOpen(true)}
+                  onBlur={() => setProductMenuOpen(false)}
+                  onChange={(e) => {
+                    setProductSearch(e.target.value);
+                    setProductMenuOpen(true);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && productMenuOpen) {
+                      e.preventDefault();
+                      if (productOptions[0]) selectProduct(productOptions[0]);
+                    }
+                  }}
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded={productMenuOpen && productSearchTerm.length > 0}
+                  aria-controls="sales-product-options"
+                />
+                {productMenuOpen && productSearchTerm && (
+                  <div
+                    id="sales-product-options"
+                    role="listbox"
+                    className="absolute left-0 right-0 top-full z-30 mt-1 max-h-56 overflow-y-auto rounded-md border border-border bg-surface shadow-lg"
+                  >
+                    {productOptions.length === 0 ? (
+                      <p className="px-3 py-2 text-xs text-text-tertiary">
+                        No products match your search.
+                      </p>
+                    ) : (
+                      productOptions.map((product) => (
+                        <button
+                          type="button"
+                          role="option"
+                          key={product.id}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => selectProduct(product)}
+                          className="flex w-full items-center justify-between gap-3 border-b border-border/60 px-3 py-2 text-left last:border-0 hover:bg-surface-secondary"
+                        >
+                          <span className="min-w-0">
+                            <span className="block truncate text-xs font-medium text-text-primary">
+                              {product.name}
+                            </span>
+                            <span className="block truncate text-[10px] text-text-tertiary">
+                              {[product.sku || product.variants?.[0]?.sku, product.unit?.symbol]
+                                .filter(Boolean)
+                                .concat(
+                                  product.taxRate?.rate !== undefined &&
+                                    product.taxRate?.rate !== null
+                                    ? `GST ${Number(product.taxRate.rate)}%`
+                                    : 'GST not configured'
+                                )
+                                .join(' · ')}
+                            </span>
+                          </span>
+                          <span className="shrink-0 text-[10px] font-mono text-text-secondary">
+                            Stock: {product.totalStock ?? 0}
+                          </span>
+                          <span className="shrink-0 text-xs font-mono text-accent">
+                            ₹{getProductUnitPrice(product)}
+                          </span>
+                        </button>
+                      ))
+                    )}
                   </div>
-                  <span className="font-mono text-accent shrink-0">₹{getProductUnitPrice(p)}</span>
-                </button>
-              ))}
+                )}
+              </div>
+              <div className="flex-1">
+                <Input
+                  label="Barcode / SKU"
+                  value={barcodeInput}
+                  onChange={(e) => setBarcodeInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      scanBarcode();
+                    }
+                  }}
+                  placeholder="Scan or enter code"
+                />
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={scanBarcode}
+                className="h-8 w-8 shrink-0 !px-0"
+                title="Add scanned product"
+                aria-label="Add scanned product"
+                icon={<Camera className="h-4 w-4" />}
+              >
+                <span className="sr-only">Add scanned product</span>
+              </Button>
             </div>
           </div>
 
@@ -1130,20 +1285,25 @@ export default function SalesPage() {
                           <p className="min-w-0 font-medium text-text-primary truncate">{item.name}</p>
                           <Select
                             aria-label={`GST rate for ${item.name}`}
-                            value={String(item.gstRate)}
+                            value={String(getEffectiveGstRate(item))}
                             onChange={(e) => updateItemTaxRate(idx, Number(e.target.value))}
                             options={[
                               ...(!taxRateOptions.some(
-                                (taxRate) => Number(taxRate.value) === item.gstRate
+                                (taxRate) =>
+                                  Number(taxRate.value) === getEffectiveGstRate(item)
                               )
                                 ? [{
-                                    value: String(item.gstRate),
-                                    label: `${item.gstRate}% (product rate)`,
+                                    value: String(getEffectiveGstRate(item)),
+                                    label: `${getEffectiveGstRate(item)}% (product rate)`,
                                   }]
                                 : []),
                               ...taxRateOptions,
                             ]}
-                            disabled={!canChangeItemTax || taxRateOptions.length === 0}
+                            disabled={
+                              !canChangeItemTax ||
+                              taxRateOptions.length === 0 ||
+                              invoiceTaxRate !== ''
+                            }
                             className="min-w-0 px-1 pr-5"
                           />
                           <Select
@@ -1297,35 +1457,56 @@ export default function SalesPage() {
               <span>₹ {totalDiscount.toFixed(2)}</span>
             </div>
             <div className="flex justify-between text-text-secondary">
-              <span>Taxable Value:</span>
+              <span>Taxable Amount:</span>
               <span>₹ {totalTaxable.toFixed(2)}</span>
             </div>
             <div className="flex justify-between text-text-secondary">
-              <span>CGST:</span>
-              <span>₹ {totalCgst.toFixed(2)}</span>
+              <span>Tax (GST CGST+SGST):</span>
+              <span>₹ {totalTax.toFixed(2)}</span>
             </div>
-            <div className="flex justify-between text-text-secondary">
-              <span>SGST:</span>
-              <span>₹ {totalSgst.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between text-text-secondary">
-              <span>IGST:</span>
-              <span>₹ {totalIgst.toFixed(2)}</span>
-            </div>
+            <details open className="space-y-1">
+              <summary className="flex cursor-pointer list-none items-center gap-1 text-text-secondary">
+                <ChevronDown className="h-3 w-3" />
+                Tax breakdown
+              </summary>
+              <div className="ml-3 space-y-1 border-l border-border pl-2">
+                {gstCalculation.isInterState ? (
+                  <div className="flex justify-between text-text-secondary">
+                    <span>IGST:</span>
+                    <span>₹ {totalIgst.toFixed(2)}</span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex justify-between text-text-secondary">
+                      <span>CGST:</span>
+                      <span>₹ {totalCgst.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-text-secondary">
+                      <span>SGST:</span>
+                      <span>₹ {totalSgst.toFixed(2)}</span>
+                    </div>
+                  </>
+                )}
+                {gstBreakdown.map(([rate, breakdown]) => (
+                  <div key={rate} className="flex justify-between gap-2 text-text-secondary">
+                    <span>
+                      GST {rate}% — taxable ₹{breakdown.taxableValue.toFixed(2)}:
+                    </span>
+                    <span>₹ {breakdown.taxAmount.toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
             <div className="flex justify-between text-text-secondary">
               <span>Other Charges:</span>
               <span>₹ {additionalCharges.toFixed(2)}</span>
             </div>
             <div className="flex justify-between text-text-secondary">
-              <span>Total GST:</span>
-              <span>₹ {totalTax.toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between text-text-secondary">
-              <span>Round-off:</span>
+              <span>Round Off (Auto):</span>
               <span>₹ {roundOffAmount.toFixed(2)}</span>
             </div>
             <div className="flex justify-between text-base font-semibold text-text-primary pt-1 border-t border-border">
-              <span>Invoice Total:</span>
+              <span>Grand Total:</span>
               <span className="text-accent">₹ {grandTotal.toFixed(2)}</span>
             </div>
             <div className="flex justify-between text-text-secondary">
@@ -1345,55 +1526,47 @@ export default function SalesPage() {
 
           {paymentDocumentTypes.has(invoiceType) && (
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
               <p className="text-xs font-semibold text-text-primary uppercase tracking-wider font-mono">
-                Initial Payments
+                Initial Payment & Credit
               </p>
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                onClick={() => setPayments([...payments, { amount: 0, mode: PaymentMode.CASH }])}
-              >
-                Add Payment
-              </Button>
+              {payments.map((payment, index) => (
+                <div key={index} className="grid grid-cols-3 items-end gap-2">
+                  <Select
+                    label="Payment Mode"
+                    value={payment.mode}
+                    onChange={(e) => {
+                      const copy = [...payments];
+                      copy[index].mode = e.target.value as PaymentMode;
+                      setPayments(copy);
+                    }}
+                    options={paymentModeOptions}
+                  />
+                  <Input
+                    label="Amount Received"
+                    type="number"
+                    min="0"
+                    max={Math.max(0, grandTotal)}
+                    step="0.01"
+                    value={payment.amount}
+                    onChange={(e) => {
+                      const copy = [...payments];
+                      copy[index].amount = Math.max(0, Number(e.target.value));
+                      setPayments(copy);
+                      setPaymentAmountManuallyChanged(true);
+                    }}
+                  />
+                  <Input
+                    label="Credit Amount"
+                    type="number"
+                    min="0"
+                    max={Math.max(0, grandTotal)}
+                    step="0.01"
+                    value={outstandingAmount.toFixed(2)}
+                    readOnly
+                  />
+                </div>
+              ))}
             </div>
-            {payments.map((payment, index) => (
-              <div key={index} className="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
-                <Select
-                  label="Mode"
-                  value={payment.mode}
-                  onChange={(e) => {
-                    const copy = [...payments];
-                    copy[index].mode = e.target.value as PaymentMode;
-                    setPayments(copy);
-                  }}
-                  options={paymentModeOptions}
-                />
-                <Input
-                  label="Amount"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={payment.amount}
-                  onChange={(e) => {
-                    const copy = [...payments];
-                    copy[index].amount = Math.max(0, Number(e.target.value));
-                    setPayments(copy);
-                  }}
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setPayments(payments.filter((_, itemIndex) => itemIndex !== index))}
-                  title="Remove payment"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </Button>
-              </div>
-            ))}
-          </div>
           )}
 
           <Input label="Invoice Notes / Terms" value={notes} onChange={(e) => setNotes(e.target.value)} />

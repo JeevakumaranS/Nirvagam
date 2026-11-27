@@ -450,39 +450,31 @@ export class ProductsService {
         });
       }
 
-      // If opening stock provided, allocate to default warehouse
+      // Record opening stock against the active branch.
       if (dto.openingStock && dto.openingStock > 0 && branchId) {
-        const warehouse = await tx.warehouse.findFirst({
-          where: { branchId, isDefault: true },
+        if (!standardVariant) {
+          throw new BadRequestException("Opening stock requires a standard product variant");
+        }
+        await tx.stockBalance.create({
+          data: {
+            branchId,
+            variantId: standardVariant.id,
+            quantity: dto.openingStock,
+            averageCost: purchasePrice,
+          },
         });
 
-        if (warehouse) {
-          if (!standardVariant) {
-            throw new BadRequestException("Opening stock requires a standard product variant");
-          }
-          await tx.stockBalance.create({
-            data: {
-              branchId: warehouse.branchId,
-              warehouseId: warehouse.id,
-              variantId: standardVariant.id,
-              quantity: dto.openingStock,
-              averageCost: purchasePrice,
-            },
-          });
-
-          await tx.stockMovement.create({
-            data: {
-              branchId: warehouse.branchId,
-              warehouseId: warehouse.id,
-              variantId: standardVariant.id,
-              type: StockMovementType.ADJUSTMENT_ADD,
-              quantity: dto.openingStock,
-              unitCost: purchasePrice,
-              totalCost: dto.openingStock * purchasePrice,
-              notes: "Opening Stock Balance",
-            },
-          });
-        }
+        await tx.stockMovement.create({
+          data: {
+            branchId,
+            variantId: standardVariant.id,
+            type: StockMovementType.ADJUSTMENT_ADD,
+            quantity: dto.openingStock,
+            unitCost: purchasePrice,
+            totalCost: dto.openingStock * purchasePrice,
+            notes: "Opening Stock Balance",
+          },
+        });
       }
 
       return product;
@@ -621,7 +613,7 @@ export class ProductsService {
   async branches(businessId: string) {
     return this.prisma.branch.findMany({
       where: { businessId, isActive: true },
-      select: { id: true, name: true, code: true },
+      select: { id: true, name: true, code: true, stateCode: true },
       orderBy: { name: "asc" },
     });
   }
@@ -1249,47 +1241,6 @@ export class ProductsService {
       }),
     ]);
     return { data, meta: this.paginationMeta(total, page, limit) };
-  }
-
-  async warehouses(businessId: string) {
-    return this.prisma.warehouse.findMany({
-      where: { branch: { businessId } },
-      include: { branch: true },
-      orderBy: { name: "asc" },
-    });
-  }
-
-  async createWarehouse(
-    businessId: string,
-    dto: { branchId: string; name: string; code: string; isDefault?: boolean },
-  ) {
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: dto.branchId, businessId, isActive: true },
-    });
-    if (!branch) throw new NotFoundException("Branch not found");
-    const name = dto.name?.trim();
-    const code = dto.code?.trim().toUpperCase();
-    if (!name || !code) {
-      throw new BadRequestException("Warehouse name and code are required");
-    }
-    const existing = await this.prisma.warehouse.findFirst({
-      where: { branchId: dto.branchId, OR: [{ code }, { name: { equals: name, mode: "insensitive" } }] },
-    });
-    if (existing) throw new ConflictException("A warehouse with this name or code already exists");
-    if (dto.isDefault) {
-      await this.prisma.warehouse.updateMany({
-        where: { branchId: dto.branchId, isDefault: true },
-        data: { isDefault: false },
-      });
-    }
-    return this.prisma.warehouse.create({
-      data: {
-        branchId: dto.branchId,
-        name,
-        code,
-        isDefault: dto.isDefault ?? false,
-      },
-    });
   }
 
   async balances(businessId: string, search?: string) {

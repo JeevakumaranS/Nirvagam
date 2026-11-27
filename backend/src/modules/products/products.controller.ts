@@ -112,17 +112,9 @@ export class ProductsController {
     return this.productsService.getTaxRates(user.businessId);
   }
 
-  @Post('inventory/warehouses')
-  @RequirePermissions('inventory:edit')
-  async createWarehouse(@CurrentUser() user: AuthUser, @Body() dto: any) { return this.productsService.createWarehouse(user.businessId, dto); }
-
   @Get('inventory/overview')
   @RequirePermissions('product:view')
   async overview(@CurrentUser() user: AuthUser) { return this.productsService.overview(user.businessId); }
-
-  @Get('inventory/warehouses')
-  @RequirePermissions('product:view')
-  async warehouses(@CurrentUser() user: AuthUser) { return this.productsService.warehouses(user.businessId); }
 
   @Get('inventory/branches')
   @RequirePermissions('product:view')
