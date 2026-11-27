@@ -259,7 +259,6 @@ export class PurchaseCoreService {
     tx: any,
     params: {
       branchId: string;
-      warehouseId?: string;
       variantId: string;
       quantity: number;
       landedUnitCost: number;
@@ -268,15 +267,16 @@ export class PurchaseCoreService {
       referenceDocumentType: string;
       idempotencyKey: string;
       performedById?: string;
-      batchNumber?: string | null;
-      serialNumber?: string | null;
-      expiryDate?: Date | null;
       notes?: string;
     },
   ) {
     const existing = await tx.stockBalance.findUnique({
-      where: { branchId_variantId: { branchId: params.branchId, variantId: params.variantId } },
-      select: { id: true, quantity: true, averageCost: true },
+      where: {
+        branchId_variantId: {
+          branchId: params.branchId,
+          variantId: params.variantId,
+        },
+      },
     });
 
     const oldQty = Number(existing?.quantity || 0);
@@ -292,7 +292,12 @@ export class PurchaseCoreService {
     }
 
     await tx.stockBalance.upsert({
-      where: { branchId_variantId: { branchId: params.branchId, variantId: params.variantId } },
+      where: {
+        branchId_variantId: {
+          branchId: params.branchId,
+          variantId: params.variantId,
+        },
+      },
       create: {
         branchId: params.branchId,
         variantId: params.variantId,
@@ -333,7 +338,6 @@ export class PurchaseCoreService {
     tx: any,
     params: {
       branchId: string;
-      warehouseId?: string;
       variantId: string;
       quantity: number;
       unitCost: number;
@@ -348,14 +352,18 @@ export class PurchaseCoreService {
     },
   ): Promise<number> {
     const balance = await tx.stockBalance.findUnique({
-      where: { branchId_variantId: { branchId: params.branchId, variantId: params.variantId } },
-      select: { id: true, quantity: true, averageCost: true },
+      where: {
+        branchId_variantId: {
+          branchId: params.branchId,
+          variantId: params.variantId,
+        },
+      },
     });
 
     const currentQty = Number(balance?.quantity || 0);
     if (params.blockOnInsufficient && currentQty < params.quantity) {
       throw new BadRequestException(
-        `Insufficient stock in branch for item ${params.variantId} (available: ${currentQty}, required: ${params.quantity})`,
+        `Insufficient branch stock for item ${params.variantId} (available: ${currentQty}, required: ${params.quantity})`,
       );
     }
 

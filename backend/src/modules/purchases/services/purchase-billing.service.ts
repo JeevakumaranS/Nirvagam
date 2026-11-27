@@ -396,9 +396,6 @@ export class PurchaseBillingService {
                 vatAmount: c.vatAmount,
                 landedCost: c.landedCost,
                 totalAmount: c.totalAmount,
-                batchNumber: item.batchNumber || null,
-                serialNumber: item.serialNumber || null,
-                expiryDate: item.expiryDate ? new Date(item.expiryDate) : null,
               };
             }),
           },
@@ -522,9 +519,6 @@ export class PurchaseBillingService {
                 vatAmount: c.vatAmount,
                 landedCost: c.landedCost,
                 totalAmount: c.totalAmount,
-                batchNumber: item.batchNumber || null,
-                serialNumber: item.serialNumber || null,
-                expiryDate: item.expiryDate ? new Date(item.expiryDate) : null,
               };
             }),
           },
@@ -669,9 +663,6 @@ export class PurchaseBillingService {
             referenceDocumentType: 'PURCHASE_INVOICE',
             idempotencyKey: `INVOICE:${invoice.id}:${item.id}:POST`,
             performedById: user.id,
-            batchNumber: item.batchNumber,
-            serialNumber: item.serialNumber,
-            expiryDate: item.expiryDate,
             notes: `Direct purchase invoice ${invoice.invoiceNumber}`,
           });
         }
@@ -870,7 +861,6 @@ export class PurchaseBillingService {
       }
 
       const settings = await this.core.getSettings(user.businessId, tx);
-
       const lines: PurchaseCalculationLine[] = dto.items.map((item) => {
         const orig = invoice.items.find(
           (l: any) =>

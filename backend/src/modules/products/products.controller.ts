@@ -113,38 +113,6 @@ export class ProductsController {
     return this.productsService.getTaxRates(user.businessId, activeOnly !== 'false');
   }
 
-  @Post('meta/tax-rates')
-  @RequirePermissions('product:create')
-  async createTaxRate(@CurrentUser() user: AuthUser, @Body() dto: CreateTaxRateDto) {
-    return this.productsService.createTaxRate(user.businessId, dto);
-  }
-
-  @Patch('meta/tax-rates/:id')
-  @RequirePermissions('product:edit')
-  async updateTaxRate(
-    @CurrentUser() user: AuthUser,
-    @Param('id') id: string,
-    @Body() dto: UpdateTaxRateDto,
-  ) {
-    return this.productsService.updateTaxRate(user.businessId, id, dto);
-  }
-
-  @Patch('meta/tax-rates/:id/toggle')
-  @RequirePermissions('product:edit')
-  async toggleTaxRate(
-    @CurrentUser() user: AuthUser,
-    @Param('id') id: string,
-    @Body() dto: { isActive: boolean },
-  ) {
-    return this.productsService.toggleTaxRate(user.businessId, id, Boolean(dto.isActive));
-  }
-
-  @Delete('meta/tax-rates/:id')
-  @RequirePermissions('product:delete')
-  async deleteTaxRate(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.productsService.deleteTaxRate(user.businessId, id);
-  }
-
   @Get('inventory/overview')
   @RequirePermissions('product:view')
   async overview(@CurrentUser() user: AuthUser) { return this.productsService.overview(user.businessId); }
@@ -176,10 +144,6 @@ export class ProductsController {
   ) {
     return this.productsService.movementsPage(user.businessId, query, transfersOnly === 'true');
   }
-
-  @Get('inventory/reports')
-  @RequirePermissions('product:view')
-  async report(@CurrentUser() user: AuthUser, @Query('kind') kind?: string, @Query('method') method?: string) { return this.productsService.report(user.businessId, kind, method); }
 
   @Post('inventory/operations')
   @RequirePermissions('inventory:edit')

@@ -106,9 +106,6 @@ interface LineState {
   overReceiptTolerance?: string;
   purchaseOrderItemId?: string;
   grnItemId?: string;
-  batchNumber?: string;
-  serialNumber?: string;
-  expiryDate?: string;
 }
 
 interface PurchaseDocumentDrawerProps {
@@ -190,7 +187,7 @@ export function PurchaseDocumentDrawer({
           id: v.id,
           label: `${p.name} — ${v.name} (${v.sku})`,
           purchasePrice: Number(v.purchasePrice || 0),
-          taxRate: Number(p.taxRate?.rate ?? 0),
+          taxRate: Number(v.taxRate?.rate ?? 18),
         });
       }
     }
@@ -212,16 +209,6 @@ export function PurchaseDocumentDrawer({
     }
     setShowSupplierDropdown(false);
     setShowChargeMenu(false);
-    setDeliveryDate(
-      prefill?.deliveryDate
-        ? String(prefill.deliveryDate).slice(0, 10)
-        : new Date().toISOString().slice(0, 10),
-    );
-    setSelectedGrnPoId(prefill?.purchaseOrderId || '');
-    setPoSearch(prefill?.orderNumber || '');
-    setShowPoDropdown(false);
-    setHighlightedPoIndex(0);
-    setWarehouseId(prefill?.warehouseId || warehouses.find((w) => w.isDefault)?.id || warehouses[0]?.id || '');
     setDocDate(new Date().toISOString().slice(0, 10));
     setSupplierBillNumber(prefill?.supplierBillNumber || '');
     setDepartment(prefill?.department || '');
@@ -242,8 +229,6 @@ export function PurchaseDocumentDrawer({
           taxRate: String(i.taxRate ?? 18),
           purchaseOrderItemId: i.purchaseOrderItemId,
           grnItemId: i.grnItemId,
-          batchNumber: i.batchNumber || '',
-          serialNumber: i.serialNumber || '',
         })),
       );
     } else {
@@ -524,32 +509,20 @@ export function PurchaseDocumentDrawer({
         await apiFetch('/purchases/grns', {
           method: 'POST',
           body: JSON.stringify({
-            supplierId: selectedGrnPo.supplierId,
-            warehouseId: selectedGrnPo.warehouseId || undefined,
-            purchaseOrderId: selectedGrnPo.id,
+            supplierId,
+            purchaseOrderId: prefill?.purchaseOrderId,
             grnDate: docDate,
-            deliveryDate: deliveryDate || undefined,
-            post: true,
-            notes: shortfallNotes.length ? shortfallNotes.join('; ') : undefined,
-            items: validLines.map((l) => {
-              const ordered = l.orderedQuantity !== undefined ? Number(l.orderedQuantity) : null;
-              const rec = Number(l.quantity || 0);
-              const rejectedQty =
-                l.shortfallReason === 'DAMAGED' && ordered !== null && rec < ordered
-                  ? String(Number((ordered - rec).toFixed(3)))
-                  : '0';
-              return {
-                variantId: l.variantId || undefined,
-                itemName: l.itemName?.trim() || undefined,
-                unit: l.unit || 'PCS',
-                purchaseOrderItemId: l.purchaseOrderItemId,
-                quantity: l.quantity,
-                rejectedQuantity: rejectedQty,
-                unitCost: l.unitRate,
-                landedCost: l.unitRate,
-                taxRate: '0',
-              };
-            }),
+            post: postImmediately,
+            notes: notes || undefined,
+            items: lines.map((l) => ({
+              variantId: l.variantId || undefined,
+              itemName: l.itemName?.trim() || undefined,
+              unit: l.unit || 'PCS',
+              purchaseOrderItemId: l.purchaseOrderItemId,
+              quantity: l.quantity,
+              unitCost: l.unitRate,
+              landedCost: l.unitRate,
+            })),
           }),
         });
       } else {
@@ -747,332 +720,7 @@ export function PurchaseDocumentDrawer({
             </div>
           )}
 
-          {kind === 'GRN' ? (
-            <div className="space-y-4">
-              {/* 1. Approved PO Searchable Select + 2. GRN Date + 3. Delivery Date */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="relative">
-                  <Input
-                    label="Approved Purchase Order *"
-                    placeholder="Search PO # or supplier..."
-                    value={poSearch}
-                    suffixIcon={
-                      selectedGrnPoId ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSelectedGrnPoId('');
-                            setPoSearch('');
-                            setShowPoDropdown(true);
-                            setHighlightedPoIndex(0);
-                          }}
-                          className="p-0.5 text-xs text-text-tertiary hover:text-text-primary leading-none"
-                          title="Clear PO"
-                        >
-                          ✕
-                        </button>
-                      ) : undefined
-                    }
-                    onFocus={() => {
-                      setHighlightedPoIndex(0);
-                      setShowPoDropdown(true);
-                    }}
-                    onBlur={() => setTimeout(() => setShowPoDropdown(false), 150)}
-                    onChange={(e) => {
-                      setPoSearch(e.target.value);
-                      setSelectedGrnPoId('');
-                      setHighlightedPoIndex(0);
-                      setShowPoDropdown(true);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'ArrowDown') {
-                        e.preventDefault();
-                        setShowPoDropdown(true);
-                        setHighlightedPoIndex((prev) =>
-                          matchingApprovedPos.length ? (prev + 1) % matchingApprovedPos.length : 0,
-                        );
-                      } else if (e.key === 'ArrowUp') {
-                        e.preventDefault();
-                        setShowPoDropdown(true);
-                        setHighlightedPoIndex((prev) =>
-                          matchingApprovedPos.length
-                            ? (prev - 1 + matchingApprovedPos.length) % matchingApprovedPos.length
-                            : 0,
-                        );
-                      } else if (e.key === 'Enter' && showPoDropdown && matchingApprovedPos[highlightedPoIndex]) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        const chosen = matchingApprovedPos[highlightedPoIndex];
-                        setSelectedGrnPoId(chosen.id);
-                        setPoSearch(`${chosen.orderNumber}${chosen.supplier?.name ? ` — ${chosen.supplier.name}` : ''}`);
-                        setShowPoDropdown(false);
-                        setLines([{ itemName: '', unit: 'PCS', quantity: '', unitRate: '0', discountType: 'PERCENT', discountValue: '0', taxRate: '0' }]);
-                      } else if (e.key === 'Escape') {
-                        setShowPoDropdown(false);
-                      }
-                    }}
-                  />
-                  {showPoDropdown && (
-                    <div
-                      ref={poListRef}
-                      className="absolute z-30 left-0 right-0 mt-1 max-h-52 overflow-y-auto rounded-lg border border-border bg-surface shadow-lg divide-y divide-border/50"
-                    >
-                      {matchingApprovedPos.length === 0 ? (
-                        <div className="px-3 py-2 text-xs text-text-tertiary">No active approved POs found</div>
-                      ) : (
-                        matchingApprovedPos.map((po: any, idx: number) => (
-                          <button
-                            key={po.id}
-                            type="button"
-                            onMouseEnter={() => setHighlightedPoIndex(idx)}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              setSelectedGrnPoId(po.id);
-                              setPoSearch(`${po.orderNumber}${po.supplier?.name ? ` — ${po.supplier.name}` : ''}`);
-                              setShowPoDropdown(false);
-                              setLines([{ itemName: '', unit: 'PCS', quantity: '', unitRate: '0', discountType: 'PERCENT', discountValue: '0', taxRate: '0' }]);
-                            }}
-                            className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between ${
-                              idx === highlightedPoIndex
-                                ? 'bg-accent/15 text-accent font-medium'
-                                : po.id === selectedGrnPoId
-                                ? 'bg-accent/10 text-accent font-medium'
-                                : 'text-text-primary hover:bg-surface-secondary'
-                            }`}
-                          >
-                            <div>
-                              <div className="font-mono font-semibold">{po.orderNumber}</div>
-                              <div className="text-[10px] text-text-tertiary">
-                                {po.supplier?.name || 'Supplier'} • {new Date(po.orderDate).toLocaleDateString()}
-                              </div>
-                            </div>
-                            <Badge size="sm" variant="accent">{po.status}</Badge>
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  )}
-                </div>
-                <Input label="GRN Date *" type="date" value={docDate} onChange={(e) => setDocDate(e.target.value)} required />
-                <Input label="Delivery Date" type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} />
-              </div>
-
-              {/* 4. Ordered Details (Non-editable: Item Name, Qty, Unit only) */}
-              {selectedGrnPo && (
-                <div className="space-y-1.5">
-                  <div className="text-xs font-semibold text-text-primary">Ordered Details</div>
-                  <div className="rounded-lg border border-border overflow-hidden bg-surface-secondary/30">
-                    <table className="w-full text-xs">
-                      <thead className="bg-surface-secondary/70 text-[10px] uppercase text-text-tertiary">
-                        <tr>
-                          <th className="text-left px-3 py-2 font-semibold">Item Name</th>
-                          <th className="text-right px-3 py-2 font-semibold">Qty</th>
-                          <th className="text-left px-3 py-2 font-semibold">Unit</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border/50">
-                        {(selectedGrnPo.items || []).map((item: any) => {
-                          const label =
-                            item.itemName ||
-                            (item.variant ? `${item.variant.product?.name || ''} — ${item.variant.name}` : 'Item');
-                          return (
-                            <tr key={item.id}>
-                              <td className="px-3 py-2 text-text-primary">{label}</td>
-                              <td className="px-3 py-2 text-right font-mono text-text-primary">{item.quantity}</td>
-                              <td className="px-3 py-2 font-mono text-text-secondary">{item.unit || 'PCS'}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* 5. Received Quantity (Product combobox + Received Qty + auto Unit) */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-text-primary">Received Quantity</span>
-                  <Button type="button" size="sm" variant="secondary" onClick={addLine} icon={<Plus className="w-3.5 h-3.5" />}>
-                    Add Row
-                  </Button>
-                </div>
-                <div className="grid grid-cols-12 gap-2 px-2 text-[10px] font-semibold uppercase text-text-tertiary">
-                  <div className="col-span-6">Product</div>
-                  <div className="col-span-3 text-right">Received Qty</div>
-                  <div className="col-span-2">Unit</div>
-                  <div className="col-span-1" />
-                </div>
-                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                  {lines.map((line, idx) => {
-                    const activeUnitsList = units.length ? units : DEFAULT_UNITS;
-                    const qtyError = getQuantityError(line.quantity, line.unit, activeUnitsList);
-                    const poItems = selectedGrnPo?.items || [];
-                    const orderedQty = line.orderedQuantity !== undefined ? Number(line.orderedQuantity) : null;
-                    const trimmedQty = line.quantity.trim();
-                    const recQty = Number(trimmedQty);
-                    const hasExceeded =
-                      orderedQty !== null && trimmedQty !== '' && !Number.isNaN(recQty) && recQty > orderedQty;
-                    const isShortfall =
-                      orderedQty !== null &&
-                      trimmedQty !== '' &&
-                      !Number.isNaN(recQty) &&
-                      recQty >= 0 &&
-                      recQty < orderedQty;
-                    const rowError = hasExceeded
-                      ? `Received qty cannot exceed ordered qty (${orderedQty} ${line.unit})`
-                      : qtyError;
-                    return (
-                      <div
-                        key={idx}
-                        className={`grid grid-cols-12 gap-2 items-center p-2 rounded-lg border ${
-                          rowError ? 'border-danger/60 bg-danger/5' : 'border-border bg-surface-secondary/30'
-                        } text-xs`}
-                      >
-                        <div className="col-span-6">
-                          <select
-                            value={line.purchaseOrderItemId || ''}
-                            disabled={!selectedGrnPo}
-                            onChange={(e) => {
-                              const poItemId = e.target.value;
-                              const poItem = poItems.find((p: any) => p.id === poItemId);
-                              const copy = [...lines];
-                              if (poItem) {
-                                const label =
-                                  poItem.itemName ||
-                                  (poItem.variant ? `${poItem.variant.product?.name || ''} — ${poItem.variant.name}` : 'Item');
-                                copy[idx] = {
-                                  ...copy[idx],
-                                  purchaseOrderItemId: poItem.id,
-                                  variantId: poItem.variantId || undefined,
-                                  itemName: label,
-                                  unit: poItem.unit || 'PCS',
-                                  orderedQuantity: String(poItem.quantity ?? 0),
-                                  shortfallReason: '',
-                                  shortfallRemarks: '',
-                                  unitRate: String(poItem.unitRate ?? 0),
-                                  taxRate: '0',
-                                };
-                              } else {
-                                copy[idx] = {
-                                  ...copy[idx],
-                                  purchaseOrderItemId: undefined,
-                                  variantId: undefined,
-                                  itemName: '',
-                                  unit: 'PCS',
-                                  orderedQuantity: undefined,
-                                  shortfallReason: '',
-                                  shortfallRemarks: '',
-                                };
-                              }
-                              setLines(copy);
-                            }}
-                            className="w-full h-8 px-2 rounded border border-border bg-surface text-xs"
-                          >
-                            <option value="">
-                              {selectedGrnPo ? 'Select product from PO...' : 'Select an approved PO first'}
-                            </option>
-                            {poItems.map((p: any) => {
-                              const label =
-                                p.itemName ||
-                                (p.variant ? `${p.variant.product?.name || ''} — ${p.variant.name}` : 'Item');
-                              return (
-                                <option key={p.id} value={p.id}>
-                                  {label}
-                                </option>
-                              );
-                            })}
-                          </select>
-                        </div>
-                        <div className="col-span-3">
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            placeholder="Qty"
-                            value={line.quantity}
-                            onFocus={(e) => e.currentTarget.select()}
-                            onClick={(e) => e.currentTarget.select()}
-                            onChange={(e) => {
-                              const copy = [...lines];
-                              copy[idx].quantity = e.target.value;
-                              setLines(copy);
-                            }}
-                            className={`w-full h-8 px-2 rounded border bg-surface text-right font-mono text-xs ${
-                              rowError ? 'border-danger text-danger focus:outline-none focus:ring-1 focus:ring-danger' : 'border-border'
-                            }`}
-                          />
-                        </div>
-                        <div className="col-span-2">
-                          <div className="h-8 px-2 rounded border border-border bg-surface-secondary/60 flex items-center font-mono text-xs text-text-secondary">
-                            {line.unit || 'PCS'}
-                          </div>
-                        </div>
-                        <div className="col-span-1 flex justify-end">
-                          <button type="button" onClick={() => setLines(lines.filter((_, i) => i !== idx))} className="text-danger p-1">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                        {rowError && (
-                          <div className="col-span-12 text-[11px] font-medium text-danger px-1 pt-0.5">
-                            {rowError}
-                          </div>
-                        )}
-                        {!rowError && isShortfall && (
-                          <div className="col-span-12 pt-1.5 border-t border-border/50 flex flex-wrap items-center gap-3">
-                            <span className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                              Shortfall ({Number((orderedQty! - recQty).toFixed(3))} {line.unit}):
-                            </span>
-                            <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-                              <input
-                                type="radio"
-                                name={`shortfall-${idx}`}
-                                checked={line.shortfallReason === 'NOT_RECEIVED'}
-                                onChange={() => {
-                                  const copy = [...lines];
-                                  copy[idx].shortfallReason = 'NOT_RECEIVED';
-                                  copy[idx].shortfallRemarks = '';
-                                  setLines(copy);
-                                }}
-                              />
-                              Product Not Received
-                            </label>
-                            <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-                              <input
-                                type="radio"
-                                name={`shortfall-${idx}`}
-                                checked={line.shortfallReason === 'DAMAGED'}
-                                onChange={() => {
-                                  const copy = [...lines];
-                                  copy[idx].shortfallReason = 'DAMAGED';
-                                  setLines(copy);
-                                }}
-                              />
-                              Damaged
-                            </label>
-                            {line.shortfallReason === 'DAMAGED' && (
-                              <input
-                                type="text"
-                                placeholder="Remarks (optional)..."
-                                value={line.shortfallRemarks || ''}
-                                onChange={(e) => {
-                                  const copy = [...lines];
-                                  copy[idx].shortfallRemarks = e.target.value;
-                                  setLines(copy);
-                                }}
-                                className="flex-1 min-w-[180px] h-7 px-2 rounded border border-border bg-surface text-xs"
-                              />
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          ) : (
-          <>
-          {/* Supplier & Warehouse */}
+          {/* Supplier and document details */}
           {kind === 'PR' ? (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="relative">
@@ -1211,7 +859,9 @@ export function PurchaseDocumentDrawer({
                 )}
               </div>
 
-              <Input label="Document Date *" type="date" value={docDate} onChange={(e) => setDocDate(e.target.value)} required />
+              <div className="space-y-2">
+                <Input label="Document Date *" type="date" value={docDate} onChange={(e) => setDocDate(e.target.value)} required />
+              </div>
             </div>
           )}
 
@@ -1355,7 +1005,7 @@ export function PurchaseDocumentDrawer({
                         className="w-full h-8 px-2 rounded border border-border bg-surface text-xs"
                       />
                     </div>
-                  ) : (
+                  ) : kind !== 'GRN' ? (
                     <>
                       <div className="col-span-2">
                         <input
@@ -1402,7 +1052,7 @@ export function PurchaseDocumentDrawer({
                         />
                       </div>
                     </>
-                  )}
+                  ) : null}
                   <div className="col-span-1 flex justify-end">
                     <button type="button" onClick={() => setLines(lines.filter((_, i) => i !== idx))} className="text-danger p-1">
                       <Trash2 className="w-3.5 h-3.5" />

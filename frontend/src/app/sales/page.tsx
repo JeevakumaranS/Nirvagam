@@ -90,11 +90,8 @@ const parseNumericInput = (value: string) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 const getProductUnitPrice = (product: any, variant = product?.variants?.[0]) => {
-  const variantSalesPrice = Number(variant?.salesPrice);
-  if (Number.isFinite(variantSalesPrice) && variantSalesPrice > 0) return variantSalesPrice;
-
-  const retailPrice = Number(product?.retailPrice);
-  return Number.isFinite(retailPrice) ? retailPrice : 0;
+  const variantSalesPrice = Number(variant?.retailPrice ?? variant?.salesPrice);
+  return Number.isFinite(variantSalesPrice) ? variantSalesPrice : 0;
 };
 
 export default function SalesPage() {
@@ -276,7 +273,7 @@ export default function SalesPage() {
           quantityInput: '1',
           unitPrice,
           unitPriceInput: formatNumericInput(unitPrice),
-          gstRate: Number(prod.taxRate?.rate ?? 18),
+          gstRate: Number(variant.taxRate?.rate ?? 18),
           discountPercent: 0,
           discountPercentInput: '',
           discountAmount: 0,

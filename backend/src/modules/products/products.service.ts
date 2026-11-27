@@ -312,17 +312,8 @@ export class ProductsService {
           brand: true,
           variants: {
             include: {
-              stockBalances: {
-                select: {
-                  id: true,
-                  branchId: true,
-                  variantId: true,
-                  quantity: true,
-                  averageCost: true,
-                  updatedAt: true,
-                  branch: true,
-                },
-              },
+              taxRate: true,
+              stockBalances: { include: { branch: true } },
             },
           },
         },
@@ -429,7 +420,7 @@ export class ProductsService {
           brandId: dto.brandId,
           name: dto.name,
           sku: dto.sku.trim(),
-          barcode: dto.barcode,
+          barcode: dto.hasVariants ? null : dto.barcode,
           hsnCode: dto.hsnCode,
           purchasePrice,
           mrp,
@@ -448,24 +439,35 @@ export class ProductsService {
       if (product.hasVariants) {
         await this.saveVariants(tx, businessId, product, dto.variants || []);
       } else {
+        const standard = dto.variants?.[0];
         standardVariant = await tx.productVariant.create({
           data: {
             productId: product.id,
             name: "Standard",
             sku: dto.sku.trim(),
             barcode: dto.barcode,
-            purchasePrice,
-            mrp,
-            retailPrice,
-            minStockLevel: dto.minStockLevel || 0,
+            purchasePrice: standard?.purchasePrice ?? purchasePrice,
+            mrp: standard?.mrp ?? mrp,
+            retailPrice: standard?.retailPrice ?? retailPrice,
+            minStockLevel: dto.minStockLevel ?? standard?.minStockLevel ?? 0,
+            taxRateId: await this.resolveVariantTaxRate(
+              tx,
+              businessId,
+              standard?.taxRateId,
+              taxRateId,
+            ),
+            isTaxInclusive:
+              standard?.isTaxInclusive ?? dto.isTaxInclusive ?? false,
           },
         });
       }
 
-      // Record opening stock against the active branch.
+      // If opening stock is provided, allocate it to the current branch.
       if (dto.openingStock && dto.openingStock > 0 && branchId) {
         if (!standardVariant) {
-          throw new BadRequestException("Opening stock requires a standard product variant");
+          throw new BadRequestException(
+            "Opening stock requires a standard product variant",
+          );
         }
         await tx.stockBalance.create({
           data: {
@@ -867,7 +869,7 @@ export class ProductsService {
         data: {
           name: dto.name,
           sku,
-          barcode: dto.barcode,
+          barcode: hasVariants ? null : dto.barcode,
           hsnCode: dto.hsnCode,
           description: dto.description,
           unitId: dto.unitId,
@@ -901,13 +903,23 @@ export class ProductsService {
           );
         }
       } else if (!hasVariants) {
+        const standard = dto.variants?.[0];
         const variantData = {
           sku,
           barcode: dto.barcode,
-          purchasePrice: dto.purchasePrice,
-          mrp: dto.mrp,
-          retailPrice: dto.retailPrice,
-          minStockLevel: dto.minStockLevel,
+          purchasePrice: standard?.purchasePrice ?? dto.purchasePrice,
+          mrp: standard?.mrp ?? dto.mrp,
+          retailPrice: standard?.retailPrice ?? dto.retailPrice,
+          minStockLevel: dto.minStockLevel ?? standard?.minStockLevel,
+          taxRateId: (standard?.taxRateId ?? dto.taxRateId)
+            ? await this.resolveVariantTaxRate(
+                tx,
+                businessId,
+                standard?.taxRateId ?? dto.taxRateId,
+                product.taxRateId,
+              )
+            : undefined,
+          isTaxInclusive: standard?.isTaxInclusive ?? dto.isTaxInclusive,
         };
         if (Object.values(variantData).some((value) => value !== undefined)) {
           await tx.productVariant.updateMany({
@@ -970,12 +982,33 @@ export class ProductsService {
     };
   }
 
+  private async resolveVariantTaxRate(
+    tx: Prisma.TransactionClient,
+    businessId: string,
+    requestedTaxRateId: string | undefined,
+    fallbackTaxRateId: string,
+  ) {
+    const taxRateId = requestedTaxRateId || fallbackTaxRateId;
+    const taxRate = await tx.taxRate.findFirst({
+      where: { id: taxRateId, businessId },
+      select: { id: true },
+    });
+    if (!taxRate) {
+      throw new BadRequestException(
+        "Selected GST rate does not belong to this business",
+      );
+    }
+    return taxRate.id;
+  }
+
   private async saveVariants(
     tx: Prisma.TransactionClient,
     businessId: string,
     product: {
       id: string;
       sku: string;
+      taxRateId: string;
+      isTaxInclusive: boolean;
       purchasePrice: Prisma.Decimal | number;
       mrp: Prisma.Decimal | number;
       retailPrice: Prisma.Decimal | number;
@@ -1070,6 +1103,13 @@ export class ProductsService {
         mrp: input.mrp ?? product.mrp,
         retailPrice: input.retailPrice ?? product.retailPrice,
         minStockLevel: input.minStockLevel ?? product.minStockLevel,
+        taxRateId: await this.resolveVariantTaxRate(
+          tx,
+          businessId,
+          input.taxRateId,
+          product.taxRateId,
+        ),
+        isTaxInclusive: input.isTaxInclusive ?? product.isTaxInclusive,
         imageUrl: input.imageUrl || null,
         isActive: input.isActive ?? true,
       };
@@ -1422,6 +1462,10 @@ export class ProductsService {
     if (!["IN", "OUT"].includes(dto.type))
       throw new BadRequestException("Unsupported stock operation");
     return this.prisma.$transaction(async (tx) => {
+      if (dto.idempotencyKey) {
+        const existing = await tx.stockMovement.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
+        if (existing) return existing;
+      }
       const branch = await tx.branch.findFirst({
         where: { id: dto.branchId, businessId, isActive: true },
       });
@@ -1516,6 +1560,7 @@ export class ProductsService {
           notes: dto.reference || dto.notes,
           reason: dto.reason,
           performedById: userId,
+          idempotencyKey: dto.idempotencyKey,
         },
       });
     });
@@ -1527,6 +1572,10 @@ export class ProductsService {
         "Source and destination branches must differ",
       );
     return this.prisma.$transaction(async (tx) => {
+      if (dto.idempotencyKey) {
+        const existing = await tx.stockMovement.findFirst({ where: { idempotencyKey: { in: [`${dto.idempotencyKey}:out`, `${dto.idempotencyKey}:in`] } } });
+        if (existing) return existing;
+      }
       const from = await tx.branch.findFirst({
         where: { id: dto.fromBranchId, businessId, isActive: true },
       });
@@ -1606,75 +1655,12 @@ export class ProductsService {
         performedById: userId,
       };
       await tx.stockMovement.create({
-        data: { branchId: from.id, type: "OUT_TRANSFER", ...common },
+        data: { branchId: from.id, type: "OUT_TRANSFER", ...common, idempotencyKey: dto.idempotencyKey ? `${dto.idempotencyKey}:out` : undefined },
       });
       return tx.stockMovement.create({
-        data: { branchId: to.id, type: "IN_TRANSFER", ...common },
+        data: { branchId: to.id, type: "IN_TRANSFER", ...common, idempotencyKey: dto.idempotencyKey ? `${dto.idempotencyKey}:in` : undefined },
       });
     });
   }
 
-  async report(
-    businessId: string,
-    kind = "summary",
-    method = "weighted-average",
-  ) {
-    if (!["summary", "low-stock", "dead-stock"].includes(kind)) {
-      throw new BadRequestException("Unsupported inventory report");
-    }
-    const rows = await this.balances(businessId);
-    if (kind === "low-stock") {
-      const totals = new Map<string, { first: any; quantity: number }>();
-      for (const row of rows as any[]) {
-        const entry = totals.get(row.variantId) || { first: row, quantity: 0 };
-        entry.quantity += Number(row.quantity);
-        totals.set(row.variantId, entry);
-      }
-      return [...totals.values()]
-        .filter(({ first, quantity }) => {
-          const minimum = Number(
-            first.variant.minStockLevel ?? first.variant.product.minStockLevel,
-          );
-          return first.variant.isActive && minimum > 0 && quantity <= minimum;
-        })
-        .map(({ first, quantity }) => ({
-          variant: first.variant,
-          totalStock: quantity,
-          minimumStock: Number(
-            first.variant.minStockLevel ?? first.variant.product.minStockLevel,
-          ),
-        }));
-    }
-    if (kind === "dead-stock")
-      return rows.filter((r: any) => Number(r.quantity) > 0);
-    if (method === "fifo") {
-      const movements = await this.movements(businessId);
-      return rows.map((r: any) => {
-        let remaining = Number(r.quantity);
-        const inbound = movements
-          .filter(
-            (m: any) =>
-              m.branchId === r.branchId &&
-              m.variantId === r.variantId &&
-              ["MANUAL_IN", "IN_PURCHASE", "IN_TRANSFER"].includes(m.type),
-          )
-          .sort(
-            (a: any, b: any) =>
-              new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-          );
-        const fifoValue = inbound.reduce((total: number, m: any) => {
-          if (remaining <= 0) return total;
-          const used = Math.min(remaining, Number(m.quantity));
-          remaining -= used;
-          return total + used * Number(m.unitCost);
-        }, 0);
-        return { ...r, valuation: fifoValue };
-      });
-    }
-    return rows.map((r: any) => ({
-      ...r,
-      valuation: Number(r.quantity) * Number(r.averageCost),
-      valuationMethod: "weighted-average",
-    }));
-  }
 }

@@ -24,9 +24,10 @@ export class CreateProductDto {
   @IsOptional()
   hsnCode?: string;
 
-  @ApiProperty({ example: 450.0 })
+  @ApiProperty({ example: 450.0, required: false })
   @IsNumber()
-  purchasePrice!: number;
+  @IsOptional()
+  purchasePrice?: number;
 
   @ApiProperty({ example: 899.0, required: false })
   @IsNumber()

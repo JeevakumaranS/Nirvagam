@@ -107,20 +107,6 @@ export class PurchaseLineDto {
   @IsOptional()
   grnItemId?: string;
 
-  @ApiPropertyOptional()
-  @IsString()
-  @IsOptional()
-  batchNumber?: string;
-
-  @ApiPropertyOptional()
-  @IsString()
-  @IsOptional()
-  serialNumber?: string;
-
-  @ApiPropertyOptional()
-  @IsDateString()
-  @IsOptional()
-  expiryDate?: string;
 }
 
 export class PurchaseRequestLineDto {
@@ -213,6 +199,7 @@ export class CreatePurchaseOrderDto {
   @IsUUID()
   @IsOptional()
   purchaseRequestId?: string;
+
 
   @ApiPropertyOptional()
   @IsString()
@@ -325,24 +312,6 @@ export class GrnLineInputDto {
   @IsOptional()
   landedCost?: string | number;
 
-  @ApiPropertyOptional({ example: '18' })
-  @IsOptional()
-  taxRate?: string | number;
-
-  @ApiPropertyOptional()
-  @IsString()
-  @IsOptional()
-  batchNumber?: string;
-
-  @ApiPropertyOptional()
-  @IsString()
-  @IsOptional()
-  serialNumber?: string;
-
-  @ApiPropertyOptional()
-  @IsDateString()
-  @IsOptional()
-  expiryDate?: string;
 }
 
 export class CreateGrnDto {
@@ -351,10 +320,6 @@ export class CreateGrnDto {
   @IsOptional()
   supplierId?: string;
 
-  @ApiPropertyOptional()
-  @IsUUID()
-  @IsOptional()
-  purchaseOrderId?: string;
 
   @ApiPropertyOptional()
   @IsString()
@@ -414,6 +379,7 @@ export class CreatePurchaseInvoiceDto {
   @IsArray()
   @IsOptional()
   grnIds?: string[];
+
 
   @ApiPropertyOptional()
   @IsString()
@@ -525,6 +491,7 @@ export class CreatePurchaseReturnDto {
   @ApiProperty()
   @IsUUID()
   purchaseInvoiceId!: string;
+
 
   @ApiPropertyOptional()
   @IsString()

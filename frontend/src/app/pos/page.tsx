@@ -74,8 +74,8 @@ export default function PosBillingPage() {
           variantId: variant.id,
           name: product.name,
           sku: product.sku,
-          price: Number(variant.salesPrice || 0),
-          gstRate: Number(product.taxRate?.rate || 18),
+          price: Number(variant.retailPrice ?? variant.salesPrice ?? 0),
+          gstRate: Number(variant.taxRate?.rate ?? 18),
           qty: 1,
         },
       ]);

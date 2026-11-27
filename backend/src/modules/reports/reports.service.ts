@@ -66,7 +66,11 @@ export class ReportsService {
         _count: { id: true },
       }),
       this.prisma.stockBalance.findMany({
-        where: branchId ? { branchId } : { branch: { businessId } },
+        where: {
+          branch: branchId
+            ? { id: branchId }
+            : { businessId },
+        },
         select: { quantity: true, averageCost: true },
       }),
       this.prisma.chartOfAccount.findMany({

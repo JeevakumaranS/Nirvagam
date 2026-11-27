@@ -1721,7 +1721,7 @@ export default function PlatformBusinessRegistrationPage() {
                     <div className="mx-auto w-full max-w-5xl space-y-6">
                       <div className="border-b border-border pb-2">
                         <h3 className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-                          Multiple Branch & Warehouse Configuration
+                          Multiple Branch Configuration
                         </h3>
                         <p className="text-[11px] text-text-tertiary">
                           Configure multiple retail branches, fulfillment

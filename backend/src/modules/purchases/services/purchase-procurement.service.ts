@@ -278,7 +278,7 @@ export class PurchaseProcurementService {
     return this.prisma.$transaction(async (tx) => {
       const pr = await tx.purchaseRequest.findFirst({
         where: { id: prId, businessId: user.businessId, isDeleted: false },
-        include: { items: { include: { variant: { include: { product: { include: { taxRate: true } } } } } } },
+        include: { items: { include: { variant: { include: { taxRate: true } } } } },
       });
       if (!pr) throw new NotFoundException('Purchase request not found');
       if (pr.status !== 'APPROVED') {
@@ -296,7 +296,7 @@ export class PurchaseProcurementService {
             description: item.description || undefined,
             quantity: String(item.quantity),
             unitRate: String(Number(item.preferredRate) > 0 ? item.preferredRate : item.variant?.purchasePrice || 0),
-            taxRate: String(item.variant?.product?.taxRate?.rate || 0),
+            taxRate: String(item.variant?.taxRate?.rate || 0),
           }));
 
       const po = await this.createOrderInternal(tx, user, branchId, {
@@ -789,16 +789,6 @@ export class PurchaseProcurementService {
         }
       }
 
-      const supplierId = purchaseOrder?.supplierId || dto.supplierId;
-      if (!supplierId) throw new BadRequestException('Purchase Order or Supplier is required');
-      const [branch, supplier, settings] = await Promise.all([
-        tx.branch.findUnique({ where: { id: branchId } }),
-        tx.supplier.findUnique({ where: { id: supplierId } }),
-        this.core.getSettings(user.businessId, tx),
-      ]);
-      if (!branch) throw new NotFoundException('Branch not found');
-      if (!supplier) throw new NotFoundException('Supplier not found');
-
       const grnNumber = dto.grnNumber || (await this.core.nextNumber(tx, user.businessId, branchId, 'GRN'));
       const resolvedItems = dto.items.map((item) => {
         const poItem = purchaseOrder?.items?.find(
@@ -869,15 +859,8 @@ export class PurchaseProcurementService {
                 purchaseOrderItemId: item.purchaseOrderItemId || poItem?.id || null,
                 quantity: String(item.quantity),
                 rejectedQuantity: String(item.rejectedQuantity || 0),
-                unitCost: unitCost.toFixed(4),
-                landedCost: landedCost.toFixed(4),
-                taxRate: String(taxRate),
-                taxableValue: calculatedItem.taxableValue,
-                cgstAmount: calculatedItem.cgstAmount,
-                sgstAmount: calculatedItem.sgstAmount,
-                igstAmount: calculatedItem.igstAmount,
-                vatAmount: calculatedItem.vatAmount,
-                totalTax: calculatedItem.taxAmount,
+                unitCost: cost.toFixed(4),
+                landedCost: landed.toFixed(4),
               };
             }),
           },
@@ -973,26 +956,16 @@ export class PurchaseProcurementService {
           updatedById: user.id,
           version: { increment: 1 },
           items: {
-            create: resolvedItems.map(({ item, poItem, unitCost, landedCost, taxRate }, index) => {
-              const calculatedItem = calculation.items[index];
-              return {
-                variantId: item.variantId || null,
-                itemName: item.itemName || poItem?.itemName || null,
-                unit: item.unit || poItem?.unit || 'PCS',
-                purchaseOrderItemId: item.purchaseOrderItemId || poItem?.id || null,
-                quantity: String(item.quantity),
-                rejectedQuantity: String(item.rejectedQuantity || 0),
-                unitCost: unitCost.toFixed(4),
-                landedCost: landedCost.toFixed(4),
-                taxRate: String(taxRate),
-                taxableValue: calculatedItem.taxableValue,
-                cgstAmount: calculatedItem.cgstAmount,
-                sgstAmount: calculatedItem.sgstAmount,
-                igstAmount: calculatedItem.igstAmount,
-                vatAmount: calculatedItem.vatAmount,
-                totalTax: calculatedItem.taxAmount,
-              };
-            }),
+            create: dto.items.map((item) => ({
+              variantId: item.variantId || null,
+              itemName: item.itemName || null,
+              unit: item.unit || 'PCS',
+              purchaseOrderItemId: item.purchaseOrderItemId || null,
+              quantity: String(item.quantity),
+              rejectedQuantity: String(item.rejectedQuantity || 0),
+              unitCost: String(item.unitCost || 0),
+              landedCost: String(item.landedCost ?? item.unitCost ?? 0),
+            })),
           },
         },
         select: { ...grnScalars, items: true, supplier: true },

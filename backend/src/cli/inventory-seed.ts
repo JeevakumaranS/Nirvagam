@@ -60,11 +60,13 @@ async function main() {
       const variant = await prisma.productVariant.create({
         data: {
           productId: product.id,
+          taxRateId: taxRate.id,
           name: "Standard",
           sku: item.sku,
           purchasePrice: item.purchasePrice,
           retailPrice: item.salesPrice,
           mrp: item.salesPrice,
+          isTaxInclusive: false,
         },
       });
       await prisma.stockBalance.create({

@@ -95,17 +95,17 @@ export default function PurchasesPage() {
 
   const loadMasterData = useCallback(async () => {
     try {
-      const [suppRes, prodRes, branchRes, settingsRes] = await Promise.all([
+      const [suppRes, prodRes, branchesRes, settingsRes] = await Promise.all([
         apiFetch("/suppliers"),
         apiFetch("/products"),
-        apiFetch("/products/inventory/branches").catch(() => []),
+        apiFetch("/products/inventory/branches"),
         apiFetch("/purchases/settings").catch(() => null),
       ]);
       setSuppliers(suppRes?.data || (Array.isArray(suppRes) ? suppRes : []));
       setProducts(prodRes?.data || (Array.isArray(prodRes) ? prodRes : []));
-      const branchList = branchRes?.data || (Array.isArray(branchRes) ? branchRes : []);
-      if (branchList[0]?.stateCode) setBranchStateCode(branchList[0].stateCode);
+      const branches = branchesRes?.data || (Array.isArray(branchesRes) ? branchesRes : []);
       if (settingsRes?.taxRegime) setTaxRegime(settingsRes.taxRegime);
+      if (branches?.[0]?.stateCode) setBranchStateCode(branches[0].stateCode);
     } catch {}
   }, []);
 
