@@ -68,21 +68,22 @@ describe("tenant schema migrations", () => {
     expect(migration?.sql).toContain('DROP COLUMN IF EXISTS "reorder_level"');
   });
 
-  it("moves inventory balances and history to branches before dropping warehouses", () => {
+  it("consolidates inventory at branch level before removing warehouse and tracking data", () => {
     const migrations = getTenantSchemaMigrations();
-    const reorderLevelIndex = migrations.findIndex(
-      (item) => item.name === "20261126100000_remove_product_reorder_level",
-    );
     const inventoryMigrationIndex = migrations.findIndex(
-      (item) =>
-        item.name === "20261126104500_replace_warehouses_with_branch_inventory",
+      (item) => item.name === "20261127150000_remove_warehouses_and_tracking",
     );
     const migration = migrations[inventoryMigrationIndex];
 
-    expect(inventoryMigrationIndex).toBeGreaterThan(reorderLevelIndex);
+    const excelOnlyIndex = migrations.findIndex(
+      (item) => item.name === "20261127151000_excel_only_import_export",
+    );
+    expect(excelOnlyIndex).toBeGreaterThan(inventoryMigrationIndex);
     expect(migration?.sql).toContain('SUM("quantity")');
     expect(migration?.sql).toContain('UPDATE "stock_movements"');
-    expect(migration?.sql).toContain('DROP TABLE "warehouses"');
+    expect(migration?.sql).toContain('DROP TABLE IF EXISTS "warehouses"');
+    expect(migration?.sql).toContain('DROP TABLE IF EXISTS "stock_tracking_balances"');
+    expect(migration?.sql).toContain('DROP COLUMN IF EXISTS "serial_number"');
   });
 
   it("converts adjustment movement history before removing adjustment types", () => {

@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,14 +31,14 @@ import {
   Upload,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ImportExportActions } from "@/components/import-export/import-export-actions";
 
 type Tab =
   | "overview"
   | "products"
   | "levels"
   | "movements"
-  | "transfers"
-  | "reports";
+  | "transfers";
 type PaginatedList = "products" | "levels" | "movements" | "transfers";
 type PaginationMeta = {
   total: number;
@@ -63,13 +63,23 @@ const tabs = [
   "levels",
   "movements",
   "transfers",
-  "reports",
 ].map((id) => ({
   id,
   label: id === "levels" ? "Stock Levels" : id[0].toUpperCase() + id.slice(1),
 }));
 const money = (n: any) =>
   `₹ ${Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const standardVariant = (product: any) =>
+  (product.variants || []).find((variant: any) => variant.name === "Standard");
+const emptyVariant = (taxRateId = "") => ({
+  attributes: {},
+  purchasePrice: "",
+  mrp: "",
+  retailPrice: "",
+  minStockLevel: "",
+  taxRateId,
+  isTaxInclusive: false,
+});
 
 export default function InventoryPage() {
   const [tab, setTab] = useState<Tab>("overview");
@@ -111,15 +121,12 @@ export default function InventoryPage() {
     barcode: "",
     hsnCode: "",
     description: "",
-    purchasePrice: "",
-    mrp: "",
-    retailPrice: "",
     minStockLevel: "",
     unitId: "",
     taxRateId: "",
     isTaxInclusive: false,
     hasVariants: false,
-    variants: [],
+    variants: [emptyVariant()],
     attributeDefinitions: [],
     stockAllocations: [],
   });
@@ -140,6 +147,18 @@ export default function InventoryPage() {
     reason: "",
   });
   const [expandedProducts, setExpandedProducts] = useState<string[]>([]);
+  const refreshUnits = useCallback(async () => {
+    try {
+      const data = await apiFetch("/products/meta/units");
+      setUnits(Array.isArray(data) ? data : []);
+    } catch (error: any) {
+      toast({
+        type: "error",
+        title: "Unable to refresh units",
+        message: error.message,
+      });
+    }
+  }, [toast]);
   const loadInventoryVariants = async () => {
     try {
       const data = await apiFetch("/products/inventory/variants");
@@ -193,13 +212,23 @@ export default function InventoryPage() {
       setUnits(u || []);
       setTaxRates(t || []);
       if (!form.unitId)
-        setForm((x: any) => ({
-          ...x,
-          unitId:
-            u?.find((unit: any) => unit.isDefault)?.id || u?.[0]?.id || "",
-          taxRateId:
-            t?.find((tax: any) => tax.isDefault)?.id || t?.[0]?.id || "",
-        }));
+        setForm((x: any) => {
+          const taxRateId =
+            t?.find((tax: any) => tax.isDefault)?.id || t?.[0]?.id || "";
+          return {
+            ...x,
+            unitId:
+              u?.find((unit: any) => unit.isDefault)?.id || u?.[0]?.id || "",
+            taxRateId,
+            variants: x.variants.length
+              ? x.variants.map((variant: any, index: number) =>
+                  index === 0 && !variant.taxRateId
+                    ? { ...variant, taxRateId }
+                    : variant,
+                )
+              : [emptyVariant(taxRateId)],
+          };
+        });
     } catch (e: any) {
       toast({
         type: "error",
@@ -216,6 +245,10 @@ export default function InventoryPage() {
   useEffect(() => {
     loadInventoryVariants();
   }, []);
+  useEffect(() => {
+    window.addEventListener("focus", refreshUnits);
+    return () => window.removeEventListener("focus", refreshUnits);
+  }, [refreshUnits]);
   const changePage = (list: PaginatedList, page: number) =>
     setPages((current) => ({ ...current, [list]: page }));
   const variants = inventoryVariants;
@@ -238,12 +271,16 @@ export default function InventoryPage() {
             ? { ...body, quantity: numberValue(body.quantity) }
             : body;
       if (url === "/products" || method === "PATCH") {
-        const { attributeDefinitions, ...productFields } = body;
+        const productFields = { ...body };
+        delete productFields.attributeDefinitions;
+        delete productFields.variantDefaults;
+        delete productFields.purchasePrice;
+        delete productFields.mrp;
+        delete productFields.retailPrice;
+        delete productFields.isTaxInclusive;
         payload = {
           ...productFields,
-          purchasePrice: numberValue(body.purchasePrice),
-          mrp: numberValue(body.mrp),
-          retailPrice: numberValue(body.retailPrice),
+          taxRateId: body.variants?.[0]?.taxRateId || body.taxRateId,
           minStockLevel: numberValue(body.minStockLevel),
           variants: (body.variants || []).map((variant: any) => ({
             ...variant,
@@ -251,6 +288,8 @@ export default function InventoryPage() {
             mrp: numberValue(variant.mrp),
             retailPrice: numberValue(variant.retailPrice),
             minStockLevel: numberValue(variant.minStockLevel),
+            taxRateId: variant.taxRateId || body.taxRateId,
+            isTaxInclusive: Boolean(variant.isTaxInclusive),
           })),
           stockAllocations: (body.stockAllocations || []).map(
             (allocation: any) => ({
@@ -276,9 +315,6 @@ export default function InventoryPage() {
           barcode: "",
           hsnCode: "",
           description: "",
-          purchasePrice: "",
-          mrp: "",
-          retailPrice: "",
           minStockLevel: "",
           unitId:
             units.find((unit: any) => unit.isDefault)?.id || units[0]?.id || "",
@@ -288,7 +324,13 @@ export default function InventoryPage() {
             "",
           isTaxInclusive: false,
           hasVariants: false,
-          variants: [],
+          variants: [
+            emptyVariant(
+              taxRates.find((tax: any) => tax.isDefault)?.id ||
+                taxRates[0]?.id ||
+                "",
+            ),
+          ],
           attributeDefinitions: [],
           stockAllocations: [],
         });
@@ -315,17 +357,27 @@ export default function InventoryPage() {
         title: "Required fields",
         message: "Product name and SKU are required.",
       });
-    if (!form.unitId || !form.taxRateId)
+    if (!form.unitId)
       return toast({
         type: "warning",
         title: "Metadata required",
-        message: "Select a unit and GST rate before saving.",
+        message: "Select a unit before saving.",
       });
     if (form.hasVariants && !form.variants.length)
       return toast({
         type: "warning",
         title: "Variants required",
         message: "Generate at least one product variant.",
+      });
+    if (
+      (form.variants || []).some(
+        (variant: any) => !variant.taxRateId && !form.taxRateId,
+      )
+    )
+      return toast({
+        type: "warning",
+        title: "GST rate required",
+        message: "Select a GST rate for each product variant.",
       });
     submit(
       editingProduct ? `/products/${editingProduct.id}` : "/products",
@@ -339,13 +391,25 @@ export default function InventoryPage() {
     setEditingProduct(product);
     const variantRows = (product.variants || [])
       .filter((variant: any) => variant.combinationKey)
-      .map((variant: any) => ({
-        ...variant,
-        purchasePrice: Number(variant.purchasePrice || 0),
-        mrp: Number(variant.mrp || 0),
-        retailPrice: Number(variant.retailPrice || 0),
-        minStockLevel: Number(variant.minStockLevel || 0),
-      }));
+      .map((variant: any) => {
+        const {
+          taxRate,
+          stockBalances,
+          totalStock,
+          isLowStock,
+          isOutOfStock,
+          ...editable
+        } = variant;
+        return {
+          ...editable,
+          taxRateId: variant.taxRateId || taxRate?.id || product.taxRateId || "",
+          isTaxInclusive: variant.isTaxInclusive ?? product.isTaxInclusive ?? false,
+          purchasePrice: Number(variant.purchasePrice || 0),
+          mrp: Number(variant.mrp || 0),
+          retailPrice: Number(variant.retailPrice || 0),
+          minStockLevel: Number(variant.minStockLevel || 0),
+        };
+      });
     const attributeNames = Array.from(
       new Set(
         variantRows.flatMap((variant: any) =>
@@ -366,6 +430,27 @@ export default function InventoryPage() {
     const standard = (product.variants || []).find(
       (variant: any) => variant.name === "Standard",
     );
+    let standardVariant = emptyVariant(product.taxRateId || "");
+    if (standard) {
+      const {
+        taxRate,
+        stockBalances,
+        totalStock,
+        isLowStock,
+        isOutOfStock,
+        ...editable
+      } = standard;
+      standardVariant = {
+        ...emptyVariant(
+          standard.taxRateId || standard.taxRate?.id || product.taxRateId || "",
+        ),
+        ...editable,
+        taxRateId:
+          standard.taxRateId || standard.taxRate?.id || product.taxRateId || "",
+        isTaxInclusive:
+          standard.isTaxInclusive ?? product.isTaxInclusive ?? false,
+      };
+    }
     const stockAllocations = product.hasVariants
       ? []
       : (standard?.stockBalances || [])
@@ -381,16 +466,13 @@ export default function InventoryPage() {
       barcode: product.barcode || "",
       hsnCode: product.hsnCode || "",
       description: product.description || "",
-      purchasePrice: Number(product.purchasePrice || 0),
-      mrp: Number(product.mrp || 0),
-      retailPrice: Number(product.retailPrice || 0),
       minStockLevel: Number(product.minStockLevel || 0),
       unitId: product.unitId || "",
       taxRateId: product.taxRateId || "",
       isTaxInclusive: product.isTaxInclusive ?? false,
       imageUrl: product.imageUrl || "",
       hasVariants: Boolean(product.hasVariants),
-      variants: variantRows,
+      variants: product.hasVariants ? variantRows : [standardVariant],
       attributeDefinitions,
       stockAllocations,
     });
@@ -431,6 +513,10 @@ export default function InventoryPage() {
           </p>
         </div>
         <div className="flex shrink-0 gap-2 self-start sm:self-auto">
+          {tab === "products" && <ImportExportActions operation="catalog" canImport onComplete={load} />}
+          {tab === "levels" && <ImportExportActions operation="catalog" />}
+          {tab === "movements" && <ImportExportActions operation="movements" canImport onComplete={load} />}
+          {tab === "transfers" && <ImportExportActions operation="transfers" canImport onComplete={load} />}
           <Button
             size="sm"
             variant="secondary"
@@ -450,9 +536,6 @@ export default function InventoryPage() {
                 barcode: "",
                 hsnCode: "",
                 description: "",
-                purchasePrice: "",
-                mrp: "",
-                retailPrice: "",
                 minStockLevel: "",
                 unitId:
                   units.find((unit: any) => unit.isDefault)?.id ||
@@ -464,7 +547,13 @@ export default function InventoryPage() {
                   "",
                 isTaxInclusive: false,
                 hasVariants: false,
-                variants: [],
+                variants: [
+                  emptyVariant(
+                    taxRates.find((tax: any) => tax.isDefault)?.id ||
+                      taxRates[0]?.id ||
+                      "",
+                  ),
+                ],
                 attributeDefinitions: [],
                 stockAllocations: [],
               });
@@ -575,23 +664,26 @@ export default function InventoryPage() {
 
           {tab === "products" && (
             <div className="space-y-3">
-              <Table className="min-w-[980px]">
+              <Table className="min-w-[1040px] table-fixed">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="whitespace-nowrap">SKU</TableHead>
-                    <TableHead className="min-w-[200px]">Product</TableHead>
-                    <TableHead className="whitespace-nowrap">GST</TableHead>
-                    <TableHead className="whitespace-nowrap text-right">
+                    <TableHead className="w-[14%] whitespace-nowrap">SKU</TableHead>
+                    <TableHead className="w-[25%]">Product</TableHead>
+                    <TableHead className="w-[12%] whitespace-nowrap">GST</TableHead>
+                    <TableHead className="w-[9%] whitespace-nowrap text-right">
                       Purchase
                     </TableHead>
-                    <TableHead className="whitespace-nowrap text-right">
+                    <TableHead className="w-[8%] whitespace-nowrap text-right">
+                      MRP
+                    </TableHead>
+                    <TableHead className="w-[10%] whitespace-nowrap text-right">
                       Retail
                     </TableHead>
-                    <TableHead className="whitespace-nowrap text-right">
+                    <TableHead className="w-[9%] whitespace-nowrap text-right">
                       Stock
                     </TableHead>
-                    <TableHead className="whitespace-nowrap">Status</TableHead>
-                    <TableHead className="whitespace-nowrap text-right">
+                    <TableHead className="w-[6%] whitespace-nowrap">Status</TableHead>
+                    <TableHead className="w-[7%] whitespace-nowrap text-right">
                       Actions
                     </TableHead>
                   </TableRow>
@@ -634,10 +726,10 @@ export default function InventoryPage() {
                               {product.sku}
                             </button>
                           </TableCell>
-                          <TableCell className="min-w-[200px]">
+                          <TableCell className="max-w-0">
                             <button
                               type="button"
-                              className="text-left hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                              className="block max-w-full truncate text-left hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                               onClick={() => setSelectedProduct(product)}
                               aria-label={`View details for ${product.name}`}
                             >
@@ -650,18 +742,31 @@ export default function InventoryPage() {
                             </button>
                           </TableCell>
                           <TableCell className="whitespace-nowrap">
-                            <div>{product.taxRate?.name || "—"}</div>
-                            <div className="text-[11px] text-text-tertiary">
-                              {product.isTaxInclusive
-                                ? "GST inclusive"
-                                : "GST exclusive"}
-                            </div>
+                            {!product.hasVariants && (
+                              <>
+                                <div>
+                                  {standardVariant(product)?.taxRate?.name ||
+                                    "—"}
+                                </div>
+                                <div className="text-[11px] text-text-tertiary">
+                                  {standardVariant(product)?.isTaxInclusive
+                                    ? "GST inclusive"
+                                    : "GST exclusive"}
+                                </div>
+                              </>
+                            )}
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-right">
-                            {money(product.purchasePrice)}
+                            {!product.hasVariants &&
+                              money(standardVariant(product)?.purchasePrice)}
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-right">
-                            {money(product.retailPrice)}
+                            {!product.hasVariants &&
+                              money(standardVariant(product)?.mrp)}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-right">
+                            {!product.hasVariants &&
+                              money(standardVariant(product)?.retailPrice)}
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-right font-mono">
                             {Number(product.totalStock || 0)}{" "}
@@ -704,24 +809,32 @@ export default function InventoryPage() {
                                 <TableCell className="whitespace-nowrap pl-10 font-mono text-xs text-accent">
                                   {variant.sku}
                                 </TableCell>
-                                <TableCell className="min-w-[200px]">
+                                <TableCell className="max-w-0">
                                   <div className="font-medium">
-                                    {variant.attributeSearch || variant.name}
+                                    <span className="block truncate">
+                                      {variant.attributeSearch || variant.name}
+                                    </span>
                                   </div>
                                   <div className="text-[11px] text-text-tertiary">
                                     {variant.barcode || "No barcode"}
                                   </div>
                                 </TableCell>
-                                <TableCell className="whitespace-nowrap text-text-tertiary">
-                                  Inherited
+                                <TableCell className="whitespace-nowrap">
+                                  <div>{variant.taxRate?.name || "—"}</div>
+                                  <div className="text-[11px] text-text-tertiary">
+                                    {variant.isTaxInclusive
+                                      ? "GST inclusive"
+                                      : "GST exclusive"}
+                                  </div>
                                 </TableCell>
                                 <TableCell className="whitespace-nowrap text-right">
                                   {money(variant.purchasePrice)}
                                 </TableCell>
                                 <TableCell className="whitespace-nowrap text-right">
-                                  {money(
-                                    variant.retailPrice ?? product.retailPrice,
-                                  )}
+                                  {money(variant.mrp)}
+                                </TableCell>
+                                <TableCell className="whitespace-nowrap text-right">
+                                  {money(variant.retailPrice)}
                                 </TableCell>
                                 <TableCell className="whitespace-nowrap text-right font-mono">
                                   {Number(variant.totalStock || 0)}{" "}
@@ -773,18 +886,18 @@ export default function InventoryPage() {
 
           {tab === "levels" && (
             <div className="space-y-3">
-              <Table className="min-w-[720px]">
+              <Table className="min-w-[720px] table-fixed">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="min-w-[220px]">Product</TableHead>
-                    <TableHead className="min-w-[160px]">Branch</TableHead>
-                    <TableHead className="whitespace-nowrap text-right">
+                    <TableHead className="w-[38%]">Product</TableHead>
+                    <TableHead className="w-[22%]">Branch</TableHead>
+                    <TableHead className="w-[14%] whitespace-nowrap text-right">
                       Quantity
                     </TableHead>
-                    <TableHead className="whitespace-nowrap text-right">
+                    <TableHead className="w-[13%] whitespace-nowrap text-right">
                       Average cost
                     </TableHead>
-                    <TableHead className="whitespace-nowrap text-right">
+                    <TableHead className="w-[13%] whitespace-nowrap text-right">
                       Valuation
                     </TableHead>
                   </TableRow>
@@ -806,7 +919,7 @@ export default function InventoryPage() {
                             </div>
                           )}
                         </TableCell>
-                        <TableCell>{balance.branch.name}</TableCell>
+                        <TableCell className="truncate">{balance.branch.name}</TableCell>
                         <TableCell className="whitespace-nowrap text-right font-mono">
                           {Number(balance.quantity)}{" "}
                           {balance.variant.product.unit?.symbol}
@@ -853,13 +966,6 @@ export default function InventoryPage() {
             </div>
           )}
 
-          {tab === "reports" && (
-            <div className="grid grid-cols-1 items-stretch gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <Report title="Stock summary & valuation" kind="summary" />
-              <Report title="Low stock report" kind="low-stock" />
-              <Report title="Dead stock" kind="dead-stock" />
-            </div>
-          )}
         </div>
       )}
 
@@ -921,18 +1027,17 @@ export default function InventoryPage() {
     </div>
   );
 }
-
 function MovementTable({ rows }: { rows: any[] }) {
   return (
-    <Table className="min-w-[820px]">
+    <Table className="min-w-[820px] table-fixed">
       <TableHeader>
         <TableRow>
-          <TableHead className="whitespace-nowrap">Date</TableHead>
-          <TableHead className="min-w-[180px]">Product</TableHead>
-          <TableHead className="min-w-[140px]">Branch</TableHead>
-          <TableHead className="whitespace-nowrap">Type</TableHead>
-          <TableHead className="whitespace-nowrap text-right">Qty</TableHead>
-          <TableHead className="min-w-[200px]">Reason / reference</TableHead>
+          <TableHead className="w-[16%] whitespace-nowrap">Date</TableHead>
+          <TableHead className="w-[25%]">Product</TableHead>
+          <TableHead className="w-[16%]">Branch</TableHead>
+          <TableHead className="w-[12%] whitespace-nowrap">Type</TableHead>
+          <TableHead className="w-[9%] whitespace-nowrap text-right">Qty</TableHead>
+          <TableHead className="w-[22%]">Reason / reference</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -942,8 +1047,8 @@ function MovementTable({ rows }: { rows: any[] }) {
               <TableCell className="whitespace-nowrap">
                 {new Date(movement.createdAt).toLocaleString()}
               </TableCell>
-              <TableCell>
-                <div>{movement.variant?.product?.name || "—"}</div>
+              <TableCell className="max-w-0">
+                <div className="truncate">{movement.variant?.product?.name || "—"}</div>
                 <div className="text-[11px] text-text-tertiary">
                   {movement.variant?.sku || ""}
                 </div>
@@ -1041,23 +1146,26 @@ function Field({ form, setForm, k, label, type = "text" }: any) {
 }
 function UnitPicker({ units, value, onChange }: any) {
   const selectableUnits = units.filter(
-    (unit: any) => unit.isQuickSelect || unit.id === value,
+    (unit: any) => unit.isActive || unit.id === value,
   );
 
   return (
-    <Select
-      id="product-unit-picker"
-      label="Unit *"
-      value={value || ""}
-      onChange={(event) => onChange(event.target.value)}
-    >
-      <option value="">Select a unit</option>
-      {selectableUnits.map((unit: any) => (
-        <option key={unit.id} value={unit.id}>
-          {unit.symbol} - {unit.name}
-        </option>
-      ))}
-    </Select>
+    <div className="space-y-1">
+      <Select
+        id="product-unit-picker"
+        label="Unit *"
+        value={value || ""}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        <option value="">Select a unit</option>
+        {selectableUnits.map((unit: any) => (
+          <option key={unit.id} value={unit.id}>
+            {unit.symbol} - {unit.name}
+            {!unit.isActive ? " (inactive)" : ""}
+          </option>
+        ))}
+      </Select>
+    </div>
   );
 }
 
@@ -1125,8 +1233,8 @@ function ProductModal({
         className="flex max-h-[calc(100dvh-12rem)] flex-col"
       >
         <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <section className="space-y-3 rounded-lg border border-border bg-surface-secondary/20 p-3">
+          <div className="space-y-4">
+            <section className="space-y-4 rounded-lg border border-border bg-surface-secondary/20 p-4">
               <div>
                 <h4 className="text-sm font-semibold text-text-primary">
                   Product details
@@ -1135,7 +1243,7 @@ function ProductModal({
                   Name, identifiers and measurement unit.
                 </p>
               </div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="sm:col-span-2">
                   <Field
                     form={form}
@@ -1145,122 +1253,40 @@ function ProductModal({
                   />
                 </div>
                 <Field form={form} setForm={setForm} k="sku" label="SKU *" />
-                <Field
-                  form={form}
-                  setForm={setForm}
-                  k="barcode"
-                  label="Barcode"
-                />
-                <div className="sm:col-span-2">
+                {!form.hasVariants && (
                   <Field
                     form={form}
                     setForm={setForm}
-                    k="hsnCode"
-                    label="HSN code"
+                    k="barcode"
+                    label="Barcode"
                   />
-                </div>
-                <div className="sm:col-span-2">
-                  <UnitPicker
-                    units={units}
-                    value={form.unitId}
-                    onChange={(unitId: string) =>
-                      setForm((current: any) => ({ ...current, unitId }))
-                    }
-                  />
-                </div>
-              </div>
-            </section>
-
-            <section className="space-y-3 rounded-lg border border-border bg-surface-secondary/20 p-3">
-              <div>
-                <h4 className="text-sm font-semibold text-text-primary">
-                  Pricing &amp; GST
-                </h4>
-                <p className="mt-0.5 text-[11px] text-text-tertiary">
-                  Set prices and how GST is applied.
-                </p>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
+                )}
                 <Field
                   form={form}
                   setForm={setForm}
-                  k="purchasePrice"
-                  label="Purchase price"
-                  type="number"
+                  k="hsnCode"
+                  label="HSN code"
                 />
-                <Field
-                  form={form}
-                  setForm={setForm}
-                  k="mrp"
-                  label="MRP"
-                  type="number"
+                <UnitPicker
+                  units={units}
+                  value={form.unitId}
+                  onChange={(unitId: string) =>
+                    setForm((current: any) => ({ ...current, unitId }))
+                  }
                 />
-                <div className="col-span-2">
-                  <Field
-                    form={form}
-                    setForm={setForm}
-                    k="retailPrice"
-                    label="Retail price"
-                    type="number"
-                  />
-                </div>
-                <div className="col-span-2">
-                  <Select
-                    label="GST rate *"
-                    value={form.taxRateId}
-                    disabled={!taxes.length}
-                    onChange={(e) =>
-                      setForm({ ...form, taxRateId: e.target.value })
-                    }
-                  >
-                    <option value="">
-                      {taxes.length
-                        ? "Select GST rate"
-                        : "No GST rates configured"}
-                    </option>
-                    {taxes.map((tax: any) => (
-                      <option key={tax.id} value={tax.id}>
-                        {tax.name}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-                <div className="col-span-2 flex items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-2">
-                  <div>
-                    <p className="text-xs font-medium text-text-primary">
-                      Inclusive GST
-                    </p>
-                    <p className="mt-0.5 text-[11px] text-text-tertiary">
-                      {form.isTaxInclusive
-                        ? "Product price includes GST."
-                        : "GST is exclusive of product price."}
-                    </p>
-                  </div>
-                  <Switch
-                    checked={Boolean(form.isTaxInclusive)}
-                    onChange={(isTaxInclusive: boolean) =>
-                      setForm((current: any) => ({
-                        ...current,
-                        isTaxInclusive,
-                      }))
-                    }
-                    label={form.isTaxInclusive ? "On" : "Off"}
-                  />
-                </div>
               </div>
             </section>
 
-            <section className="space-y-3 rounded-lg border border-border bg-surface-secondary/20 p-3 sm:col-span-2">
+            <section className="space-y-4 rounded-lg border border-border bg-surface-secondary/20 p-4">
               <div>
                 <h4 className="text-sm font-semibold text-text-primary">
                   Product variants
                 </h4>
                 <p className="mt-0.5 text-[11px] text-text-tertiary">
-                  Optional; configure combinations when the product has
-                  variants.
+                  Prices and GST are configured for each variant.
                 </p>
               </div>
-              <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface px-3 py-2">
+              <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface px-4 py-3">
                 <p className="text-xs text-text-secondary">
                   This product comes in multiple options
                 </p>
@@ -1271,7 +1297,17 @@ function ProductModal({
                     setForm((current: any) => ({
                       ...current,
                       hasVariants,
-                      variants: hasVariants ? current.variants : [],
+                      barcode: hasVariants ? "" : current.barcode,
+                      variantDefaults: hasVariants
+                        ? current.variants?.[0]
+                        : current.variantDefaults,
+                      variants: hasVariants
+                        ? []
+                        : [
+                            current.variantDefaults ||
+                              current.variants?.[0] ||
+                              emptyVariant(current.taxRateId),
+                          ],
                     }))
                   }
                   label={form.hasVariants ? "On" : "Off"}
@@ -1284,92 +1320,105 @@ function ProductModal({
                   editing={editing}
                   product={product}
                   branches={branches}
+                  taxes={taxes}
                 />
               )}
-            </section>
-
-            <section className="space-y-3 rounded-lg border border-border bg-surface-secondary/20 p-3">
-              <div>
-                <h4 className="text-sm font-semibold text-text-primary">
-                  Stock threshold
-                </h4>
-                <p className="mt-0.5 text-[11px] text-text-tertiary">
-                  Used to flag products that need replenishment.
-                </p>
-              </div>
               {!form.hasVariants && (
-                <Field
+                <StandardVariantFields
                   form={form}
                   setForm={setForm}
-                  k="minStockLevel"
-                  label="Minimum stock"
-                  type="number"
+                  taxes={taxes}
                 />
               )}
-              {form.hasVariants && (
-                <p className="rounded-md border border-border bg-surface px-3 py-2 text-xs text-text-secondary">
-                  Minimum stock is configured separately for each variant.
-                </p>
-              )}
             </section>
 
-            <section className="space-y-3 rounded-lg border border-border bg-surface-secondary/20 p-3">
-              <div>
-                <h4 className="text-sm font-semibold text-text-primary">
-                  Product image
-                </h4>
-                <p className="mt-0.5 text-[11px] text-text-tertiary">
-                  Optional image for quick identification.
-                </p>
-              </div>
-              <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-3">
-                  <label className="flex h-14 w-14 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-lg border border-border bg-surface-secondary hover:border-accent">
-                    {form.imageUrl ? (
-                      <img
-                        src={form.imageUrl}
-                        alt="Product image preview"
-                        className="h-full w-full object-contain p-1"
-                      />
-                    ) : (
-                      <Upload className="h-5 w-5 text-text-tertiary" />
-                    )}
-                    <input
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp"
-                      aria-label="Upload product image"
-                      className="sr-only"
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        event.target.value = "";
-                        handleImageUpload(file);
-                      }}
-                    />
-                  </label>
-                  <div className="space-y-1">
-                    <p className="text-xs font-medium text-text-primary">
-                      Click the preview to upload or replace
-                    </p>
-                    <p className="text-[11px] text-text-tertiary">
-                      PNG, JPG, or WebP · Max size: 1 MB
-                    </p>
-                  </div>
+            <div className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2">
+              <section className="space-y-4 rounded-lg border border-border bg-surface-secondary/20 p-4">
+                <div>
+                  <h4 className="text-sm font-semibold text-text-primary">
+                    Stock threshold
+                  </h4>
+                  <p className="mt-0.5 text-[11px] text-text-tertiary">
+                    Used to flag products that need replenishment.
+                  </p>
                 </div>
-                {form.imageUrl && (
-                  <button
-                    type="button"
-                    className="self-start text-[11px] font-medium text-danger hover:underline sm:self-center"
-                    onClick={() =>
-                      setForm((current: any) => ({ ...current, imageUrl: "" }))
-                    }
-                  >
-                    Remove image
-                  </button>
+                {!form.hasVariants && (
+                  <Field
+                    form={form}
+                    setForm={setForm}
+                    k="minStockLevel"
+                    label="Minimum stock"
+                    type="number"
+                  />
                 )}
-              </div>
-            </section>
+                {form.hasVariants && (
+                  <p className="rounded-md border border-border bg-surface px-3 py-2 text-xs text-text-secondary">
+                    Minimum stock is configured separately for each variant.
+                  </p>
+                )}
+              </section>
 
-            <section className="space-y-3 rounded-lg border border-border bg-surface-secondary/20 p-3 sm:col-span-2">
+              <section className="space-y-4 rounded-lg border border-border bg-surface-secondary/20 p-4">
+                <div>
+                  <h4 className="text-sm font-semibold text-text-primary">
+                    Product image
+                  </h4>
+                  <p className="mt-0.5 text-[11px] text-text-tertiary">
+                    Optional image for quick identification.
+                  </p>
+                </div>
+                <div className="flex min-h-[104px] flex-col gap-3 rounded-lg border border-border bg-surface p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-3">
+                    <label className="flex h-14 w-14 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-lg border border-border bg-surface-secondary hover:border-accent">
+                      {form.imageUrl ? (
+                        <img
+                          src={form.imageUrl}
+                          alt="Product image preview"
+                          className="h-full w-full object-contain p-1"
+                        />
+                      ) : (
+                        <Upload className="h-5 w-5 text-text-tertiary" />
+                      )}
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        aria-label="Upload product image"
+                        className="sr-only"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          event.target.value = "";
+                          handleImageUpload(file);
+                        }}
+                      />
+                    </label>
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-text-primary">
+                        Click the preview to upload or replace
+                      </p>
+                      <p className="text-[11px] text-text-tertiary">
+                        PNG, JPG, or WebP · Max size: 1 MB
+                      </p>
+                    </div>
+                  </div>
+                  {form.imageUrl && (
+                    <button
+                      type="button"
+                      className="self-start text-[11px] font-medium text-danger hover:underline sm:self-center"
+                      onClick={() =>
+                        setForm((current: any) => ({
+                          ...current,
+                          imageUrl: "",
+                        }))
+                      }
+                    >
+                      Remove image
+                    </button>
+                  )}
+                </div>
+              </section>
+            </div>
+
+            <section className="space-y-4 rounded-lg border border-border bg-surface-secondary/20 p-4">
               <div>
                 <h4 className="text-sm font-semibold text-text-primary">
                   Description
@@ -1400,7 +1449,125 @@ function ProductModal({
   );
 }
 
-function VariantBuilder({ form, setForm, editing, product, branches }: any) {
+function VariantPriceTaxFields({ variant, update, taxes }: any) {
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <Input
+          label="Purchase price"
+          type="number"
+          min="0"
+          value={variant.purchasePrice ?? ""}
+          onChange={(event) =>
+            update(
+              "purchasePrice",
+              event.target.value === "" ? "" : Number(event.target.value),
+            )
+          }
+        />
+        <Input
+          label="MRP"
+          type="number"
+          min="0"
+          value={variant.mrp ?? ""}
+          onChange={(event) =>
+            update(
+              "mrp",
+              event.target.value === "" ? "" : Number(event.target.value),
+            )
+          }
+        />
+        <Input
+          label="Retail price"
+          type="number"
+          min="0"
+          value={variant.retailPrice ?? ""}
+          onChange={(event) =>
+            update(
+              "retailPrice",
+              event.target.value === "" ? "" : Number(event.target.value),
+            )
+          }
+        />
+      </div>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <Select
+          label="GST rate *"
+          value={variant.taxRateId || ""}
+          disabled={!taxes.length}
+          onChange={(event) => update("taxRateId", event.target.value)}
+        >
+          <option value="">
+            {taxes.length ? "Select GST rate" : "No GST rates configured"}
+          </option>
+          {taxes.map((tax: any) => (
+            <option key={tax.id} value={tax.id}>
+              {tax.name}
+            </option>
+          ))}
+        </Select>
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-2">
+          <div>
+            <p className="text-xs font-medium text-text-primary">
+              Inclusive GST
+            </p>
+            <p className="mt-0.5 text-[11px] text-text-tertiary">
+              {variant.isTaxInclusive
+                ? "Variant price includes GST."
+                : "GST is exclusive of variant price."}
+            </p>
+          </div>
+          <Switch
+            checked={Boolean(variant.isTaxInclusive)}
+            onChange={(isTaxInclusive: boolean) =>
+              update("isTaxInclusive", isTaxInclusive)
+            }
+            label={variant.isTaxInclusive ? "On" : "Off"}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StandardVariantFields({ form, setForm, taxes }: any) {
+  const variant = form.variants?.[0] || emptyVariant(form.taxRateId);
+  const update = (key: string, value: any) =>
+    setForm((current: any) => {
+      const standard = current.variants?.[0] || emptyVariant(current.taxRateId);
+      return {
+        ...current,
+        variants: [{ ...standard, [key]: value }, ...current.variants.slice(1)],
+      };
+    });
+
+  return (
+    <div className="space-y-3 rounded-md border border-border bg-surface px-3 py-3">
+      <div>
+        <h5 className="text-xs font-semibold text-text-primary">
+          Standard variant
+        </h5>
+        <p className="mt-0.5 text-[11px] text-text-tertiary">
+          Configure the price and GST for this product’s standard variant.
+        </p>
+      </div>
+      <VariantPriceTaxFields
+        variant={variant}
+        update={update}
+        taxes={taxes}
+      />
+    </div>
+  );
+}
+
+function VariantBuilder({
+  form,
+  setForm,
+  editing,
+  product,
+  branches,
+  taxes,
+}: any) {
   const { toast } = useToast();
   const definitions = form.attributeDefinitions || [];
   const variants = form.variants || [];
@@ -1491,10 +1658,17 @@ function VariantBuilder({ form, setForm, editing, product, branches }: any) {
           attributeSearch: Object.entries(attributes)
             .map(([key, value]) => `${key}: ${value}`)
             .join(" "),
-          purchasePrice: Number(form.purchasePrice || 0),
-          mrp: Number(form.mrp || 0),
-          retailPrice: Number(form.retailPrice || 0),
+          purchasePrice: Number(form.variantDefaults?.purchasePrice || 0),
+          mrp: Number(form.variantDefaults?.mrp || 0),
+          retailPrice: Number(form.variantDefaults?.retailPrice || 0),
           minStockLevel: Number(form.minStockLevel || 0),
+          taxRateId:
+            form.variantDefaults?.taxRateId ||
+            form.taxRateId ||
+            taxes.find((tax: any) => tax.isDefault)?.id ||
+            taxes[0]?.id ||
+            "",
+          isTaxInclusive: Boolean(form.variantDefaults?.isTaxInclusive),
           imageUrl: "",
           isActive: true,
         }
@@ -1651,52 +1825,14 @@ function VariantBuilder({ form, setForm, editing, product, branches }: any) {
                   }
                 />
               </div>
-              <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-                <Input
-                  label="Purchase price"
-                  type="number"
-                  min="0"
-                  value={variant.purchasePrice ?? ""}
-                  onChange={(event) =>
-                    updateVariant(
-                      index,
-                      "purchasePrice",
-                      event.target.value === ""
-                        ? ""
-                        : Number(event.target.value),
-                    )
-                  }
-                />
-                <Input
-                  label="MRP"
-                  type="number"
-                  min="0"
-                  value={variant.mrp ?? ""}
-                  onChange={(event) =>
-                    updateVariant(
-                      index,
-                      "mrp",
-                      event.target.value === ""
-                        ? ""
-                        : Number(event.target.value),
-                    )
-                  }
-                />
-                <Input
-                  label="Retail price"
-                  type="number"
-                  min="0"
-                  value={variant.retailPrice ?? ""}
-                  onChange={(event) =>
-                    updateVariant(
-                      index,
-                      "retailPrice",
-                      event.target.value === ""
-                        ? ""
-                        : Number(event.target.value),
-                    )
-                  }
-                />
+              <VariantPriceTaxFields
+                variant={variant}
+                update={(key: string, value: any) =>
+                  updateVariant(index, key, value)
+                }
+                taxes={taxes}
+              />
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <Input
                   label="Minimum stock"
                   type="number"
@@ -1865,6 +2001,7 @@ function VariantBuilder({ form, setForm, editing, product, branches }: any) {
 }
 
 function ProductDetailsModal({ product, close, edit }: any) {
+  const standard = product && standardVariant(product);
   const detail = (label: string, value: any) => (
     <div className="min-w-0">
       <dt className="text-[11px] text-text-tertiary">{label}</dt>
@@ -1885,17 +2022,20 @@ function ProductDetailsModal({ product, close, edit }: any) {
         <>
           <dl className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
             {detail("SKU", product.sku)}
-            {detail("Barcode", product.barcode)}
+            {!product.hasVariants && detail("Barcode", product.barcode)}
             {detail("HSN code", product.hsnCode)}
             {detail("Unit", product.unit?.name || product.unit?.symbol)}
-            {detail("GST rate", product.taxRate?.name)}
-            {detail(
-              "GST pricing",
-              product.isTaxInclusive ? "GST inclusive" : "GST exclusive",
-            )}
-            {detail("Purchase price", money(product.purchasePrice))}
-            {detail("MRP", money(product.mrp))}
-            {detail("Retail price", money(product.retailPrice))}
+            {!product.hasVariants && detail("GST rate", standard?.taxRate?.name)}
+            {!product.hasVariants &&
+              detail(
+                "GST pricing",
+                standard?.isTaxInclusive ? "GST inclusive" : "GST exclusive",
+              )}
+            {!product.hasVariants &&
+              detail("Purchase price", money(standard?.purchasePrice))}
+            {!product.hasVariants && detail("MRP", money(standard?.mrp))}
+            {!product.hasVariants &&
+              detail("Retail price", money(standard?.retailPrice))}
             {detail(
               "Minimum stock",
               `${Number(product.minStockLevel || 0)} ${product.unit?.symbol || ""}`,
@@ -2125,29 +2265,5 @@ function TransferModal({
         </div>
       </form>
     </Modal>
-  );
-}
-
-function Report({ title, kind }: { title: string; kind: string }) {
-  const [rows, setRows] = useState<any[]>([]);
-  useEffect(() => {
-    apiFetch("/products/inventory/reports", { params: { kind } })
-      .then(setRows)
-      .catch(() => undefined);
-  }, [kind]);
-  return (
-    <Card className="h-full">
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="min-h-[112px]">
-        <div className="text-2xl font-semibold text-text-primary">
-          {rows.length}
-        </div>
-        <p className="mt-1 text-xs text-text-secondary">
-          Live records from the inventory service.
-        </p>
-      </CardContent>
-    </Card>
   );
 }

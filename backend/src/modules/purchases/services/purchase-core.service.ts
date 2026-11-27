@@ -253,13 +253,12 @@ export class PurchaseCoreService {
   }
 
   /**
-   * Increases warehouse stock using WAC or FIFO costing and records a StockMovement.
+   * Increases branch stock using WAC or FIFO costing and records a StockMovement.
    */
   async applyStockIn(
     tx: any,
     params: {
       branchId: string;
-      warehouseId: string;
       variantId: string;
       quantity: number;
       landedUnitCost: number;
@@ -268,14 +267,16 @@ export class PurchaseCoreService {
       referenceDocumentType: string;
       idempotencyKey: string;
       performedById?: string;
-      batchNumber?: string | null;
-      serialNumber?: string | null;
-      expiryDate?: Date | null;
       notes?: string;
     },
   ) {
     const existing = await tx.stockBalance.findUnique({
-      where: { warehouseId_variantId: { warehouseId: params.warehouseId, variantId: params.variantId } },
+      where: {
+        branchId_variantId: {
+          branchId: params.branchId,
+          variantId: params.variantId,
+        },
+      },
     });
 
     const oldQty = Number(existing?.quantity || 0);
@@ -291,10 +292,14 @@ export class PurchaseCoreService {
     }
 
     await tx.stockBalance.upsert({
-      where: { warehouseId_variantId: { warehouseId: params.warehouseId, variantId: params.variantId } },
+      where: {
+        branchId_variantId: {
+          branchId: params.branchId,
+          variantId: params.variantId,
+        },
+      },
       create: {
         branchId: params.branchId,
-        warehouseId: params.warehouseId,
         variantId: params.variantId,
         quantity: params.quantity.toFixed(2),
         averageCost: nextAvgCost.toFixed(2),
@@ -308,7 +313,6 @@ export class PurchaseCoreService {
     await tx.stockMovement.create({
       data: {
         branchId: params.branchId,
-        warehouseId: params.warehouseId,
         variantId: params.variantId,
         type: 'IN_PURCHASE',
         quantity: params.quantity.toFixed(2),
@@ -319,23 +323,19 @@ export class PurchaseCoreService {
         referenceDocumentType: params.referenceDocumentType,
         idempotencyKey: params.idempotencyKey,
         performedById: params.performedById || null,
-        batchNumber: params.batchNumber || null,
-        serialNumber: params.serialNumber || null,
-        expiryDate: params.expiryDate || null,
         notes: params.notes,
       },
     });
   }
 
   /**
-   * Decreases warehouse stock (for Purchase Return or GRN/Invoice cancellation).
+   * Decreases branch stock (for Purchase Return or GRN/Invoice cancellation).
    * Enforces stock sufficiency when `blockOnInsufficient` is true.
    */
   async applyStockOut(
     tx: any,
     params: {
       branchId: string;
-      warehouseId: string;
       variantId: string;
       quantity: number;
       unitCost: number;
@@ -350,13 +350,18 @@ export class PurchaseCoreService {
     },
   ): Promise<number> {
     const balance = await tx.stockBalance.findUnique({
-      where: { warehouseId_variantId: { warehouseId: params.warehouseId, variantId: params.variantId } },
+      where: {
+        branchId_variantId: {
+          branchId: params.branchId,
+          variantId: params.variantId,
+        },
+      },
     });
 
     const currentQty = Number(balance?.quantity || 0);
     if (params.blockOnInsufficient && currentQty < params.quantity) {
       throw new BadRequestException(
-        `Insufficient stock in warehouse for item ${params.variantId} (available: ${currentQty}, required: ${params.quantity})`,
+        `Insufficient branch stock for item ${params.variantId} (available: ${currentQty}, required: ${params.quantity})`,
       );
     }
 
@@ -365,7 +370,7 @@ export class PurchaseCoreService {
     if (params.costingMethod === 'FIFO') {
       const layers = await tx.stockMovement.findMany({
         where: {
-          warehouseId: params.warehouseId,
+          branchId: params.branchId,
           variantId: params.variantId,
           type: 'IN_PURCHASE',
           remainingQuantity: { gt: 0 },
@@ -400,7 +405,6 @@ export class PurchaseCoreService {
       await tx.stockBalance.create({
         data: {
           branchId: params.branchId,
-          warehouseId: params.warehouseId,
           variantId: params.variantId,
           quantity: (-params.quantity).toFixed(2),
           averageCost: params.unitCost.toFixed(2),
@@ -413,7 +417,6 @@ export class PurchaseCoreService {
     await tx.stockMovement.create({
       data: {
         branchId: params.branchId,
-        warehouseId: params.warehouseId,
         variantId: params.variantId,
         type: params.movementType,
         quantity: params.quantity.toFixed(2),

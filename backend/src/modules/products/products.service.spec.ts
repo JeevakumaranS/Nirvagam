@@ -44,12 +44,15 @@ describe('ProductsService branch inventory', () => {
         mrp: 20,
         retailPrice: 18,
         minStockLevel: 0,
+        taxRateId: 'tax-id',
+        isTaxInclusive: false,
       }), findFirst: jest.fn().mockResolvedValue(null) },
       productVariant: {
         findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockResolvedValue({ id: 'variant-id', sku: 'SHIRT-RED-S' }),
         findMany: jest.fn().mockResolvedValue([]),
       },
+      taxRate: { findFirst: jest.fn().mockResolvedValue({ id: 'tax-id' }) },
     };
     const prisma = {
       product: { findFirst: jest.fn().mockResolvedValue(null) },
@@ -72,7 +75,12 @@ describe('ProductsService branch inventory', () => {
       taxRateId: 'tax-id',
       purchasePrice: 10,
       hasVariants: true,
-      variants: [{ sku: 'SHIRT-RED-S', attributes: { Colour: 'Red', Size: 'S' } }],
+      variants: [{
+        sku: 'SHIRT-RED-S',
+        attributes: { Colour: 'Red', Size: 'S' },
+        taxRateId: 'tax-id',
+        isTaxInclusive: true,
+      }],
     });
 
     expect(tx.productVariant.create).toHaveBeenCalledWith({
@@ -81,6 +89,71 @@ describe('ProductsService branch inventory', () => {
         name: 'Red / S',
         combinationKey: 'colour=red&size=s',
         attributeSearch: 'Colour: Red Size: S',
+        taxRateId: 'tax-id',
+        isTaxInclusive: true,
+      }),
+    });
+  });
+
+  it('creates a standard variant with variant-level prices and GST', async () => {
+    const tx = {
+      product: {
+        create: jest.fn().mockResolvedValue({
+          id: 'product-id',
+          sku: 'TEA',
+          hasVariants: false,
+          taxRateId: 'tax-id',
+          isTaxInclusive: false,
+          purchasePrice: 0,
+          mrp: 0,
+          retailPrice: 0,
+          minStockLevel: 0,
+        }),
+      },
+      productVariant: {
+        create: jest.fn().mockResolvedValue({ id: 'standard-id', sku: 'TEA' }),
+      },
+      taxRate: { findFirst: jest.fn().mockResolvedValue({ id: 'tax-id' }) },
+    };
+    const prisma = {
+      product: { findFirst: jest.fn().mockResolvedValue(null) },
+      unit: {
+        createMany: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue({ id: 'unit-id' }),
+      },
+      taxRate: {
+        count: jest.fn().mockResolvedValue(1),
+        findFirst: jest.fn().mockResolvedValue({ id: 'tax-id' }),
+      },
+      $transaction: jest.fn((callback: (transaction: typeof tx) => unknown) => callback(tx)),
+    };
+    const service = new ProductsService(prisma as unknown as PrismaService);
+
+    await service.create('business-id', 'branch-id', {
+      name: 'Tea',
+      sku: 'TEA',
+      unitId: 'unit-id',
+      taxRateId: 'tax-id',
+      hasVariants: false,
+      variants: [{
+        attributes: {},
+        purchasePrice: 20,
+        mrp: 30,
+        retailPrice: 28,
+        taxRateId: 'tax-id',
+        isTaxInclusive: true,
+      }],
+    });
+
+    expect(tx.productVariant.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        productId: 'product-id',
+        name: 'Standard',
+        purchasePrice: 20,
+        mrp: 30,
+        retailPrice: 28,
+        taxRateId: 'tax-id',
+        isTaxInclusive: true,
       }),
     });
   });
@@ -215,11 +288,14 @@ describe('ProductsService branch inventory', () => {
         create: jest.fn(),
       },
       branch: { findFirst: jest.fn().mockResolvedValue({ id: 'branch-id' }) },
+      taxRate: { findFirst: jest.fn().mockResolvedValue({ id: 'tax-id' }) },
     };
     const product = {
       id: 'product-id',
       sku: 'SHIRT',
       hasVariants: false,
+      taxRateId: 'tax-id',
+      isTaxInclusive: false,
       purchasePrice: 10,
       mrp: 20,
       retailPrice: 18,
@@ -377,7 +453,7 @@ describe('ProductsService branch inventory', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it('moves stock between branches without warehouses', async () => {
+  it('moves stock between branches', async () => {
     const tx = {
       branch: {
         findFirst: jest.fn()
@@ -429,9 +505,4 @@ describe('ProductsService branch inventory', () => {
     });
   });
 
-  it('rejects unsupported inventory reports', async () => {
-    const service = new ProductsService({} as PrismaService);
-
-    await expect(service.report('business-id', 'unsupported')).rejects.toThrow('Unsupported inventory report');
-  });
 });

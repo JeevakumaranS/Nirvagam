@@ -18,6 +18,7 @@ import { SalesModule } from './modules/sales/sales.module';
 import { PurchasesModule } from './modules/purchases/purchases.module';
 import { AccountingModule } from './modules/accounting/accounting.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { ImportExportModule } from './modules/import-export/import-export.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { ReportsModule } from './modules/reports/reports.module';
     PurchasesModule,
     AccountingModule,
     ReportsModule,
+    ImportExportModule,
   ],
   providers: [
     {

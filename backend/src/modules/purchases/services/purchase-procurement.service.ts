@@ -199,7 +199,7 @@ export class PurchaseProcurementService {
     return this.prisma.$transaction(async (tx) => {
       const pr = await tx.purchaseRequest.findFirst({
         where: { id: prId, businessId: user.businessId, isDeleted: false },
-        include: { items: { include: { variant: { include: { product: { include: { taxRate: true } } } } } } },
+        include: { items: { include: { variant: { include: { taxRate: true } } } } },
       });
       if (!pr) throw new NotFoundException('Purchase request not found');
       if (pr.status !== 'APPROVED') {
@@ -217,7 +217,7 @@ export class PurchaseProcurementService {
             description: item.description || undefined,
             quantity: String(item.quantity),
             unitRate: String(Number(item.preferredRate) > 0 ? item.preferredRate : item.variant?.purchasePrice || 0),
-            taxRate: String(item.variant?.product?.taxRate?.rate || 0),
+            taxRate: String(item.variant?.taxRate?.rate || 0),
           }));
 
       const po = await this.createOrderInternal(tx, user, branchId, {
@@ -289,16 +289,13 @@ export class PurchaseProcurementService {
   }
 
   private async createOrderInternal(tx: any, user: any, branchId: string, dto: CreatePurchaseOrderDto) {
-    const [supplier, branch, settings, defaultWarehouse] = await Promise.all([
+    const [supplier, branch, settings] = await Promise.all([
       tx.supplier.findUnique({ where: { id: dto.supplierId } }),
       tx.branch.findUnique({ where: { id: branchId } }),
       this.core.getSettings(user.businessId, tx),
-      tx.warehouse.findFirst({ where: { branchId, isDefault: true } }),
     ]);
     if (!supplier) throw new NotFoundException('Supplier not found');
     if (!branch) throw new NotFoundException('Branch not found');
-    const warehouseId = dto.warehouseId || defaultWarehouse?.id;
-    if (!warehouseId) throw new BadRequestException('A warehouse is required for the purchase order');
 
     const lines: PurchaseCalculationLine[] = dto.items.map((item, idx) => ({
       id: item.variantId || item.itemName || `line-${idx}`,
@@ -339,7 +336,6 @@ export class PurchaseProcurementService {
         expectedDate: dto.expectedDate ? new Date(dto.expectedDate) : null,
         status: 'DRAFT',
         currencyCode: dto.currencyCode || 'INR',
-        warehouseId,
         overReceiptTolerance: String(dto.overReceiptTolerance ?? settings.defaultOverReceiptTolerance ?? 5),
         pricesIncludeTax: dto.pricesIncludeTax === true,
         invoiceDiscountType: dto.invoiceDiscountType || null,
@@ -456,7 +452,6 @@ export class PurchaseProcurementService {
         where: { id },
         data: {
           supplierId: supplier.id,
-          warehouseId: dto.warehouseId || existing.warehouseId,
           orderDate: dto.orderDate ? new Date(dto.orderDate) : existing.orderDate,
           expectedDate: dto.expectedDate ? new Date(dto.expectedDate) : existing.expectedDate,
           overReceiptTolerance: String(dto.overReceiptTolerance ?? existing.overReceiptTolerance),
@@ -646,12 +641,6 @@ export class PurchaseProcurementService {
         }
       }
 
-      const warehouseId =
-        dto.warehouseId ||
-        purchaseOrder?.warehouseId ||
-        (await tx.warehouse.findFirst({ where: { branchId, isDefault: true } }))?.id;
-      if (!warehouseId) throw new BadRequestException('A warehouse is required for GRN');
-
       const grnNumber = dto.grnNumber || (await this.core.nextNumber(tx, user.businessId, branchId, 'GRN'));
       const totalAmount = dto.items.reduce(
         (sum, item) => sum + Number(item.quantity) * Number(item.landedCost ?? item.unitCost ?? 0),
@@ -664,7 +653,6 @@ export class PurchaseProcurementService {
           branchId,
           supplierId: purchaseOrder?.supplierId || dto.supplierId,
           purchaseOrderId: purchaseOrder?.id || null,
-          warehouseId,
           grnNumber,
           grnDate: new Date(dto.grnDate || new Date()),
           status: 'DRAFT',
@@ -687,9 +675,6 @@ export class PurchaseProcurementService {
                 rejectedQuantity: String(item.rejectedQuantity || 0),
                 unitCost: cost.toFixed(4),
                 landedCost: landed.toFixed(4),
-                batchNumber: item.batchNumber || null,
-                serialNumber: item.serialNumber || null,
-                expiryDate: item.expiryDate ? new Date(item.expiryDate) : null,
               };
             }),
           },
@@ -720,7 +705,6 @@ export class PurchaseProcurementService {
       return tx.grn.update({
         where: { id },
         data: {
-          warehouseId: dto.warehouseId || existing.warehouseId,
           grnDate: dto.grnDate ? new Date(dto.grnDate) : existing.grnDate,
           totalAmount: totalAmount.toFixed(2),
           notes: dto.notes ?? existing.notes,
@@ -736,9 +720,6 @@ export class PurchaseProcurementService {
               rejectedQuantity: String(item.rejectedQuantity || 0),
               unitCost: String(item.unitCost || 0),
               landedCost: String(item.landedCost ?? item.unitCost ?? 0),
-              batchNumber: item.batchNumber || null,
-              serialNumber: item.serialNumber || null,
-              expiryDate: item.expiryDate ? new Date(item.expiryDate) : null,
             })),
           },
         },
@@ -797,7 +778,6 @@ export class PurchaseProcurementService {
       if (item.variantId) {
         await this.core.applyStockIn(tx, {
           branchId: grn.branchId,
-          warehouseId: grn.warehouseId,
           variantId: item.variantId,
           quantity: qty,
           landedUnitCost: unitLanded,
@@ -806,9 +786,6 @@ export class PurchaseProcurementService {
           referenceDocumentType: 'GRN',
           idempotencyKey: `GRN:${grn.id}:${item.id}:POST`,
           performedById: user.id,
-          batchNumber: item.batchNumber,
-          serialNumber: item.serialNumber,
-          expiryDate: item.expiryDate,
           notes: `Goods received under ${grn.grnNumber}`,
         });
       }
@@ -895,12 +872,8 @@ export class PurchaseProcurementService {
         const settings = await this.core.getSettings(user.businessId, tx);
         for (const item of grn.items) {
           if (item.variantId) {
-            if (!grn.warehouseId) {
-              throw new BadRequestException('A warehouse is required to post GRNs');
-            }
             await this.core.applyStockOut(tx, {
               branchId: grn.branchId,
-              warehouseId: grn.warehouseId,
               variantId: item.variantId,
               quantity: Number(item.quantity),
               unitCost: Number(item.landedCost || item.unitCost || 0),

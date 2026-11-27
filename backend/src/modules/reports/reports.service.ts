@@ -67,9 +67,9 @@ export class ReportsService {
       }),
       this.prisma.stockBalance.findMany({
         where: {
-          warehouse: branchId
-            ? { branchId }
-            : { branch: { businessId } },
+          branch: branchId
+            ? { id: branchId }
+            : { businessId },
         },
         select: { quantity: true, averageCost: true },
       }),

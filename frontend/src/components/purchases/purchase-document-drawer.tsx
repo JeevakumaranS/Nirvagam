@@ -72,9 +72,6 @@ interface LineState {
   overReceiptTolerance?: string;
   purchaseOrderItemId?: string;
   grnItemId?: string;
-  batchNumber?: string;
-  serialNumber?: string;
-  expiryDate?: string;
 }
 
 interface PurchaseDocumentDrawerProps {
@@ -85,7 +82,6 @@ interface PurchaseDocumentDrawerProps {
   prefill?: any;
   suppliers: any[];
   products: any[];
-  warehouses: any[];
   branchStateCode: string;
   taxRegime?: 'GST' | 'VAT';
   onSaved: () => void;
@@ -99,7 +95,6 @@ export function PurchaseDocumentDrawer({
   prefill,
   suppliers,
   products,
-  warehouses,
   branchStateCode,
   taxRegime = 'GST',
   onSaved,
@@ -114,7 +109,6 @@ export function PurchaseDocumentDrawer({
   const [showSupplierDropdown, setShowSupplierDropdown] = useState(false);
   const [highlightedSupplierIndex, setHighlightedSupplierIndex] = useState(0);
   const supplierListRef = useRef<HTMLDivElement>(null);
-  const [warehouseId, setWarehouseId] = useState('');
   const [docDate, setDocDate] = useState(new Date().toISOString().slice(0, 10));
   const [dueDate, setDueDate] = useState('');
   const [supplierBillNumber, setSupplierBillNumber] = useState('');
@@ -143,7 +137,7 @@ export function PurchaseDocumentDrawer({
           id: v.id,
           label: `${p.name} — ${v.name} (${v.sku})`,
           purchasePrice: Number(v.purchasePrice || 0),
-          taxRate: Number(p.taxRate?.rate || 18),
+          taxRate: Number(v.taxRate?.rate ?? 18),
         });
       }
     }
@@ -165,7 +159,6 @@ export function PurchaseDocumentDrawer({
     }
     setShowSupplierDropdown(false);
     setShowChargeMenu(false);
-    setWarehouseId(prefill?.warehouseId || warehouses.find((w) => w.isDefault)?.id || warehouses[0]?.id || '');
     setDocDate(new Date().toISOString().slice(0, 10));
     setSupplierBillNumber(prefill?.supplierBillNumber || '');
     setDepartment(prefill?.department || '');
@@ -186,8 +179,6 @@ export function PurchaseDocumentDrawer({
           taxRate: String(i.taxRate ?? 18),
           purchaseOrderItemId: i.purchaseOrderItemId,
           grnItemId: i.grnItemId,
-          batchNumber: i.batchNumber || '',
-          serialNumber: i.serialNumber || '',
         })),
       );
     } else {
@@ -219,7 +210,7 @@ export function PurchaseDocumentDrawer({
       setAttachments([]);
       setTimeline([]);
     }
-  }, [isOpen, prefill, initialMode, suppliers, warehouses, variants, kind]);
+  }, [isOpen, prefill, initialMode, suppliers, variants, kind]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -355,7 +346,6 @@ export function PurchaseDocumentDrawer({
           method: prefill?.id ? 'PUT' : 'POST',
           body: JSON.stringify({
             supplierId,
-            warehouseId: warehouseId || undefined,
             purchaseRequestId: prefill?.purchaseRequestId,
             orderDate: docDate,
             overReceiptTolerance: 5,
@@ -374,7 +364,6 @@ export function PurchaseDocumentDrawer({
           method: 'POST',
           body: JSON.stringify({
             supplierId,
-            warehouseId: warehouseId || undefined,
             purchaseOrderId: prefill?.purchaseOrderId,
             grnDate: docDate,
             post: postImmediately,
@@ -387,9 +376,6 @@ export function PurchaseDocumentDrawer({
               quantity: l.quantity,
               unitCost: l.unitRate,
               landedCost: l.unitRate,
-              batchNumber: l.batchNumber,
-              serialNumber: l.serialNumber,
-              expiryDate: l.expiryDate || undefined,
             })),
           }),
         });
@@ -404,7 +390,6 @@ export function PurchaseDocumentDrawer({
           body: JSON.stringify({
             supplierId,
             mode,
-            warehouseId: warehouseId || undefined,
             purchaseOrderId: prefill?.purchaseOrderId,
             grnIds: prefill?.grnIds,
             supplierBillNumber: supplierBillNumber.trim(),
@@ -584,7 +569,7 @@ export function PurchaseDocumentDrawer({
             </div>
           )}
 
-          {/* Supplier & Warehouse */}
+          {/* Supplier and document details */}
           {kind === 'PR' ? (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="relative">
@@ -722,12 +707,6 @@ export function PurchaseDocumentDrawer({
               </div>
 
               <div className="space-y-2">
-                <Select label="Receiving Warehouse (Optional)" value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
-                  <option value="">None / Not Specified</option>
-                  {warehouses.map((w) => (
-                    <option key={w.id} value={w.id}>{w.name} ({w.code})</option>
-                  ))}
-                </Select>
                 <Input label="Document Date *" type="date" value={docDate} onChange={(e) => setDocDate(e.target.value)} required />
               </div>
             </div>
@@ -874,21 +853,7 @@ export function PurchaseDocumentDrawer({
                         className="w-full h-8 px-2 rounded border border-border bg-surface text-xs"
                       />
                     </div>
-                  ) : kind === 'GRN' ? (
-                    <div className="col-span-3">
-                      <input
-                        type="text"
-                        placeholder="Batch / Lot #"
-                        value={line.batchNumber || ''}
-                        onChange={(e) => {
-                          const copy = [...lines];
-                          copy[idx].batchNumber = e.target.value;
-                          setLines(copy);
-                        }}
-                        className="w-full h-8 px-2 rounded border border-border bg-surface text-xs"
-                      />
-                    </div>
-                  ) : (
+                  ) : kind !== 'GRN' ? (
                     <>
                       <div className="col-span-2">
                         <input
@@ -938,7 +903,7 @@ export function PurchaseDocumentDrawer({
                         />
                       </div>
                     </>
-                  )}
+                  ) : null}
                   <div className="col-span-1 flex justify-end">
                     <button type="button" onClick={() => setLines(lines.filter((_, i) => i !== idx))} className="text-danger p-1">
                       <Trash2 className="w-3.5 h-3.5" />

@@ -58,7 +58,6 @@ export default function PurchasesPage() {
   const [rows, setRows] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
-  const [warehouses, setWarehouses] = useState<any[]>([]);
   const [branchStateCode, setBranchStateCode] = useState("33");
   const [taxRegime, setTaxRegime] = useState<"GST" | "VAT">("GST");
 
@@ -96,19 +95,17 @@ export default function PurchasesPage() {
 
   const loadMasterData = useCallback(async () => {
     try {
-      const [suppRes, prodRes, whRes, settingsRes] = await Promise.all([
+      const [suppRes, prodRes, branchesRes, settingsRes] = await Promise.all([
         apiFetch("/suppliers"),
         apiFetch("/products"),
-        apiFetch("/inventory/warehouses").catch(() => []),
+        apiFetch("/products/inventory/branches"),
         apiFetch("/purchases/settings").catch(() => null),
       ]);
       setSuppliers(suppRes?.data || (Array.isArray(suppRes) ? suppRes : []));
       setProducts(prodRes?.data || (Array.isArray(prodRes) ? prodRes : []));
-      const whList = whRes?.data || (Array.isArray(whRes) ? whRes : []);
-      setWarehouses(whList);
+      const branches = branchesRes?.data || (Array.isArray(branchesRes) ? branchesRes : []);
       if (settingsRes?.taxRegime) setTaxRegime(settingsRes.taxRegime);
-      if (whList?.[0]?.branch?.stateCode)
-        setBranchStateCode(whList[0].branch.stateCode);
+      if (branches?.[0]?.stateCode) setBranchStateCode(branches[0].stateCode);
     } catch {}
   }, []);
 
@@ -507,7 +504,6 @@ export default function PurchasesPage() {
                                   openNewDoc("GRN", "AGAINST_PO_GRN", {
                                     purchaseOrderId: row.id,
                                     supplierId: row.supplierId,
-                                    warehouseId: row.warehouseId,
                                     items: row.items
                                       ?.filter(
                                         (i: any) =>
@@ -555,7 +551,6 @@ export default function PurchasesPage() {
                                   purchaseOrderId: row.purchaseOrderId,
                                   grnIds: [row.id],
                                   supplierId: row.supplierId,
-                                  warehouseId: row.warehouseId,
                                   items: row.items
                                     ?.filter(
                                       (i: any) =>
@@ -703,7 +698,6 @@ export default function PurchasesPage() {
         prefill={drawerPrefill}
         suppliers={suppliers}
         products={products}
-        warehouses={warehouses}
         branchStateCode={branchStateCode}
         taxRegime={taxRegime}
         onSaved={loadTabList}

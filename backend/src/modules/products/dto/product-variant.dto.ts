@@ -38,6 +38,14 @@ export class ProductVariantDto {
 
   @IsString()
   @IsOptional()
+  taxRateId?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  isTaxInclusive?: boolean;
+
+  @IsString()
+  @IsOptional()
   imageUrl?: string;
 
   @IsBoolean()

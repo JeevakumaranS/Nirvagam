@@ -85,7 +85,7 @@ describe('ReportsService', () => {
       _count: { id: true },
     });
     expect(prisma.stockBalance.findMany).toHaveBeenCalledWith({
-      where: { warehouse: { branchId: 'branch-id' } },
+      where: { branch: { id: 'branch-id' } },
       select: { quantity: true, averageCost: true },
     });
   });
