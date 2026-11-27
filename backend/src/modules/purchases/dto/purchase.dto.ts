@@ -18,11 +18,7 @@ import {
 } from 'class-validator';
 
 export class PurchaseChargeDto {
-  @ApiProperty({ enum: ['LOADING', 'PACKING', 'INSURANCE', 'FREIGHT', 'OTHER'] })
-  @IsIn(['LOADING', 'PACKING', 'INSURANCE', 'FREIGHT', 'OTHER'])
-  type!: 'LOADING' | 'PACKING' | 'INSURANCE' | 'FREIGHT' | 'OTHER';
-
-  @ApiProperty({ example: 'Freight Inward' })
+  @ApiProperty({ example: 'Transport Service' })
   @IsString()
   @IsNotEmpty()
   name!: string;

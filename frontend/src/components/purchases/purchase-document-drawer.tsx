@@ -13,11 +13,11 @@ import { Paperclip, Plus, Trash2, Upload, Download, Clock, Link2 } from 'lucide-
 
 export type PurchaseDocKind = 'PR' | 'PO' | 'GRN' | 'INVOICE';
 
-const DEFAULT_CHARGE_TYPES = [
-  { id: 'def-1', name: 'Transportation Charges', chargeType: 'FREIGHT' },
-  { id: 'def-2', name: 'Delivery Charges', chargeType: 'FREIGHT' },
-  { id: 'def-3', name: 'Loading', chargeType: 'LOADING' },
-  { id: 'def-4', name: 'Unloading', chargeType: 'LOADING' },
+const DEFAULT_ADDITIONAL_CHARGES = [
+  { id: 'def-1', name: 'Transportation Charges' },
+  { id: 'def-2', name: 'Delivery Charges' },
+  { id: 'def-3', name: 'Loading' },
+  { id: 'def-4', name: 'Unloading' },
 ];
 
 const DEFAULT_UNITS = [
@@ -128,7 +128,7 @@ export function PurchaseDocumentDrawer({
 
   const [lines, setLines] = useState<LineState[]>([]);
   const [charges, setCharges] = useState<PurchaseCalculationCharge[]>([]);
-  const [chargeTypes, setChargeTypes] = useState<any[]>([]);
+  const [availableCharges, setAvailableCharges] = useState<any[]>([]);
   const [showChargeMenu, setShowChargeMenu] = useState(false);
   const [attachments, setAttachments] = useState<any[]>([]);
   const [timeline, setTimeline] = useState<any[]>([]);
@@ -208,9 +208,9 @@ export function PurchaseDocumentDrawer({
       .then((res) => setUnits(Array.isArray(res) ? res : []))
       .catch(() => setUnits([]));
 
-    apiFetch('/purchases/charge-types?activeOnly=true')
-      .then((res) => setChargeTypes(Array.isArray(res) ? res : []))
-      .catch(() => setChargeTypes([]));
+    apiFetch('/purchases/additional-charges?activeOnly=true')
+      .then((res) => setAvailableCharges(Array.isArray(res) ? res : []))
+      .catch(() => setAvailableCharges([]));
 
     if (prefill?.id) {
       apiFetch(`/purchases/attachments/${kind}/${prefill.id}`).then(setAttachments).catch(() => setAttachments([]));
@@ -294,12 +294,11 @@ export function PurchaseDocumentDrawer({
     ]);
   };
 
-  const addCharge = (chargeDef?: { name: string; chargeType?: string }) => {
+  const addCharge = (chargeName?: string) => {
     setCharges((prev) => [
       ...prev,
       {
-        type: (chargeDef?.chargeType as any) || 'OTHER',
-        name: chargeDef?.name || 'Additional Charge',
+        name: chargeName || 'Additional Charge',
         amount: '0',
         isTaxable: false,
         taxRate: '18',
@@ -973,15 +972,14 @@ export function PurchaseDocumentDrawer({
                   </Button>
                   {showChargeMenu && (
                     <div className="absolute right-0 mt-1 w-56 z-30 rounded-lg border border-border bg-surface shadow-lg py-1 divide-y divide-border/50">
-                      {(chargeTypes.length ? chargeTypes : DEFAULT_CHARGE_TYPES).map((ct: any) => (
+                      {(availableCharges.length ? availableCharges : DEFAULT_ADDITIONAL_CHARGES).map((charge: any) => (
                         <button
-                          key={ct.id || ct.name}
+                          key={charge.id || charge.name}
                           type="button"
-                          onClick={() => addCharge({ name: ct.name, chargeType: ct.chargeType })}
-                          className="w-full text-left px-3 py-2 text-xs text-text-primary hover:bg-surface-secondary flex items-center justify-between"
+                          onClick={() => addCharge(charge.name)}
+                          className="w-full text-left px-3 py-2 text-xs text-text-primary hover:bg-surface-secondary"
                         >
-                          <span>{ct.name}</span>
-                          <span className="text-[10px] font-mono text-text-tertiary">{ct.chargeType}</span>
+                          {charge.name}
                         </button>
                       ))}
                     </div>

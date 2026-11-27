@@ -338,7 +338,7 @@ export function calculateGstInvoice(
 }
 
 export type PurchaseDiscountType = "PERCENT" | "AMOUNT";
-export type PurchaseFreightAllocationMethod = "VALUE" | "QUANTITY" | "WEIGHT";
+export type PurchaseChargeAllocationMethod = "VALUE" | "QUANTITY" | "WEIGHT";
 
 export interface PurchaseCalculationLine {
   id: string;
@@ -352,11 +352,10 @@ export interface PurchaseCalculationLine {
 
 export interface PurchaseCalculationCharge {
   name: string;
-  type: "LOADING" | "PACKING" | "INSURANCE" | "FREIGHT" | "OTHER";
   amount: string;
   isTaxable: boolean;
   taxRate?: string;
-  allocationMethod?: PurchaseFreightAllocationMethod;
+  allocationMethod?: PurchaseChargeAllocationMethod;
   accountId?: string;
 }
 
@@ -382,7 +381,6 @@ export interface PurchaseCalculationLineResult {
   igstAmount: string;
   vatAmount: string;
   taxAmount: string;
-  allocatedFreight: string;
   allocatedCharges: string;
   landedCost: string;
   totalAmount: string;
@@ -399,7 +397,6 @@ export interface PurchaseCalculationResult {
   igstAmount: string;
   vatAmount: string;
   totalTax: string;
-  freightAmount: string;
   additionalCharges: string;
   roundOff: string;
   grandTotal: string;
@@ -550,13 +547,11 @@ export function calculatePurchaseDocument(
     totalTaxable += taxableValue;
   });
 
-  // Step 5 & 6: Charges and Freight + Allocation to item landed cost
+  // Step 5 & 6: Additional charges and allocation to item landed cost
   const charges = options.charges || [];
   let chargeTax = 0n;
   let additionalCharges = 0n;
-  let freightTotal = 0n;
-  const lineAllocatedFreight = new Array<bigint>(lines.length).fill(0n);
-  const lineAllocatedOtherCharges = new Array<bigint>(lines.length).fill(0n);
+  const lineAllocatedCharges = new Array<bigint>(lines.length).fill(0n);
   const taxSummaryMap = new Map<string, { taxable: bigint; tax: bigint }>();
 
   const totalQty = quantities.reduce((s, q) => s + q, 0n);
@@ -597,20 +592,11 @@ export function calculatePurchaseDocument(
   for (const charge of charges) {
     const amount = decimalToUnits(charge.amount, DECIMAL_SCALE);
     additionalCharges += amount;
-    if (charge.type === "FREIGHT") {
-      freightTotal += amount;
-      allocateAmount(
-        amount,
-        charge.allocationMethod || "VALUE",
-        lineAllocatedFreight,
-      );
-    } else {
-      allocateAmount(
-        amount,
-        charge.allocationMethod || "VALUE",
-        lineAllocatedOtherCharges,
-      );
-    }
+    allocateAmount(
+      amount,
+      charge.allocationMethod || "VALUE",
+      lineAllocatedCharges,
+    );
 
     if (charge.isTaxable) {
       const chargeTaxRate = decimalToUnits(
@@ -670,9 +656,7 @@ export function calculatePurchaseDocument(
     }
 
     const totalLandedLine =
-      taxableValue +
-      lineAllocatedFreight[index] +
-      lineAllocatedOtherCharges[index];
+      taxableValue + lineAllocatedCharges[index];
     const landedUnitCost = roundDivision(
       totalLandedLine * THREE_SCALE,
       quantity || THREE_SCALE,
@@ -695,8 +679,7 @@ export function calculatePurchaseDocument(
       igstAmount: money(igst),
       vatAmount: money(vat),
       taxAmount: money(taxAmount),
-      allocatedFreight: money(lineAllocatedFreight[index]),
-      allocatedCharges: money(lineAllocatedOtherCharges[index]),
+      allocatedCharges: money(lineAllocatedCharges[index]),
       landedCost: money(landedUnitCost),
       totalAmount: money(taxableValue + taxAmount),
       rule: {
@@ -740,7 +723,6 @@ export function calculatePurchaseDocument(
     igstAmount: money(totalIgst),
     vatAmount: money(totalVat),
     totalTax: money(totalCgst + totalSgst + totalIgst + totalVat),
-    freightAmount: money(freightTotal),
     additionalCharges: money(additionalCharges),
     roundOff: money(roundOff),
     grandTotal: money(grandTotal),
@@ -756,10 +738,7 @@ export function calculatePurchaseDocument(
       invoiceDiscountType: options.invoiceDiscountType || "AMOUNT",
       invoiceDiscountValue: options.invoiceDiscountValue || "0",
       chargeCount: charges.length,
-      freightAllocationMethod:
-        charges.find((charge) => charge.type === "FREIGHT")?.allocationMethod ||
-        "VALUE",
-      freightTotal: money(freightTotal),
+      chargeAllocationMethod: charges[0]?.allocationMethod || "VALUE",
     },
   };
 }

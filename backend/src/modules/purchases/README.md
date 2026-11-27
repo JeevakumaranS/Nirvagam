@@ -14,8 +14,8 @@ Direct Mode:
 ```
 
 ## Key Features
-- **Tax Engine (`@nirvagam/shared`)**: Fixed-point `bigint` decimal math supporting Indian GST (CGST/SGST/IGST by state code) and configurable VAT, line & invoice discounts (`%` or flat), inclusive/exclusive pricing, taxable/non-taxable charges, freight allocation (`VALUE`, `QUANTITY`, `WEIGHT`), and round-off.
-- **Inventory Costing**: Configurable per business (`WAC` default or `FIFO` layers), incorporating landed cost (net rate + allocated freight + allocated charges). Over-receipt tolerance defaults to `5%` (overridable per PO line and item variant).
+- **Tax Engine (`@nirvagam/shared`)**: Fixed-point `bigint` decimal math supporting Indian GST (CGST/SGST/IGST by state code) and configurable VAT, line & invoice discounts (`%` or flat), inclusive/exclusive pricing, taxable/non-taxable charges, additional-charge allocation (`VALUE`, `QUANTITY`, `WEIGHT`), and round-off.
+- **Inventory Costing**: Configurable per business (`WAC` default or `FIFO` layers), incorporating landed cost (net rate + allocated additional charges). Over-receipt tolerance defaults to `5%` (overridable per PO line and item variant).
 - **Accounting**:
   - GRN Accrual (`Dr Inventory / Cr GRN Clearing`) enabled by default, cleared on Invoice with differences posted to `Purchase Price Variance`.
   - Balanced double-entry journals enforced inside database transactions; closed fiscal periods block posting.

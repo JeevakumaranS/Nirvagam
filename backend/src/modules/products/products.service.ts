@@ -405,6 +405,7 @@ export class ProductsService {
     const purchasePrice = Number(dto.purchasePrice || 0);
     const salesPrice = Number(dto.salesPrice ?? dto.retailPrice ?? 0);
     const mrp = Number(dto.mrp || salesPrice);
+    const retailPrice = Number(dto.retailPrice ?? dto.salesPrice ?? 0);
 
     return this.prisma.$transaction(async (tx) => {
       const product = await tx.product.create({
@@ -431,10 +432,11 @@ export class ProductsService {
         },
       });
 
+      let standardVariant: { id: string } | null = null;
       if (product.hasVariants) {
         await this.saveVariants(tx, businessId, product, dto.variants || []);
       } else {
-        await tx.productVariant.create({
+        standardVariant = await tx.productVariant.create({
           data: {
             productId: product.id,
             name: "Standard",
@@ -455,10 +457,14 @@ export class ProductsService {
         });
 
         if (warehouse) {
+          if (!standardVariant) {
+            throw new BadRequestException("Opening stock requires a standard product variant");
+          }
           await tx.stockBalance.create({
             data: {
+              branchId: warehouse.branchId,
               warehouseId: warehouse.id,
-              variantId: variant.id,
+              variantId: standardVariant.id,
               quantity: dto.openingStock,
               averageCost: purchasePrice,
             },
@@ -468,7 +474,7 @@ export class ProductsService {
             data: {
               branchId: warehouse.branchId,
               warehouseId: warehouse.id,
-              variantId: variant.id,
+              variantId: standardVariant.id,
               type: StockMovementType.ADJUSTMENT_ADD,
               quantity: dto.openingStock,
               unitCost: purchasePrice,
@@ -488,6 +494,25 @@ export class ProductsService {
     return this.prisma.unit.findMany({
       where: { businessId, ...(activeOnly ? { isActive: true } : {}) },
       orderBy: [{ isSystem: "desc" }, { symbol: "asc" }],
+    });
+  }
+
+  async getCategories(businessId: string) {
+    return this.prisma.category.findMany({
+      where: { businessId, isActive: true },
+      orderBy: { name: "asc" },
+    });
+  }
+
+  async createCategory(businessId: string, dto: { name: string }) {
+    const name = dto.name?.trim();
+    if (!name) throw new BadRequestException("Category name is required");
+    const existing = await this.prisma.category.findFirst({
+      where: { businessId, name: { equals: name, mode: "insensitive" } },
+    });
+    if (existing) throw new ConflictException("A category with this name already exists");
+    return this.prisma.category.create({
+      data: { businessId, name },
     });
   }
 
@@ -564,13 +589,25 @@ export class ProductsService {
     return this.prisma.unit.update({ where: { id }, data });
   }
 
+  async toggleUnit(businessId: string, id: string, isActive: boolean) {
+    const unit = await this.prisma.unit.findFirst({
+      where: { id, businessId },
+    });
+    if (!unit) throw new NotFoundException("Unit not found");
+    if (unit.isSystem) {
+      throw new BadRequestException("System units cannot be disabled");
+    }
+    return this.prisma.unit.update({
+      where: { id },
+      data: { isActive },
+    });
+  }
+
   async deleteUnit(businessId: string, id: string) {
     const unit = await this.prisma.unit.findFirst({
       where: { id, businessId },
     });
     if (!unit) throw new NotFoundException("Unit not found");
-    if (unit.isStandard)
-      throw new BadRequestException("Standard units cannot be deleted");
     const productCount = await this.prisma.product.count({
       where: { businessId, unitId: id },
     });
@@ -1219,6 +1256,39 @@ export class ProductsService {
       where: { branch: { businessId } },
       include: { branch: true },
       orderBy: { name: "asc" },
+    });
+  }
+
+  async createWarehouse(
+    businessId: string,
+    dto: { branchId: string; name: string; code: string; isDefault?: boolean },
+  ) {
+    const branch = await this.prisma.branch.findFirst({
+      where: { id: dto.branchId, businessId, isActive: true },
+    });
+    if (!branch) throw new NotFoundException("Branch not found");
+    const name = dto.name?.trim();
+    const code = dto.code?.trim().toUpperCase();
+    if (!name || !code) {
+      throw new BadRequestException("Warehouse name and code are required");
+    }
+    const existing = await this.prisma.warehouse.findFirst({
+      where: { branchId: dto.branchId, OR: [{ code }, { name: { equals: name, mode: "insensitive" } }] },
+    });
+    if (existing) throw new ConflictException("A warehouse with this name or code already exists");
+    if (dto.isDefault) {
+      await this.prisma.warehouse.updateMany({
+        where: { branchId: dto.branchId, isDefault: true },
+        data: { isDefault: false },
+      });
+    }
+    return this.prisma.warehouse.create({
+      data: {
+        branchId: dto.branchId,
+        name,
+        code,
+        isDefault: dto.isDefault ?? false,
+      },
     });
   }
 

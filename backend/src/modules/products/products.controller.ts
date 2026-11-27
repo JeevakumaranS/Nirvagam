@@ -105,13 +105,6 @@ export class ProductsController {
     return this.productsService.toggleUnit(user.businessId, id, Boolean(dto.isActive));
   }
 
-  @Delete('meta/units/:id')
-  @RequirePermissions('product:delete')
-  @ApiOperation({ summary: 'Delete a custom measurement unit' })
-  async deleteUnit(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.productsService.deleteUnit(user.businessId, id);
-  }
-
   @Get('meta/tax-rates')
   @RequirePermissions('product:view')
   @ApiOperation({ summary: 'Get GST tax slabs' })
@@ -130,6 +123,12 @@ export class ProductsController {
   @Get('inventory/warehouses')
   @RequirePermissions('product:view')
   async warehouses(@CurrentUser() user: AuthUser) { return this.productsService.warehouses(user.businessId); }
+
+  @Get('inventory/branches')
+  @RequirePermissions('product:view')
+  async inventoryBranches(@CurrentUser() user: AuthUser) {
+    return this.productsService.branches(user.businessId);
+  }
 
   @Get('inventory/variants')
   @RequirePermissions('product:view')

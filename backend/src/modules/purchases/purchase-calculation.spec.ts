@@ -47,9 +47,9 @@ describe('purchase calculation engine', () => {
     expect(result.grandTotal).toBe('1180');
   });
 
-  it('allocates freight by VALUE, QUANTITY, and WEIGHT to item landedCost', () => {
+  it('allocates additional charges by VALUE, QUANTITY, and WEIGHT to item landedCost', () => {
     // 2 items: Item A (qty 2, rate 100 -> 200, weight 10), Item B (qty 8, rate 100 -> 800, weight 90)
-    // Freight = 100
+    // Additional charge = 100
     const byValue = calculatePurchaseDocument(
       [
         { id: 'a', quantity: '2', rate: '100', weight: '10', taxRate: '0' },
@@ -58,11 +58,12 @@ describe('purchase calculation engine', () => {
       {
         businessStateCode: '33',
         supplierStateCode: '33',
-        charges: [{ name: 'Freight', type: 'FREIGHT', amount: '100', isTaxable: false, allocationMethod: 'VALUE' }],
+        charges: [{ name: 'Transport', amount: '100', isTaxable: false, allocationMethod: 'VALUE' }],
       }
     );
-    expect(byValue.items[0].allocatedFreight).toBe('20');
-    expect(byValue.items[1].allocatedFreight).toBe('80');
+    expect(byValue.items[0].allocatedCharges).toBe('20');
+    expect(byValue.items[1].allocatedCharges).toBe('80');
+    expect(byValue.additionalCharges).toBe('100');
     expect(byValue.items[0].landedCost).toBe('110'); // (200 + 20) / 2
     expect(byValue.items[1].landedCost).toBe('110'); // (800 + 80) / 8
 
@@ -74,11 +75,11 @@ describe('purchase calculation engine', () => {
       {
         businessStateCode: '33',
         supplierStateCode: '33',
-        charges: [{ name: 'Freight', type: 'FREIGHT', amount: '100', isTaxable: false, allocationMethod: 'WEIGHT' }],
+        charges: [{ name: 'Transport', amount: '100', isTaxable: false, allocationMethod: 'WEIGHT' }],
       }
     );
-    expect(byWeight.items[0].allocatedFreight).toBe('10');
-    expect(byWeight.items[1].allocatedFreight).toBe('90');
+    expect(byWeight.items[0].allocatedCharges).toBe('10');
+    expect(byWeight.items[1].allocatedCharges).toBe('90');
     expect(byWeight.items[0].landedCost).toBe('105'); // (200 + 10) / 2
     expect(byWeight.items[1].landedCost).toBe('111.25'); // (800 + 90) / 8
 
@@ -90,11 +91,11 @@ describe('purchase calculation engine', () => {
       {
         businessStateCode: '33',
         supplierStateCode: '33',
-        charges: [{ name: 'Freight', type: 'FREIGHT', amount: '100', isTaxable: false, allocationMethod: 'QUANTITY' }],
+        charges: [{ name: 'Transport', amount: '100', isTaxable: false, allocationMethod: 'QUANTITY' }],
       }
     );
-    expect(byQty.items[0].allocatedFreight).toBe('20');
-    expect(byQty.items[1].allocatedFreight).toBe('80');
+    expect(byQty.items[0].allocatedCharges).toBe('20');
+    expect(byQty.items[1].allocatedCharges).toBe('80');
   });
 
   it('supports VAT regime, round-off, and multi-rate tax summary', () => {
@@ -108,7 +109,7 @@ describe('purchase calculation engine', () => {
         supplierStateCode: '29',
         taxRegime: 'VAT',
         roundOff: '0.25',
-        charges: [{ name: 'Packing', type: 'PACKING', amount: '100', isTaxable: true, taxRate: '5' }],
+        charges: [{ name: 'Packing', amount: '100', isTaxable: true, taxRate: '5' }],
       }
     );
 

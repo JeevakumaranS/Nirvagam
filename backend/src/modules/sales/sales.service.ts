@@ -738,7 +738,7 @@ export class SalesService {
             });
           } else if (STOCK_IN_DOCUMENT_TYPES.has(invoiceType)) {
             await tx.stockBalance.create({
-              data: { warehouseId: warehouse.id, variantId: item.id, quantity: item.quantity },
+              data: { branchId: branch.id, warehouseId: warehouse.id, variantId: item.id, quantity: item.quantity },
             });
           }
 

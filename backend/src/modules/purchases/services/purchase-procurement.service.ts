@@ -352,7 +352,6 @@ export class PurchaseProcurementService {
         igstAmount: calc.igstAmount,
         vatAmount: calc.vatAmount,
         totalTax: calc.totalTax,
-        freightAmount: calc.freightAmount,
         additionalCharges: calc.additionalCharges,
         grandTotal: calc.grandTotal,
         calculationRule: calc.rule as any,
@@ -390,7 +389,6 @@ export class PurchaseProcurementService {
         charges: dto.charges?.length
           ? {
               create: dto.charges.map((ch) => ({
-                chargeType: ch.type,
                 name: ch.name,
                 amount: String(ch.amount),
                 isTaxable: ch.isTaxable === true,
@@ -473,7 +471,6 @@ export class PurchaseProcurementService {
           igstAmount: calc.igstAmount,
           vatAmount: calc.vatAmount,
           totalTax: calc.totalTax,
-          freightAmount: calc.freightAmount,
           additionalCharges: calc.additionalCharges,
           grandTotal: calc.grandTotal,
           calculationRule: calc.rule as any,
@@ -508,7 +505,6 @@ export class PurchaseProcurementService {
           charges: dto.charges?.length
             ? {
                 create: dto.charges.map((ch) => ({
-                  chargeType: ch.type,
                   name: ch.name,
                   amount: String(ch.amount),
                   isTaxable: ch.isTaxable === true,
@@ -899,6 +895,9 @@ export class PurchaseProcurementService {
         const settings = await this.core.getSettings(user.businessId, tx);
         for (const item of grn.items) {
           if (item.variantId) {
+            if (!grn.warehouseId) {
+              throw new BadRequestException('A warehouse is required to post GRNs');
+            }
             await this.core.applyStockOut(tx, {
               branchId: grn.branchId,
               warehouseId: grn.warehouseId,

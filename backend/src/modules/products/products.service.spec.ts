@@ -65,7 +65,7 @@ describe('ProductsService branch inventory', () => {
     };
     const service = new ProductsService(prisma as unknown as PrismaService);
 
-    await service.create('business-id', {
+    await service.create('business-id', 'branch-id', {
       name: 'Shirt',
       sku: 'SHIRT',
       unitId: 'unit-id',
@@ -176,6 +176,21 @@ describe('ProductsService branch inventory', () => {
 
     await expect(service.deleteUnit('business-id', 'unit-id')).rejects.toThrow('assigned to existing products');
     expect(prisma.unit.delete).not.toHaveBeenCalled();
+  });
+
+  it('deletes an unreferenced standard unit', async () => {
+    const deletedUnit = { id: 'unit-id', isStandard: true };
+    const prisma = {
+      unit: {
+        findFirst: jest.fn().mockResolvedValue(deletedUnit),
+        delete: jest.fn().mockResolvedValue(deletedUnit),
+      },
+      product: { count: jest.fn().mockResolvedValue(0) },
+    };
+    const service = new ProductsService(prisma as unknown as PrismaService);
+
+    await expect(service.deleteUnit('business-id', 'unit-id')).resolves.toBe(deletedUnit);
+    expect(prisma.unit.delete).toHaveBeenCalledWith({ where: { id: 'unit-id' } });
   });
 
   it('moves legacy stock into variants without removing movement history', async () => {

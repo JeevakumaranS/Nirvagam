@@ -36,8 +36,8 @@ export default function CustomizationPage() {
   const [templates, setTemplates] = useState<any[]>([]);
   const [units, setUnits] = useState<any[]>([]);
   const [newUnit, setNewUnit] = useState({ symbol: '', name: '', decimalPlaces: '0' });
-  const [chargeTypes, setChargeTypes] = useState<any[]>([]);
-  const [newChargeType, setNewChargeType] = useState({ name: '', chargeType: 'OTHER' });
+  const [additionalCharges, setAdditionalCharges] = useState<any[]>([]);
+  const [newCharge, setNewCharge] = useState({ name: '' });
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'units' | 'charges' | 'fields' | 'entities' | 'templates' | 'history'>('units');
 
@@ -68,50 +68,49 @@ export default function CustomizationPage() {
     loadEntities();
     loadTemplates();
     loadUnits();
-    loadChargeTypes();
+    loadAdditionalCharges();
   }, []);
 
-  async function loadChargeTypes() {
+  async function loadAdditionalCharges() {
     try {
-      const res = await apiFetch('/purchases/charge-types');
-      setChargeTypes(Array.isArray(res) ? res : []);
+      const res = await apiFetch('/purchases/additional-charges');
+      setAdditionalCharges(Array.isArray(res) ? res : []);
     } catch {}
   }
 
-  async function handleToggleChargeType(id: string, isActive: boolean) {
+  async function handleToggleAdditionalCharge(id: string, isActive: boolean) {
     try {
-      await apiFetch(`/purchases/charge-types/${id}/toggle`, {
+      await apiFetch(`/purchases/additional-charges/${id}/toggle`, {
         method: 'PATCH',
         body: JSON.stringify({ isActive }),
       });
-      setChargeTypes((prev) => prev.map((c) => (c.id === id ? { ...c, isActive } : c)));
+      setAdditionalCharges((prev) => prev.map((c) => (c.id === id ? { ...c, isActive } : c)));
     } catch (err: any) {
       alert(err.message || 'Failed to update charge');
     }
   }
 
-  async function handleCreateChargeType(e: React.FormEvent) {
+  async function handleCreateAdditionalCharge(e: React.FormEvent) {
     e.preventDefault();
-    if (!newChargeType.name.trim()) return;
+    if (!newCharge.name.trim()) return;
     try {
-      await apiFetch('/purchases/charge-types', {
+      await apiFetch('/purchases/additional-charges', {
         method: 'POST',
         body: JSON.stringify({
-          name: newChargeType.name.trim(),
-          chargeType: newChargeType.chargeType,
+          name: newCharge.name.trim(),
         }),
       });
-      setNewChargeType({ name: '', chargeType: 'OTHER' });
-      loadChargeTypes();
+      setNewCharge({ name: '' });
+      loadAdditionalCharges();
     } catch (err: any) {
       alert(err.message || 'Failed to create charge');
     }
   }
 
-  async function handleDeleteChargeType(id: string) {
+  async function handleDeleteAdditionalCharge(id: string) {
     try {
-      await apiFetch(`/purchases/charge-types/${id}`, { method: 'DELETE' });
-      setChargeTypes((prev) => prev.filter((c) => c.id !== id));
+      await apiFetch(`/purchases/additional-charges/${id}`, { method: 'DELETE' });
+      setAdditionalCharges((prev) => prev.filter((c) => c.id !== id));
     } catch (err: any) {
       alert(err.message || 'Failed to delete charge');
     }
@@ -385,7 +384,7 @@ export default function CustomizationPage() {
           }`}
         >
           <Receipt className="w-3.5 h-3.5" />
-          Additional Charges ({chargeTypes.filter((c) => c.isActive).length}/{chargeTypes.length})
+          Additional Charges ({additionalCharges.filter((c) => c.isActive).length}/{additionalCharges.length})
         </button>
         <button
           onClick={() => setActiveTab('fields')}
@@ -446,17 +445,14 @@ export default function CustomizationPage() {
                     <div className="flex items-center gap-2">
                       <span className="font-mono font-bold text-xs text-accent">{u.symbol}</span>
                       <span className="text-xs font-medium text-text-primary">{u.name}</span>
-                      {!u.isSystem && <Badge size="sm" variant="neutral">Custom</Badge>}
                     </div>
                     <div className="text-[10px] text-text-tertiary mt-0.5">Decimals: {u.decimalPlaces}</div>
                   </div>
                   <div className="flex items-center gap-2">
                     <Switch checked={u.isActive} onChange={(val) => handleToggleUnit(u.id, val)} />
-                    {!u.isSystem && (
-                      <button type="button" onClick={() => handleDeleteUnit(u.id)} className="text-danger p-1 hover:bg-danger/10 rounded">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
+                    <button type="button" onClick={() => handleDeleteUnit(u.id)} className="text-danger p-1 hover:bg-danger/10 rounded">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
               ))}
@@ -506,49 +502,34 @@ export default function CustomizationPage() {
               </p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {chargeTypes.map((c) => (
+              {additionalCharges.map((c) => (
                 <div key={c.id} className="flex items-center justify-between p-3 rounded-lg border border-border/70 bg-surface-secondary/30">
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-medium text-text-primary">{c.name}</span>
-                      {!c.isSystem && <Badge size="sm" variant="neutral">Custom</Badge>}
                     </div>
-                    <div className="text-[10px] text-text-tertiary mt-0.5 font-mono">{c.chargeType}</div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Switch checked={c.isActive} onChange={(val) => handleToggleChargeType(c.id, val)} />
-                    {!c.isSystem && (
-                      <button type="button" onClick={() => handleDeleteChargeType(c.id)} className="text-danger p-1 hover:bg-danger/10 rounded">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
+                    <Switch checked={c.isActive} onChange={(val) => handleToggleAdditionalCharge(c.id, val)} />
+                    <button type="button" onClick={() => handleDeleteAdditionalCharge(c.id)} className="text-danger p-1 hover:bg-danger/10 rounded">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
               ))}
             </div>
           </div>
 
-          <form onSubmit={handleCreateChargeType} className="bg-surface border border-border/80 rounded-xl p-5 space-y-3">
+          <form onSubmit={handleCreateAdditionalCharge} className="bg-surface border border-border/80 rounded-xl p-5 space-y-3">
             <h3 className="text-sm font-semibold text-text-primary">Add Custom Charge</h3>
             <p className="text-xs text-text-secondary">Define additional purchase charges specific to your business.</p>
             <Input
               label="Charge Name *"
               placeholder="e.g. Packaging, Toll, Insurance"
-              value={newChargeType.name}
-              onChange={(e) => setNewChargeType({ ...newChargeType, name: e.target.value })}
+              value={newCharge.name}
+              onChange={(e) => setNewCharge({ ...newCharge, name: e.target.value })}
               required
             />
-            <Select
-              label="Category"
-              value={newChargeType.chargeType}
-              onChange={(e) => setNewChargeType({ ...newChargeType, chargeType: e.target.value })}
-            >
-              <option value="FREIGHT">Transportation / Freight</option>
-              <option value="LOADING">Loading / Unloading</option>
-              <option value="PACKING">Packing</option>
-              <option value="INSURANCE">Insurance</option>
-              <option value="OTHER">Other</option>
-            </Select>
             <Button type="submit" variant="primary" size="sm" className="w-full" icon={<Plus className="w-3.5 h-3.5" />}>
               Add Custom Charge
             </Button>

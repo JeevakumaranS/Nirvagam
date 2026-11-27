@@ -19,48 +19,46 @@ export class PurchaseCoreService {
     return user.branchId;
   }
 
-  async getChargeTypes(businessId: string, activeOnly = false) {
-    const count = await this.prisma.purchaseAdditionalChargeType.count({ where: { businessId } });
+  async getAdditionalCharges(businessId: string, activeOnly = false) {
+    const count = await this.prisma.purchaseAdditionalCharge.count({ where: { businessId } });
     if (count === 0) {
-      await this.prisma.purchaseAdditionalChargeType.createMany({
+      await this.prisma.purchaseAdditionalCharge.createMany({
         data: [
-          { businessId, name: 'Transportation Charges', chargeType: 'FREIGHT', isActive: true, isSystem: true },
-          { businessId, name: 'Delivery Charges', chargeType: 'FREIGHT', isActive: true, isSystem: true },
-          { businessId, name: 'Loading', chargeType: 'LOADING', isActive: true, isSystem: true },
-          { businessId, name: 'Unloading', chargeType: 'LOADING', isActive: true, isSystem: true },
+          { businessId, name: 'Transportation Charges', isActive: true, isSystem: true },
+          { businessId, name: 'Delivery Charges', isActive: true, isSystem: true },
+          { businessId, name: 'Loading', isActive: true, isSystem: true },
+          { businessId, name: 'Unloading', isActive: true, isSystem: true },
         ],
       });
     }
-    return this.prisma.purchaseAdditionalChargeType.findMany({
+    return this.prisma.purchaseAdditionalCharge.findMany({
       where: { businessId, ...(activeOnly ? { isActive: true } : {}) },
       orderBy: [{ isSystem: 'desc' }, { name: 'asc' }],
     });
   }
 
-  async createChargeType(businessId: string, dto: { name: string; chargeType?: string }) {
+  async createAdditionalCharge(businessId: string, dto: { name: string }) {
     if (!dto.name?.trim()) throw new BadRequestException('Charge name is required');
-    return this.prisma.purchaseAdditionalChargeType.create({
+    return this.prisma.purchaseAdditionalCharge.create({
       data: {
         businessId,
         name: dto.name.trim(),
-        chargeType: (dto.chargeType || 'OTHER').toUpperCase(),
         isActive: true,
         isSystem: false,
       },
     });
   }
 
-  async toggleChargeType(businessId: string, id: string, isActive: boolean) {
-    const existing = await this.prisma.purchaseAdditionalChargeType.findFirst({ where: { id, businessId } });
-    if (!existing) throw new BadRequestException('Charge type not found');
-    return this.prisma.purchaseAdditionalChargeType.update({ where: { id }, data: { isActive } });
+  async toggleAdditionalCharge(businessId: string, id: string, isActive: boolean) {
+    const existing = await this.prisma.purchaseAdditionalCharge.findFirst({ where: { id, businessId } });
+    if (!existing) throw new BadRequestException('Additional charge not found');
+    return this.prisma.purchaseAdditionalCharge.update({ where: { id }, data: { isActive } });
   }
 
-  async deleteChargeType(businessId: string, id: string) {
-    const existing = await this.prisma.purchaseAdditionalChargeType.findFirst({ where: { id, businessId } });
-    if (!existing) throw new BadRequestException('Charge type not found');
-    if (existing.isSystem) throw new BadRequestException('Standard charges cannot be deleted; disable them instead');
-    await this.prisma.purchaseAdditionalChargeType.delete({ where: { id } });
+  async deleteAdditionalCharge(businessId: string, id: string) {
+    const existing = await this.prisma.purchaseAdditionalCharge.findFirst({ where: { id, businessId } });
+    if (!existing) throw new BadRequestException('Additional charge not found');
+    await this.prisma.purchaseAdditionalCharge.delete({ where: { id } });
     return { deleted: true };
   }
 

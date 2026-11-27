@@ -75,7 +75,7 @@ export class PurchaseBillingService {
         purchaseOrder: true,
         charges: true,
         grnLinks: { include: { grn: true } },
-        allocations: { include: { purchasePayment: true } },
+        paymentAllocations: { include: { purchasePayment: true } },
         items: { include: { variant: { include: { product: true } } } },
       },
     });
@@ -203,7 +203,6 @@ export class PurchaseBillingService {
           igstAmount: calc.igstAmount,
           vatAmount: calc.vatAmount,
           totalTax: calc.totalTax,
-          freightAmount: calc.freightAmount,
           additionalCharges: calc.additionalCharges,
           grandTotal: calc.grandTotal,
           paidAmount: 0,
@@ -246,7 +245,6 @@ export class PurchaseBillingService {
           charges: dto.charges?.length
             ? {
                 create: dto.charges.map((ch) => ({
-                  chargeType: ch.type,
                   name: ch.name,
                   amount: String(ch.amount),
                   isTaxable: ch.isTaxable === true,
@@ -332,7 +330,6 @@ export class PurchaseBillingService {
           igstAmount: calc.igstAmount,
           vatAmount: calc.vatAmount,
           totalTax: calc.totalTax,
-          freightAmount: calc.freightAmount,
           additionalCharges: calc.additionalCharges,
           grandTotal: calc.grandTotal,
           balanceAmount: calc.grandTotal,
@@ -374,7 +371,6 @@ export class PurchaseBillingService {
           charges: dto.charges?.length
             ? {
                 create: dto.charges.map((ch) => ({
-                  chargeType: ch.type,
                   name: ch.name,
                   amount: String(ch.amount),
                   isTaxable: ch.isTaxable === true,
@@ -571,10 +567,10 @@ export class PurchaseBillingService {
     return this.prisma.$transaction(async (tx) => {
       const invoice = await tx.purchaseInvoice.findFirst({
         where: { id, businessId: user.businessId, isDeleted: false },
-        include: { items: true, allocations: true },
+        include: { items: true, paymentAllocations: true },
       });
       if (!invoice) throw new NotFoundException('Purchase invoice not found');
-      if (invoice.allocations.length > 0) {
+      if (invoice.paymentAllocations.length > 0) {
         throw new BadRequestException('Cannot cancel an invoice with payment allocations');
       }
       const returnsCount = await tx.purchaseReturn.count({
@@ -823,6 +819,9 @@ export class PurchaseBillingService {
 
       for (const item of doc.items) {
         if (item.variantId) {
+          if (!doc.warehouseId) {
+            throw new BadRequestException('A warehouse is required to post purchase returns');
+          }
           await this.core.applyStockOut(tx, {
             branchId: doc.branchId,
             warehouseId: doc.warehouseId,

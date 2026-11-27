@@ -61,9 +61,9 @@ async function main() {
           name: item.name,
           sku: item.sku,
           purchasePrice: item.purchasePrice,
-          mrp: item.retailPrice,
-          retailPrice: item.retailPrice,
-          wholesalePrice: item.retailPrice * 0.9,
+          mrp: item.salesPrice,
+            retailPrice: item.salesPrice,
+            wholesalePrice: item.salesPrice * 0.9,
           minStockLevel: 10,
         },
       });
@@ -73,15 +73,15 @@ async function main() {
           name: "Standard",
           sku: item.sku,
           purchasePrice: item.purchasePrice,
-          salesPrice: item.retailPrice,
-          mrp: item.retailPrice,
+          retailPrice: item.salesPrice,
+          mrp: item.salesPrice,
         },
       });
       await prisma.stockBalance.create({
         data: {
           branchId: branch.id,
           variantId: variant.id,
-          quantity: item.quantity,
+          quantity: item.openingStock,
           averageCost: item.purchasePrice,
         },
       });
@@ -90,9 +90,9 @@ async function main() {
           branchId: branch.id,
           variantId: variant.id,
           type: "MANUAL_IN",
-          quantity: item.quantity,
+          quantity: item.openingStock,
           unitCost: item.purchasePrice,
-          totalCost: item.quantity * item.purchasePrice,
+          totalCost: item.openingStock * item.purchasePrice,
           reason: "Development inventory seed",
           notes: "Inventory seed",
         },

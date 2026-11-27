@@ -1,6 +1,37 @@
 import { getTenantSchemaMigrations } from "./tenant-schema-migrations";
 
 describe("tenant schema migrations", () => {
+  it("adds customization metadata tables to tenant schemas", () => {
+    const migration = getTenantSchemaMigrations().find(
+      (item) => item.name === "20261127110000_customization_metadata",
+    );
+
+    expect(migration).toBeDefined();
+    expect(migration?.sql).toContain('CREATE TABLE IF NOT EXISTS "custom_fields"');
+    expect(migration?.sql).toContain('CREATE TABLE IF NOT EXISTS "schema_change_log"');
+    expect(migration?.sql).toContain('CREATE TABLE IF NOT EXISTS "custom_entities"');
+  });
+
+  it("removes purchase charge categories while preserving named charges", () => {
+    const migrations = getTenantSchemaMigrations();
+    const customizationIndex = migrations.findIndex(
+      (item) => item.name === "20261127110000_customization_metadata",
+    );
+    const chargeMigrationIndex = migrations.findIndex(
+      (item) => item.name === "20261127120000_remove_purchase_charge_categories",
+    );
+    const migration = migrations[chargeMigrationIndex];
+
+    expect(chargeMigrationIndex).toBeGreaterThan(customizationIndex);
+    expect(migration?.sql).toContain(
+      "ALTER TABLE purchase_additional_charge_types RENAME TO purchase_additional_charges",
+    );
+    expect(migration?.sql.match(/DROP COLUMN IF EXISTS charge_type/g)).toHaveLength(3);
+    expect(migration?.sql).toContain('DROP TYPE IF EXISTS "PurchaseChargeType"');
+    expect(migration?.sql).toContain('RENAME TO "PurchaseChargeAllocationMethod"');
+    expect(migration?.sql).toContain('DROP COLUMN IF EXISTS freight_amount');
+  });
+
   it("includes member profile fields required by tenant user provisioning", () => {
     const migration = getTenantSchemaMigrations().find(
       (item) => item.name === "20261125120000_user_member_profile_fields",

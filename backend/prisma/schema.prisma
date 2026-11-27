@@ -149,7 +149,9 @@ model Business {
   roles             Role[]
   taxRates          TaxRate[]
   units               Unit[]
-  purchaseChargeTypes PurchaseAdditionalChargeType[]
+  categories         Category[]
+  brands             Brand[]
+  purchaseAdditionalCharges PurchaseAdditionalCharge[]
   products            Product[]
   customers         Customer[]
   suppliers         Supplier[]
@@ -195,6 +197,7 @@ model Branch {
   payments              Payment[]
   stockBalances         StockBalance[]
   stockMovements        StockMovement[]
+  warehouses            Warehouse[]
 
   @@unique([businessId, code])
   @@map("branches")
@@ -383,6 +386,8 @@ model Unit {
   decimalPlaces Int      @default(0) @map("decimal_places")
   isDefault     Boolean  @default(false) @map("is_default")
   isStandard    Boolean  @default(false) @map("is_standard")
+  isSystem      Boolean  @default(false) @map("is_system")
+  isActive      Boolean  @default(true) @map("is_active")
   isQuickSelect Boolean  @default(false) @map("is_quick_select")
   quantityType  String   @default("WHOLE") @map("quantity_type")
   uqcCode       String?  @map("uqc_code")
@@ -396,11 +401,40 @@ model Unit {
   @@map("units")
 }
 
-model PurchaseAdditionalChargeType {
+model Category {
   id         String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
   businessId String   @map("business_id") @db.Uuid
   name       String
-  chargeType String   @default("OTHER") @map("charge_type") // FREIGHT, LOADING, PACKING, INSURANCE, OTHER
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  business Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  products Product[]
+
+  @@unique([businessId, name])
+  @@map("categories")
+}
+
+model Brand {
+  id         String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  businessId String   @map("business_id") @db.Uuid
+  name       String
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  business Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  products Product[]
+
+  @@unique([businessId, name])
+  @@map("brands")
+}
+
+model PurchaseAdditionalCharge {
+  id         String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  businessId String   @map("business_id") @db.Uuid
+  name       String
   isActive   Boolean  @default(true) @map("is_active")
   isSystem   Boolean  @default(false) @map("is_system")
   createdAt  DateTime @default(now()) @map("created_at")
@@ -409,7 +443,7 @@ model PurchaseAdditionalChargeType {
   business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   @@unique([businessId, name])
-  @@map("purchase_additional_charge_types")
+  @@map("purchase_additional_charges")
 }
 
 model Product {
@@ -528,12 +562,19 @@ model Supplier {
   pincode          String
   creditPeriodDays Int      @default(30) @map("credit_period_days")
   openingBalance   Decimal  @default(0) @map("opening_balance") @db.Decimal(15, 2)
+  creditLimit      Decimal  @default(0) @map("credit_limit") @db.Decimal(15, 2)
+  rating           Decimal  @default(0) @db.Decimal(5, 2)
   isActive         Boolean  @default(true) @map("is_active")
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
   business         Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
   purchaseInvoices PurchaseInvoice[]
+  purchaseRequests PurchaseRequest[]
+  purchaseOrders   PurchaseOrder[]
+  grns             Grn[]
+  purchaseReturns  PurchaseReturn[]
+  purchasePayments PurchasePayment[]
   payments         Payment[]
 
   @@map("suppliers")
@@ -570,6 +611,7 @@ model StockBalance {
   updatedAt   DateTime @updatedAt @map("updated_at")
 
   branch  Branch         @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  warehouse Warehouse?   @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
   variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
   @@unique([branchId, variantId])
@@ -580,7 +622,6 @@ model StockBalance {
 enum StockMovementType {
   MANUAL_IN
   MANUAL_OUT
-  ADJUSTMENT_SUB
   IN_PURCHASE
   OUT_SALE
   IN_TRANSFER
@@ -594,6 +635,7 @@ enum StockMovementType {
 model StockMovement {
   id                    String            @id @default(dbgenerated("uuidv7()")) @db.Uuid
   branchId              String            @map("branch_id") @db.Uuid
+  warehouseId           String?           @map("warehouse_id") @db.Uuid
   variantId             String            @map("variant_id") @db.Uuid
   type                  StockMovementType
   quantity              Decimal           @db.Decimal(15, 2)
@@ -606,14 +648,13 @@ model StockMovement {
   reason                String?
   idempotencyKey        String?           @unique @map("idempotency_key")
   notes                 String?
-  performedById         String?           @map("performed_by_id") @db.Uuid
-  reason                String?
   batchNumber           String?           @map("batch_number")
   expiryDate            DateTime?         @map("expiry_date")
   serialNumber          String?           @map("serial_number")
   createdAt             DateTime          @default(now()) @map("created_at")
 
   branch  Branch         @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  warehouse Warehouse?   @relation(fields: [warehouseId], references: [id])
   variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
 
   @@index([branchId])
@@ -851,20 +892,12 @@ enum ApprovalRequestStatus {
   CANCELLED
 }
 
-enum PurchaseChargeType {
-  LOADING
-  PACKING
-  INSURANCE
-  FREIGHT
-  OTHER
-}
-
 enum DiscountType {
   PERCENT
   AMOUNT
 }
 
-enum FreightAllocationMethod {
+enum PurchaseChargeAllocationMethod {
   VALUE
   QUANTITY
   WEIGHT
@@ -960,6 +993,7 @@ model PurchaseOrder {
   id                   String              @id @default(dbgenerated("uuidv7()")) @db.Uuid
   businessId           String              @map("business_id") @db.Uuid
   branchId             String              @map("branch_id") @db.Uuid
+  warehouseId          String?             @map("warehouse_id") @db.Uuid
   supplierId           String              @map("supplier_id") @db.Uuid
   purchaseRequestId    String?             @map("purchase_request_id") @db.Uuid
   orderNumber          String              @map("order_number")
@@ -978,7 +1012,6 @@ model PurchaseOrder {
   igstAmount           Decimal             @default(0) @map("igst_amount") @db.Decimal(15, 2)
   vatAmount            Decimal             @default(0) @map("vat_amount") @db.Decimal(15, 2)
   totalTax             Decimal             @default(0) @map("total_tax") @db.Decimal(15, 2)
-  freightAmount        Decimal             @default(0) @map("freight_amount") @db.Decimal(15, 2)
   additionalCharges    Decimal             @default(0) @map("additional_charges") @db.Decimal(15, 2)
   grandTotal           Decimal             @default(0) @map("grand_total") @db.Decimal(15, 2)
   calculationRule      Json                @default("{}") @map("calculation_rule")
@@ -1036,13 +1069,12 @@ model PurchaseOrderItem {
 model PurchaseOrderCharge {
   id               String                   @id @default(dbgenerated("uuidv7()")) @db.Uuid
   purchaseOrderId  String                   @map("purchase_order_id") @db.Uuid
-  chargeType       PurchaseChargeType       @map("charge_type")
   name             String
   amount           Decimal                  @db.Decimal(15, 2)
   isTaxable        Boolean                  @default(false) @map("is_taxable")
   taxRate          Decimal                  @default(0) @map("tax_rate") @db.Decimal(5, 2)
   taxAmount        Decimal                  @default(0) @map("tax_amount") @db.Decimal(15, 2)
-  allocationMethod FreightAllocationMethod? @map("allocation_method")
+  allocationMethod PurchaseChargeAllocationMethod? @map("allocation_method")
   accountId        String?                  @map("account_id") @db.Uuid
 
   purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
@@ -1054,11 +1086,16 @@ model Grn {
   id              String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
   businessId      String    @map("business_id") @db.Uuid
   branchId        String    @map("branch_id") @db.Uuid
+  warehouseId     String?   @map("warehouse_id") @db.Uuid
   supplierId      String    @map("supplier_id") @db.Uuid
   purchaseOrderId String?   @map("purchase_order_id") @db.Uuid
   grnNumber       String    @map("grn_number")
   grnDate         DateTime  @map("grn_date")
   status          GrnStatus @default(DRAFT)
+  totalAmount     Decimal   @default(0) @map("total_amount") @db.Decimal(15, 2)
+  journalEntryId  String?   @map("journal_entry_id") @db.Uuid
+  cancelledAt     DateTime? @map("cancelled_at")
+  cancellationReason String? @map("cancellation_reason")
   notes           String?
   createdById     String    @map("created_by") @db.Uuid
   updatedById     String?   @map("updated_by") @db.Uuid
@@ -1084,6 +1121,7 @@ model GrnItem {
   variantId           String  @map("variant_id") @db.Uuid
   purchaseOrderItemId String? @map("purchase_order_item_id") @db.Uuid
   quantity            Decimal @db.Decimal(15, 3)
+  invoicedQuantity    Decimal @default(0) @map("invoiced_quantity") @db.Decimal(15, 3)
   rejectedQuantity    Decimal @default(0) @map("rejected_quantity") @db.Decimal(15, 3)
   unitCost            Decimal @map("unit_cost") @db.Decimal(15, 4)
   landedCost          Decimal @default(0) @map("landed_cost") @db.Decimal(15, 4)
@@ -1098,6 +1136,7 @@ model PurchaseInvoice {
   id                   String                @id @default(dbgenerated("uuidv7()")) @db.Uuid
   businessId           String                @map("business_id") @db.Uuid
   branchId             String                @map("branch_id") @db.Uuid
+  warehouseId          String?               @map("warehouse_id") @db.Uuid
   supplierId           String                @map("supplier_id") @db.Uuid
   purchaseOrderId      String?               @map("purchase_order_id") @db.Uuid
   journalEntryId       String?               @map("journal_entry_id") @db.Uuid
@@ -1106,6 +1145,7 @@ model PurchaseInvoice {
   invoiceDate          DateTime              @map("invoice_date")
   dueDate              DateTime              @map("due_date")
   mode                 PurchaseInvoiceMode   @default(DIRECT)
+  currencyCode         String                @default("INR") @map("currency_code")
   status               PurchaseInvoiceStatus @default(DRAFT)
   pricesIncludeTax     Boolean               @default(false) @map("prices_include_tax")
   invoiceDiscountType  DiscountType?         @map("invoice_discount_type")
@@ -1118,7 +1158,6 @@ model PurchaseInvoice {
   igstAmount           Decimal               @default(0) @map("igst_amount") @db.Decimal(15, 2)
   vatAmount            Decimal               @default(0) @map("vat_amount") @db.Decimal(15, 2)
   totalTax             Decimal               @default(0) @map("total_tax") @db.Decimal(15, 2)
-  freightAmount        Decimal               @default(0) @map("freight_amount") @db.Decimal(15, 2)
   additionalCharges    Decimal               @default(0) @map("additional_charges") @db.Decimal(15, 2)
   grandTotal           Decimal               @default(0) @map("grand_total") @db.Decimal(15, 2)
   paidAmount           Decimal               @default(0) @map("paid_amount") @db.Decimal(15, 2)
@@ -1140,26 +1179,55 @@ model PurchaseInvoice {
 
   branch       Branch                @relation(fields: [branchId], references: [id], onDelete: Cascade)
   supplier     Supplier              @relation(fields: [supplierId], references: [id])
+  purchaseOrder PurchaseOrder?       @relation(fields: [purchaseOrderId], references: [id])
   journalEntry JournalEntry?         @relation(fields: [journalEntryId], references: [id])
   items        PurchaseInvoiceItem[]
+  charges      PurchaseInvoiceCharge[]
+  grnLinks     PurchaseInvoiceGrn[]
   allocations  PaymentAllocation[]
+  paymentAllocations PurchasePaymentAllocation[]
 
-  @@unique([branchId, billNumber])
+  @@unique([branchId, invoiceNumber])
   @@map("purchase_invoices")
+}
+
+model PurchaseInvoiceGrn {
+  id                String @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  purchaseInvoiceId String @map("purchase_invoice_id") @db.Uuid
+  grnId             String @map("grn_id") @db.Uuid
+
+  purchaseInvoice PurchaseInvoice @relation(fields: [purchaseInvoiceId], references: [id], onDelete: Cascade)
+  grn             Grn             @relation(fields: [grnId], references: [id], onDelete: Cascade)
+
+  @@unique([purchaseInvoiceId, grnId])
+  @@map("purchase_invoice_grn")
 }
 
 model PurchaseInvoiceItem {
   id                String  @id @default(dbgenerated("uuidv7()")) @db.Uuid
   purchaseInvoiceId String  @map("purchase_invoice_id") @db.Uuid
-  variantId         String  @map("variant_id") @db.Uuid
+  variantId         String? @map("variant_id") @db.Uuid
+  itemName          String? @map("item_name")
+  unit              String  @default("PCS")
+  grnItemId         String? @map("grn_item_id") @db.Uuid
+  purchaseOrderItemId String? @map("purchase_order_item_id") @db.Uuid
+  description       String?
+  unitRate          Decimal @default(0) @map("unit_rate") @db.Decimal(15, 4)
+  discountAmount    Decimal @default(0) @map("discount_amount") @db.Decimal(15, 2)
   quantity          Decimal @db.Decimal(15, 2)
-  unitPrice         Decimal @map("unit_price") @db.Decimal(15, 2)
+  unitPrice         Decimal @default(0) @map("unit_price") @db.Decimal(15, 2)
   taxableValue      Decimal @map("taxable_value") @db.Decimal(15, 2)
-  gstRate           Decimal @map("gst_rate") @db.Decimal(5, 2)
+  gstRate           Decimal @default(0) @map("gst_rate") @db.Decimal(5, 2)
+  taxRate           Decimal @default(0) @map("tax_rate") @db.Decimal(5, 2)
   cgstAmount        Decimal @default(0) @map("cgst_amount") @db.Decimal(15, 2)
   sgstAmount        Decimal @default(0) @map("sgst_amount") @db.Decimal(15, 2)
   igstAmount        Decimal @default(0) @map("igst_amount") @db.Decimal(15, 2)
+  vatAmount         Decimal @default(0) @map("vat_amount") @db.Decimal(15, 2)
+  landedCost        Decimal @default(0) @map("landed_cost") @db.Decimal(15, 4)
   totalAmount       Decimal @map("total_amount") @db.Decimal(15, 2)
+  batchNumber       String? @map("batch_number")
+  serialNumber      String? @map("serial_number")
+  expiryDate        DateTime? @map("expiry_date")
 
   purchaseInvoice PurchaseInvoice @relation(fields: [purchaseInvoiceId], references: [id], onDelete: Cascade)
   variant         ProductVariant? @relation(fields: [variantId], references: [id])
@@ -1170,13 +1238,12 @@ model PurchaseInvoiceItem {
 model PurchaseInvoiceCharge {
   id                String                   @id @default(dbgenerated("uuidv7()")) @db.Uuid
   purchaseInvoiceId String                   @map("purchase_invoice_id") @db.Uuid
-  chargeType        PurchaseChargeType        @map("charge_type")
   name              String
   amount            Decimal                  @db.Decimal(15, 2)
   isTaxable         Boolean                  @default(false) @map("is_taxable")
   taxRate           Decimal                  @default(0) @map("tax_rate") @db.Decimal(5, 2)
   taxAmount         Decimal                  @default(0) @map("tax_amount") @db.Decimal(15, 2)
-  allocationMethod  FreightAllocationMethod? @map("allocation_method")
+  allocationMethod  PurchaseChargeAllocationMethod? @map("allocation_method")
   accountId         String?                  @map("account_id") @db.Uuid
 
   purchaseInvoice PurchaseInvoice @relation(fields: [purchaseInvoiceId], references: [id], onDelete: Cascade)
@@ -1188,15 +1255,24 @@ model PurchaseReturn {
   id                String               @id @default(dbgenerated("uuidv7()")) @db.Uuid
   businessId        String               @map("business_id") @db.Uuid
   branchId          String               @map("branch_id") @db.Uuid
+  warehouseId       String?              @map("warehouse_id") @db.Uuid
   supplierId        String               @map("supplier_id") @db.Uuid
   purchaseInvoiceId String               @map("purchase_invoice_id") @db.Uuid
   journalEntryId    String?              @map("journal_entry_id") @db.Uuid
+  postedAt          DateTime?            @map("posted_at")
+  cancelledAt       DateTime?            @map("cancelled_at")
+  cancellationReason String?             @map("cancellation_reason")
   returnNumber      String               @map("return_number")
   returnDate        DateTime             @map("return_date")
+  currencyCode      String               @default("INR") @map("currency_code")
   status            PurchaseReturnStatus @default(DRAFT)
   taxableAmount     Decimal              @default(0) @map("taxable_amount") @db.Decimal(15, 2)
   totalTax          Decimal              @default(0) @map("total_tax") @db.Decimal(15, 2)
   grandTotal        Decimal              @default(0) @map("grand_total") @db.Decimal(15, 2)
+  cgstAmount        Decimal              @default(0) @map("cgst_amount") @db.Decimal(15, 2)
+  sgstAmount        Decimal              @default(0) @map("sgst_amount") @db.Decimal(15, 2)
+  igstAmount        Decimal              @default(0) @map("igst_amount") @db.Decimal(15, 2)
+  vatAmount         Decimal              @default(0) @map("vat_amount") @db.Decimal(15, 2)
   calculationRule   Json                 @default("{}") @map("calculation_rule")
   taxSummary        Json                 @default("{}") @map("tax_summary")
   reason            String?
@@ -1222,6 +1298,7 @@ model PurchaseReturnItem {
   itemName         String? @map("item_name")
   unit             String? @default("PCS")
   invoiceItemId    String? @map("invoice_item_id") @db.Uuid
+  description      String?
   quantity         Decimal @db.Decimal(15, 3)
   unitRate         Decimal @map("unit_rate") @db.Decimal(15, 4)
   discountAmount   Decimal @default(0) @map("discount_amount") @db.Decimal(15, 2)
@@ -1231,6 +1308,7 @@ model PurchaseReturnItem {
   sgstAmount       Decimal @default(0) @map("sgst_amount") @db.Decimal(15, 2)
   igstAmount       Decimal @default(0) @map("igst_amount") @db.Decimal(15, 2)
   vatAmount        Decimal @default(0) @map("vat_amount") @db.Decimal(15, 2)
+  landedCost       Decimal @default(0) @map("landed_cost") @db.Decimal(15, 4)
   totalAmount      Decimal @default(0) @map("total_amount") @db.Decimal(15, 2)
 
   purchaseReturn PurchaseReturn  @relation(fields: [purchaseReturnId], references: [id], onDelete: Cascade)

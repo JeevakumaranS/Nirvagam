@@ -27,6 +27,8 @@ import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
 import { TenantResolverGuard } from "../../tenancy/tenant-resolver.guard";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import { PrismaService } from "../../prisma/prisma.service";
+import { PermissionsGuard } from "../../common/guards/permissions.guard";
+import { RequirePermissions } from "../../common/decorators/permissions.decorator";
 import { PurchaseCoreService } from "./services/purchase-core.service";
 import { PurchaseProcurementService } from "./services/purchase-procurement.service";
 import { PurchaseBillingService } from "./services/purchase-billing.service";
@@ -662,41 +664,37 @@ export class PurchasesController {
 
   /* --------------------------- ADDITIONAL CHARGES --------------------------- */
 
-  @Get("charge-types")
+  @Get("additional-charges")
   @RequirePermissions("purchase_order:view")
-  getChargeTypes(
+  getAdditionalCharges(
     @CurrentUser() user: AuthUser,
     @Query("activeOnly") activeOnly?: string,
   ) {
-    return this.core.getChargeTypes(user.businessId, activeOnly === "true");
+    return this.core.getAdditionalCharges(user.businessId, activeOnly === "true");
   }
 
-  @Post("charge-types")
-  @RequirePermissions("purchase_settings:manage")
-  createChargeType(
+  @Post("additional-charges")
+  @RequirePermissions("purchase_settings:edit")
+  createAdditionalCharge(
     @CurrentUser() user: AuthUser,
-    @Body() dto: { name: string; chargeType?: string },
+    @Body() dto: { name: string },
   ) {
-    return this.core.createChargeType(user.businessId, dto);
+    return this.core.createAdditionalCharge(user.businessId, dto);
   }
 
-  @Patch("charge-types/:id/toggle")
-  @RequirePermissions("purchase_settings:manage")
-  toggleChargeType(
+  @Patch("additional-charges/:id/toggle")
+  @RequirePermissions("purchase_settings:edit")
+  toggleAdditionalCharge(
     @CurrentUser() user: AuthUser,
     @Param("id") id: string,
     @Body() dto: { isActive: boolean },
   ) {
-    return this.core.toggleChargeType(
-      user.businessId,
-      id,
-      Boolean(dto.isActive),
-    );
+    return this.core.toggleAdditionalCharge(user.businessId, id, Boolean(dto.isActive));
   }
 
-  @Delete("charge-types/:id")
-  @RequirePermissions("purchase_settings:manage")
-  deleteChargeType(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.core.deleteChargeType(user.businessId, id);
+  @Delete("additional-charges/:id")
+  @RequirePermissions("purchase_settings:edit")
+  deleteAdditionalCharge(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.core.deleteAdditionalCharge(user.businessId, id);
   }
 }
