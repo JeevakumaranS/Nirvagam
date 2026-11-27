@@ -3,9 +3,55 @@ import { PurchaseCoreService } from './services/purchase-core.service';
 import { PurchaseApprovalsService } from './services/purchase-approvals.service';
 import { PurchaseProcurementService } from './services/purchase-procurement.service';
 import { PurchaseBillingService } from './services/purchase-billing.service';
+import { PurchaseFinancialsReportsService } from './services/purchase-financials-reports.service';
 
 describe('Module 3 Purchase Management Integration Flows', () => {
   const user = { id: 'u1', businessId: 'b1', branchId: 'br1' };
+
+  it('lists purchase invoices without removed warehouse and unit-price columns', async () => {
+    const prisma: any = {
+      purchaseInvoice: {
+        count: jest.fn().mockResolvedValue(0),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
+    const billing = new PurchaseBillingService(prisma, {} as any, {} as any);
+
+    await billing.listInvoices(user, {});
+
+    const query = prisma.purchaseInvoice.findMany.mock.calls[0][0];
+    expect(query.select).not.toHaveProperty('warehouseId');
+    expect(query.select.items.select).not.toHaveProperty('unitPrice');
+  });
+
+  it('lists purchase returns without the removed warehouse column', async () => {
+    const prisma: any = {
+      purchaseReturn: {
+        count: jest.fn().mockResolvedValue(0),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
+    const billing = new PurchaseBillingService(prisma, {} as any, {} as any);
+
+    await billing.listReturns(user, {});
+
+    const query = prisma.purchaseReturn.findMany.mock.calls[0][0];
+    expect(query.select).not.toHaveProperty('warehouseId');
+  });
+
+  it('loads purchase-order print data without the removed warehouse column', async () => {
+    const prisma: any = {
+      business: { findUnique: jest.fn().mockResolvedValue({ id: 'b1' }) },
+      purchaseOrder: { findFirst: jest.fn().mockResolvedValue({ id: 'po1' }) },
+    };
+    const reports = new PurchaseFinancialsReportsService(prisma);
+
+    await reports.getPrintData(user, 'PO', 'po1');
+
+    const query = prisma.purchaseOrder.findFirst.mock.calls[0][0];
+    expect(query.select).not.toHaveProperty('warehouseId');
+    expect(query.select.items.select).not.toHaveProperty('warehouseId');
+  });
 
   const makeMockPrisma = () => {
     const state: any = {
@@ -130,6 +176,8 @@ describe('Module 3 Purchase Management Integration Flows', () => {
         }),
       },
       purchaseRequest: {
+        count: jest.fn(async () => state.prs.size),
+        findMany: jest.fn(async () => Array.from(state.prs.values())),
         create: jest.fn(async ({ data }: any) => {
           const pr = { id: `pr-${state.seq++}`, ...data, version: 1, items: (data.items?.create || []).map((i: any, idx: number) => ({ id: `pri-${idx}`, ...i, variant: { purchasePrice: 100, taxRate: { rate: 18 } } })) };
           state.prs.set(pr.id, pr);
@@ -154,6 +202,15 @@ describe('Module 3 Purchase Management Integration Flows', () => {
           state.pos.set(po.id, po);
           return po;
         }),
+        findMany: jest.fn(async ({ where }: any) =>
+          Array.from(state.pos.values())
+            .filter((po: any) =>
+              po.businessId === where.businessId &&
+              !po.isDeleted &&
+              where.purchaseRequestId.in.includes(po.purchaseRequestId),
+            )
+            .map((po: any) => ({ purchaseRequestId: po.purchaseRequestId })),
+        ),
         findFirst: jest.fn(async ({ where }: any) => state.pos.get(where.id) || null),
         findUnique: jest.fn(async ({ where }: any) => state.pos.get(where.id) || null),
         update: jest.fn(async ({ where, data }: any) => {
@@ -221,6 +278,7 @@ describe('Module 3 Purchase Management Integration Flows', () => {
             ...data,
             items: (data.items?.create || []).map((i: any, idx: number) => ({ id: `ii-${idx}`, ...i })),
             allocations: [],
+            paymentAllocations: [],
             supplier: state.supplier,
             branch: state.branch,
             version: 1,
@@ -237,7 +295,9 @@ describe('Module 3 Purchase Management Integration Flows', () => {
       },
       purchaseInvoiceGrn: { count: jest.fn(async () => 0) },
       purchaseReturn: {
-        count: jest.fn(async () => 0),
+        count: jest.fn(async ({ where }: any) => Array.from(state.returns.values()).filter(
+          (ret: any) => ret.purchaseInvoiceId === where.purchaseInvoiceId && ret.status !== 'CANCELLED',
+        ).length),
         create: jest.fn(async ({ data }: any) => {
           const ret = { id: `ret-${state.seq++}`, ...data, items: (data.items?.create || []).map((i: any, idx: number) => ({ id: `ri-${idx}`, ...i })), supplier: state.supplier, version: 1 };
           state.returns.set(ret.id, ret);
@@ -268,6 +328,28 @@ describe('Module 3 Purchase Management Integration Flows', () => {
     };
     return { prisma, state };
   };
+
+  it('marks purchase requests that already have a linked PO', async () => {
+    const { prisma, state } = makeMockPrisma();
+    state.prs.set('pr-1', { id: 'pr-1' });
+    state.prs.set('pr-2', { id: 'pr-2' });
+    state.pos.set('po-1', {
+      id: 'po-1',
+      businessId: 'b1',
+      purchaseRequestId: 'pr-1',
+      isDeleted: false,
+    });
+    const core = new PurchaseCoreService(prisma);
+    const approvals = new PurchaseApprovalsService(prisma, core);
+    const procurement = new PurchaseProcurementService(prisma, core, approvals);
+
+    const result = await procurement.listRequests(user, {});
+
+    expect(result.data.map((request: any) => [request.id, request.isConvertedToPo])).toEqual([
+      ['pr-1', true],
+      ['pr-2', false],
+    ]);
+  });
 
   it('Flow 1 & 3: Full PR -> PO -> Partial GRN (Accrual) -> Partial Invoice -> Partial Payment', async () => {
     const { prisma, state } = makeMockPrisma();

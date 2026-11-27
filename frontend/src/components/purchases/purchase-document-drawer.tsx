@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
-import { Paperclip, Plus, Trash2, Upload, Download, Clock, Link2 } from 'lucide-react';
+import { Paperclip, Plus, Trash2, Upload, Download, Clock, Link2, ChevronDown, ChevronUp } from 'lucide-react';
 
 export type PurchaseDocKind = 'PR' | 'PO' | 'GRN' | 'INVOICE';
 
@@ -58,10 +58,44 @@ function getQuantityError(qtyStr: string, unitSymbol: string, availableUnits: an
   return null;
 }
 
+function TaxRateSelect({
+  taxRates,
+  value,
+  onChange,
+  className,
+}: {
+  taxRates: any[];
+  value: string;
+  onChange: (value: string) => void;
+  className: string;
+}) {
+  const hasCurrentRate = taxRates.some((rate) => String(rate.rate) === value);
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className={className}>
+      {!taxRates.length ? (
+        <>
+          <option value={value}>{value}% (not configured)</option>
+          {value !== '0' && <option value="0">0%</option>}
+        </>
+      ) : (
+        !hasCurrentRate && <option value={value}>{value}% (not active)</option>
+      )}
+      {taxRates.map((rate) => (
+        <option key={rate.id} value={String(rate.rate)}>
+          {rate.name} ({Number(rate.rate)}%)
+        </option>
+      ))}
+    </select>
+  );
+}
+
 interface LineState {
   variantId?: string;
   itemName: string;
   unit: string;
+  orderedQuantity?: string;
+  shortfallReason?: 'NOT_RECEIVED' | 'DAMAGED' | '';
+  shortfallRemarks?: string;
   description?: string;
   quantity: string;
   unitRate: string;
@@ -119,6 +153,15 @@ export function PurchaseDocumentDrawer({
   const [invoiceDiscountValue, setInvoiceDiscountValue] = useState('0');
   const [notes, setNotes] = useState('');
   const [postImmediately, setPostImmediately] = useState(true);
+  const [showTaxBreakdown, setShowTaxBreakdown] = useState(false);
+
+  const [deliveryDate, setDeliveryDate] = useState('');
+  const [approvedPos, setApprovedPos] = useState<any[]>([]);
+  const [selectedGrnPoId, setSelectedGrnPoId] = useState('');
+  const [poSearch, setPoSearch] = useState('');
+  const [showPoDropdown, setShowPoDropdown] = useState(false);
+  const [highlightedPoIndex, setHighlightedPoIndex] = useState(0);
+  const poListRef = useRef<HTMLDivElement>(null);
 
   const [lines, setLines] = useState<LineState[]>([]);
   const [charges, setCharges] = useState<PurchaseCalculationCharge[]>([]);
@@ -128,6 +171,13 @@ export function PurchaseDocumentDrawer({
   const [timeline, setTimeline] = useState<any[]>([]);
   const [supplierMetrics, setSupplierMetrics] = useState<any[]>([]);
   const [units, setUnits] = useState<any[]>([]);
+  const [taxRates, setTaxRates] = useState<any[]>([]);
+  const [taxRatesError, setTaxRatesError] = useState('');
+  const defaultTaxRate = String(taxRates.find((rate) => rate.isDefault)?.rate ?? taxRates[0]?.rate ?? 0);
+
+  useEffect(() => {
+    if (isOpen) setShowTaxBreakdown(false);
+  }, [isOpen, kind, prefill?.id]);
 
   const variants = useMemo(() => {
     const list: Array<{ id: string; label: string; purchasePrice: number; taxRate: number }> = [];
@@ -154,7 +204,7 @@ export function PurchaseDocumentDrawer({
       const initialSup = suppliers.find((s) => s.id === initialSupId);
       setSupplierSearch(initialSup ? initialSup.name : '');
     } else {
-      setSupplierId(prefill?.supplierId || suppliers[0]?.id || '');
+      setSupplierId(prefill?.supplierId || (kind === 'PO' ? '' : suppliers[0]?.id || ''));
       setSupplierSearch('');
     }
     setShowSupplierDropdown(false);
@@ -190,7 +240,7 @@ export function PurchaseDocumentDrawer({
           unitRate: '0',
           discountType: 'PERCENT',
           discountValue: '0',
-          taxRate: '18',
+          taxRate: '0',
         },
       ]);
     }
@@ -199,9 +249,40 @@ export function PurchaseDocumentDrawer({
       .then((res) => setUnits(Array.isArray(res) ? res : []))
       .catch(() => setUnits([]));
 
+    apiFetch('/products/meta/tax-rates?activeOnly=true')
+      .then((res) => {
+        const rates = Array.isArray(res) ? res : [];
+        setTaxRates(rates);
+        setTaxRatesError('');
+        if (!prefill?.items?.length) {
+          const defaultRate = String(rates.find((rate: any) => rate.isDefault)?.rate ?? rates[0]?.rate ?? 0);
+          setLines((prev) => prev.map((line) => ({ ...line, taxRate: defaultRate })));
+        }
+      })
+      .catch((err: any) => {
+        setTaxRates([]);
+        setTaxRatesError(err.message || 'Failed to load tax rates');
+      });
+
     apiFetch('/purchases/additional-charges?activeOnly=true')
       .then((res) => setAvailableCharges(Array.isArray(res) ? res : []))
       .catch(() => setAvailableCharges([]));
+
+    if (kind === 'GRN') {
+      apiFetch('/purchases/orders?limit=100')
+        .then((res) => {
+          const list = Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
+          const active = list.filter((po: any) => ['APPROVED', 'PARTIALLY_RECEIVED'].includes(po.status));
+          setApprovedPos(active);
+          if (prefill?.purchaseOrderId) {
+            const matchedPo = active.find((po: any) => po.id === prefill.purchaseOrderId);
+            if (matchedPo) {
+              setPoSearch(`${matchedPo.orderNumber}${matchedPo.supplier?.name ? ` — ${matchedPo.supplier.name}` : ''}`);
+            }
+          }
+        })
+        .catch(() => setApprovedPos([]));
+    }
 
     if (prefill?.id) {
       apiFetch(`/purchases/attachments/${kind}/${prefill.id}`).then(setAttachments).catch(() => setAttachments([]));
@@ -244,6 +325,27 @@ export function PurchaseDocumentDrawer({
     el?.scrollIntoView({ block: 'nearest' });
   }, [highlightedSupplierIndex, showSupplierDropdown]);
 
+  const selectedGrnPo = useMemo(
+    () => approvedPos.find((po) => po.id === selectedGrnPoId) || null,
+    [approvedPos, selectedGrnPoId],
+  );
+
+  const matchingApprovedPos = useMemo(() => {
+    const q = poSearch.trim().toLowerCase();
+    if (!q) return approvedPos;
+    return approvedPos.filter(
+      (po: any) =>
+        (po.orderNumber || '').toLowerCase().includes(q) ||
+        (po.supplier?.name || '').toLowerCase().includes(q),
+    );
+  }, [approvedPos, poSearch]);
+
+  useEffect(() => {
+    if (!showPoDropdown) return;
+    const el = poListRef.current?.children[highlightedPoIndex] as HTMLElement | undefined;
+    el?.scrollIntoView({ block: 'nearest' });
+  }, [highlightedPoIndex, showPoDropdown]);
+
   const calculation = useMemo(() => {
     if (!lines.length) return null;
     const calcLines: PurchaseCalculationLine[] = lines.map((l, idx) => ({
@@ -259,16 +361,16 @@ export function PurchaseDocumentDrawer({
       businessStateCode: branchStateCode || '33',
       supplierStateCode: selectedSupplier?.stateCode || branchStateCode || '33',
       taxRegime,
-      pricesIncludeTax,
-      invoiceDiscountType,
-      invoiceDiscountValue: invoiceDiscountValue || '0',
-      charges,
+      pricesIncludeTax: kind === 'PO' || kind === 'INVOICE' ? pricesIncludeTax : false,
+      invoiceDiscountType: kind === 'PO' || kind === 'INVOICE' ? invoiceDiscountType : 'AMOUNT',
+      invoiceDiscountValue: kind === 'PO' || kind === 'INVOICE' ? invoiceDiscountValue || '0' : '0',
+      charges: kind === 'PO' || kind === 'INVOICE' ? charges : [],
     };
     const rawCalc = calculatePurchaseDocument(calcLines, { ...baseOptions, roundOff: '0' });
     const rawGrand = Number(rawCalc.grandTotal || 0);
     const autoRoundOff = (Math.round(rawGrand) - rawGrand).toFixed(2);
     return calculatePurchaseDocument(calcLines, { ...baseOptions, roundOff: autoRoundOff });
-  }, [lines, branchStateCode, selectedSupplier, taxRegime, pricesIncludeTax, invoiceDiscountType, invoiceDiscountValue, charges]);
+  }, [kind, lines, branchStateCode, selectedSupplier, taxRegime, pricesIncludeTax, invoiceDiscountType, invoiceDiscountValue, charges]);
 
   const addLine = () => {
     setLines((prev) => [
@@ -280,7 +382,7 @@ export function PurchaseDocumentDrawer({
         unitRate: '0',
         discountType: 'PERCENT',
         discountValue: '0',
-        taxRate: '18',
+        taxRate: defaultTaxRate,
       },
     ]);
   };
@@ -360,6 +462,50 @@ export function PurchaseDocumentDrawer({
           }),
         });
       } else if (kind === 'GRN') {
+        if (!selectedGrnPo) {
+          toast({ type: 'warning', title: 'Purchase Order required', message: 'Select an approved Purchase Order.' });
+          setSubmitting(false);
+          return;
+        }
+        const validLines = lines.filter((l) => l.purchaseOrderItemId || l.itemName?.trim());
+        if (!validLines.length) {
+          toast({ type: 'warning', title: 'No received items', message: 'Select at least one product and enter received quantity.' });
+          setSubmitting(false);
+          return;
+        }
+        const shortfallNotes: string[] = [];
+        for (let i = 0; i < validLines.length; i++) {
+          const l = validLines[i];
+          const ordered = l.orderedQuantity !== undefined ? Number(l.orderedQuantity) : null;
+          const rec = Number(l.quantity || 0);
+          if (ordered !== null && rec > ordered) {
+            toast({
+              type: 'error',
+              title: `Invalid Received Qty on Row ${i + 1}`,
+              message: `Received qty cannot exceed ordered qty (${ordered} ${l.unit}).`,
+            });
+            setSubmitting(false);
+            return;
+          }
+          if (ordered !== null && rec < ordered) {
+            if (!l.shortfallReason) {
+              toast({
+                type: 'warning',
+                title: `Reason required on Row ${i + 1}`,
+                message: 'Select "Product Not Received" or "Damaged" for the remaining quantity.',
+              });
+              setSubmitting(false);
+              return;
+            }
+            const diff = Number((ordered - rec).toFixed(3));
+            const reasonLabel = l.shortfallReason === 'DAMAGED' ? 'Damaged' : 'Product Not Received';
+            const remarkPart =
+              l.shortfallReason === 'DAMAGED' && l.shortfallRemarks?.trim()
+                ? ` — ${l.shortfallRemarks.trim()}`
+                : '';
+            shortfallNotes.push(`${l.itemName}: ${reasonLabel} (${diff} ${l.unit})${remarkPart}`);
+          }
+        }
         await apiFetch('/purchases/grns', {
           method: 'POST',
           body: JSON.stringify({
@@ -447,7 +593,12 @@ export function PurchaseDocumentDrawer({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={titles[kind]} maxWidth={kind === 'PR' ? '3xl' : '2xl'}>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={titles[kind]}
+      maxWidth={kind === 'PO' ? '5xl' : kind === 'PR' ? '3xl' : '2xl'}
+    >
       <div className="max-h-[80vh] overflow-y-auto pr-1">
       {prefill?.id && (
         <div className="flex gap-1 mb-4 border-b border-border pb-2 text-xs">
@@ -690,8 +841,10 @@ export function PurchaseDocumentDrawer({
                 <Select
                   label="Supplier *"
                   value={supplierId}
+                  required
                   onChange={(e) => setSupplierId(e.target.value)}
                 >
+                  <option value="" disabled>Select a supplier</option>
                   {(supplierMetrics.length ? supplierMetrics : suppliers).map((s: any) => (
                     <option key={s.id} value={s.id}>
                       {s.name} {s.rating ? `★${s.rating}` : ''} {s.lastPurchasePrice ? `(Last: ₹${s.lastPurchasePrice})` : ''}
@@ -712,31 +865,25 @@ export function PurchaseDocumentDrawer({
             </div>
           )}
 
-          {(kind === 'INVOICE' || kind === 'GRN') && (
+          {kind === 'INVOICE' && (
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {kind === 'INVOICE' && (
-              <>
-                <Input
-                  label="Supplier Bill # *"
-                  value={supplierBillNumber}
-                  onChange={(e) => setSupplierBillNumber(e.target.value)}
-                  placeholder="e.g. MILL-INV-104"
-                  required
-                />
-                <Input label="Due Date" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-              </>
-            )}
-            {(kind === 'GRN' || kind === 'INVOICE') && (
-              <label className="flex items-center gap-2 text-xs font-medium text-text-primary pt-5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={postImmediately}
-                  onChange={(e) => setPostImmediately(e.target.checked)}
-                  className="rounded border-border"
-                />
-                Post Immediately
-              </label>
-            )}
+            <Input
+              label="Supplier Bill # *"
+              value={supplierBillNumber}
+              onChange={(e) => setSupplierBillNumber(e.target.value)}
+              placeholder="e.g. MILL-INV-104"
+              required
+            />
+            <Input label="Due Date" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+            <label className="flex items-center gap-2 text-xs font-medium text-text-primary pt-5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={postImmediately}
+                onChange={(e) => setPostImmediately(e.target.checked)}
+                className="rounded border-border"
+              />
+              Post Immediately
+            </label>
           </div>
           )}
 
@@ -748,6 +895,7 @@ export function PurchaseDocumentDrawer({
                 Add Row
               </Button>
             </div>
+            {taxRatesError && <p className="text-xs text-danger">{taxRatesError}</p>}
             <div className="space-y-2 max-h-64 overflow-x-auto overflow-y-auto pr-1">
               <datalist id="inventory-variants-list">
                 {variants.map((v) => (
@@ -755,13 +903,13 @@ export function PurchaseDocumentDrawer({
                 ))}
               </datalist>
               <div className={`grid grid-cols-12 gap-1.5 px-2 text-[10px] font-semibold uppercase text-text-tertiary ${kind === 'PR' ? 'min-w-[600px]' : ''}`}>
-                <div className={kind === 'PR' || kind === 'GRN' ? 'col-span-4' : 'col-span-3'}>
+                <div className={kind === 'PR' ? 'col-span-4' : 'col-span-3'}>
                   Item Name
                 </div>
-                <div className={`col-span-2 ${kind === 'PR' ? 'text-center whitespace-nowrap' : 'text-right'}`}>{kind === 'PR' ? 'Req. Qty' : kind === 'GRN' ? 'Rec. Qty' : 'Qty'}</div>
+                <div className={`col-span-2 ${kind === 'PR' ? 'text-center whitespace-nowrap' : 'text-right'}`}>{kind === 'PR' ? 'Req. Qty' : 'Qty'}</div>
                 <div className={`col-span-2 ${kind === 'PR' ? 'text-center whitespace-nowrap' : ''}`}>Unit</div>
-                {(kind === 'PR' || kind === 'GRN') ? (
-                  <div className="col-span-3">{kind === 'PR' ? 'Specs / Notes' : 'Batch / Lot #'}</div>
+                {kind === 'PR' ? (
+                  <div className="col-span-3">Specs / Notes</div>
                 ) : (
                   <>
                     <div className="col-span-2 text-right">Rate (₹)</div>
@@ -776,7 +924,7 @@ export function PurchaseDocumentDrawer({
                 const qtyError = getQuantityError(line.quantity, line.unit, activeUnitsList);
                 return (
                 <div key={idx} className={`grid grid-cols-12 gap-1.5 items-center p-2 rounded-lg border ${qtyError ? 'border-danger/60 bg-danger/5' : 'border-border bg-surface-secondary/30'} text-xs ${kind === 'PR' ? 'min-w-[600px]' : ''}`}>
-                  <div className={kind === 'PR' || kind === 'GRN' ? 'col-span-4' : 'col-span-3'}>
+                  <div className={kind === 'PR' ? 'col-span-4' : 'col-span-3'}>
                     <input
                       type="text"
                       list="inventory-variants-list"
@@ -791,7 +939,11 @@ export function PurchaseDocumentDrawer({
                           itemName: val,
                           variantId: matched ? matched.id : undefined,
                           unitRate: matched ? String(matched.purchasePrice) : copy[idx].unitRate,
-                          taxRate: matched ? String(matched.taxRate) : copy[idx].taxRate,
+                          taxRate: matched
+                            ? taxRates.some((rate) => String(rate.rate) === String(matched.taxRate))
+                              ? String(matched.taxRate)
+                              : defaultTaxRate
+                            : copy[idx].taxRate,
                         };
                         setLines(copy);
                       }}
@@ -888,18 +1040,15 @@ export function PurchaseDocumentDrawer({
                         />
                       </div>
                       <div className="col-span-1">
-                        <input
-                          type="number"
-                          placeholder="Tax%"
+                        <TaxRateSelect
+                          taxRates={taxRates}
                           value={line.taxRate}
-                          onFocus={(e) => e.currentTarget.select()}
-                          onClick={(e) => e.currentTarget.select()}
-                          onChange={(e) => {
+                          onChange={(value) => {
                             const copy = [...lines];
-                            copy[idx].taxRate = e.target.value;
+                            copy[idx].taxRate = value;
                             setLines(copy);
                           }}
-                          className="w-full h-8 px-1 rounded border border-border bg-surface text-right font-mono text-xs"
+                          className="w-full h-8 px-1 rounded border border-border bg-surface text-xs"
                         />
                       </div>
                     </>
@@ -960,7 +1109,7 @@ export function PurchaseDocumentDrawer({
                       copy[idx].name = e.target.value;
                       setCharges(copy);
                     }}
-                    className="col-span-5 h-8 px-2 rounded border border-border bg-surface"
+                    className={`${kind === 'PO' ? 'col-span-7' : 'col-span-5'} h-8 px-2 rounded border border-border bg-surface`}
                     placeholder="Charge Name"
                   />
                   <input
@@ -974,22 +1123,24 @@ export function PurchaseDocumentDrawer({
                       copy[idx].amount = e.target.value;
                       setCharges(copy);
                     }}
-                    className="col-span-3 h-8 px-2 rounded border border-border bg-surface text-right font-mono"
+                    className={`${kind === 'PO' ? 'col-span-4' : 'col-span-3'} h-8 px-2 rounded border border-border bg-surface text-right font-mono`}
                     placeholder="Amt"
                   />
-                  <select
-                    value={ch.allocationMethod || 'VALUE'}
-                    onChange={(e) => {
-                      const copy = [...charges];
-                      copy[idx].allocationMethod = e.target.value as any;
-                      setCharges(copy);
-                    }}
-                    className="col-span-3 h-8 px-2 rounded border border-border bg-surface"
-                  >
-                    <option value="VALUE">By Value</option>
-                    <option value="QUANTITY">By Qty</option>
-                    <option value="WEIGHT">By Weight</option>
-                  </select>
+                  {kind !== 'PO' && (
+                    <select
+                      value={ch.allocationMethod || 'VALUE'}
+                      onChange={(e) => {
+                        const copy = [...charges];
+                        copy[idx].allocationMethod = e.target.value as any;
+                        setCharges(copy);
+                      }}
+                      className="col-span-3 h-8 px-2 rounded border border-border bg-surface"
+                    >
+                      <option value="VALUE">By Value</option>
+                      <option value="QUANTITY">By Qty</option>
+                      <option value="WEIGHT">By Weight</option>
+                    </select>
+                  )}
                   <button type="button" onClick={() => setCharges(charges.filter((_, i) => i !== idx))} className="col-span-1 text-danger flex justify-center">
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -1035,6 +1186,56 @@ export function PurchaseDocumentDrawer({
                 </span>
                 <span className="font-mono text-emerald-600 dark:text-emerald-400">₹ {calculation.totalTax}</span>
               </div>
+              <button
+                type="button"
+                aria-expanded={showTaxBreakdown}
+                aria-controls="purchase-tax-breakdown"
+                onClick={() => setShowTaxBreakdown((visible) => !visible)}
+                className="flex items-center gap-1 text-[11px] text-text-secondary hover:text-text-primary"
+              >
+                {showTaxBreakdown ? (
+                  <ChevronUp className="w-3 h-3" />
+                ) : (
+                  <ChevronDown className="w-3 h-3" />
+                )}
+                Tax breakdown
+              </button>
+              {showTaxBreakdown && (
+                <div id="purchase-tax-breakdown" className="space-y-1 border-l border-border pl-3 text-[11px]">
+                  {calculation.taxRegime === 'GST' ? (
+                    calculation.isInterState ? (
+                      <div className="flex justify-between">
+                        <span className="text-text-secondary">IGST:</span>
+                        <span className="font-mono">₹ {calculation.igstAmount}</span>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-text-secondary">CGST:</span>
+                          <span className="font-mono">₹ {calculation.cgstAmount}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-text-secondary">SGST:</span>
+                          <span className="font-mono">₹ {calculation.sgstAmount}</span>
+                        </div>
+                      </>
+                    )
+                  ) : (
+                    <div className="flex justify-between">
+                      <span className="text-text-secondary">VAT:</span>
+                      <span className="font-mono">₹ {calculation.vatAmount}</span>
+                    </div>
+                  )}
+                  {calculation.taxSummary.map((tax, index) => (
+                    <div key={`${tax.rate}-${index}`} className="flex justify-between gap-3">
+                      <span className="text-text-secondary">
+                        {calculation.taxRegime} {tax.rate}% — taxable ₹ {tax.taxable}:
+                      </span>
+                      <span className="font-mono">₹ {tax.tax}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-text-secondary">Additional Charges:</span>
                 <span className="font-mono">₹ {calculation.additionalCharges}</span>
@@ -1048,6 +1249,9 @@ export function PurchaseDocumentDrawer({
                 <span className="font-mono">₹ {calculation.grandTotal}</span>
               </div>
             </div>
+          )}
+
+          </>
           )}
 
           <div className="pt-3 flex justify-end gap-2 border-t border-border">

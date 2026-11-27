@@ -32,6 +32,17 @@ describe("tenant schema migrations", () => {
     expect(migration?.sql).toContain('DROP COLUMN IF EXISTS freight_amount');
   });
 
+  it("adds calculated tax fields to GRNs", () => {
+    const migration = getTenantSchemaMigrations().find(
+      (item) => item.name === "20261127130000_purchase_tax_rates_and_grn_tax",
+    );
+
+    expect(migration?.sql).toContain('ADD COLUMN IF NOT EXISTS "taxable_amount"');
+    expect(migration?.sql).toContain('ADD COLUMN IF NOT EXISTS "grand_total"');
+    expect(migration?.sql).toContain('ADD COLUMN IF NOT EXISTS "tax_rate"');
+    expect(migration?.sql).toContain('ADD COLUMN IF NOT EXISTS "total_tax"');
+  });
+
   it("includes member profile fields required by tenant user provisioning", () => {
     const migration = getTenantSchemaMigrations().find(
       (item) => item.name === "20261125120000_user_member_profile_fields",

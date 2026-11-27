@@ -13,6 +13,69 @@ import {
   UpdatePurchaseRequestDto,
 } from '../dto/purchase.dto';
 
+const purchaseOrderScalars = {
+  id: true,
+  businessId: true,
+  branchId: true,
+  supplierId: true,
+  purchaseRequestId: true,
+  orderNumber: true,
+  orderDate: true,
+  expectedDate: true,
+  status: true,
+  currencyCode: true,
+  overReceiptTolerance: true,
+  pricesIncludeTax: true,
+  invoiceDiscountType: true,
+  invoiceDiscountValue: true,
+  discountAmount: true,
+  roundOff: true,
+  taxableAmount: true,
+  cgstAmount: true,
+  sgstAmount: true,
+  igstAmount: true,
+  vatAmount: true,
+  totalTax: true,
+  additionalCharges: true,
+  grandTotal: true,
+  calculationRule: true,
+  taxSummary: true,
+  notes: true,
+  terms: true,
+  createdById: true,
+  updatedById: true,
+  version: true,
+  isDeleted: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+const grnScalars = {
+  id: true,
+  businessId: true,
+  branchId: true,
+  supplierId: true,
+  purchaseOrderId: true,
+  grnNumber: true,
+  grnDate: true,
+  deliveryDate: true,
+  status: true,
+  totalAmount: true,
+  taxableAmount: true,
+  totalTax: true,
+  grandTotal: true,
+  journalEntryId: true,
+  cancelledAt: true,
+  cancellationReason: true,
+  notes: true,
+  createdById: true,
+  updatedById: true,
+  version: true,
+  isDeleted: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
 @Injectable()
 export class PurchaseProcurementService {
   constructor(
@@ -48,8 +111,24 @@ export class PurchaseProcurementService {
         orderBy: { createdAt: 'desc' },
       }),
     ]);
+    const linkedOrders = data.length
+      ? await this.prisma.purchaseOrder.findMany({
+          where: {
+            businessId: user.businessId,
+            isDeleted: false,
+            purchaseRequestId: { in: data.map((request) => request.id) },
+          },
+          select: { purchaseRequestId: true },
+        })
+      : [];
+    const convertedRequestIds = new Set(
+      linkedOrders.map((order) => order.purchaseRequestId).filter(Boolean),
+    );
     return {
-      data,
+      data: data.map((request) => ({
+        ...request,
+        isConvertedToPo: convertedRequestIds.has(request.id),
+      })),
       meta: { total, page, limit, totalPages: Math.ceil(total / limit), hasNextPage: page * limit < total, hasPrevPage: page > 1 },
     };
   }
@@ -257,7 +336,8 @@ export class PurchaseProcurementService {
         where,
         skip: (page - 1) * limit,
         take: limit,
-        include: {
+        select: {
+          ...purchaseOrderScalars,
           supplier: true,
           branch: true,
           charges: true,
@@ -275,12 +355,16 @@ export class PurchaseProcurementService {
   async getOrder(user: any, id: string) {
     const row = await this.prisma.purchaseOrder.findFirst({
       where: { id, businessId: user.businessId, isDeleted: false, ...(user.branchId ? { branchId: user.branchId } : {}) },
-      include: {
+      select: {
+        ...purchaseOrderScalars,
         supplier: true,
         branch: true,
         charges: true,
-        grns: { where: { isDeleted: false } },
-        invoices: { where: { isDeleted: false } },
+        grns: { where: { isDeleted: false }, select: grnScalars },
+        invoices: {
+          where: { isDeleted: false },
+          select: { id: true, invoiceNumber: true, invoiceDate: true, status: true, grandTotal: true },
+        },
         items: { include: { variant: { include: { product: true } } } },
       },
     });
@@ -396,7 +480,12 @@ export class PurchaseProcurementService {
             }
           : undefined,
       },
-      include: { items: true, charges: true, supplier: true },
+      select: {
+        ...purchaseOrderScalars,
+        items: true,
+        charges: true,
+        supplier: true,
+      },
     });
   }
 
@@ -407,7 +496,10 @@ export class PurchaseProcurementService {
 
   async updateOrder(user: any, id: string, dto: UpdatePurchaseOrderDto) {
     return this.prisma.$transaction(async (tx) => {
-      const existing = await tx.purchaseOrder.findFirst({ where: { id, businessId: user.businessId, isDeleted: false } });
+      const existing = await tx.purchaseOrder.findFirst({
+        where: { id, businessId: user.businessId, isDeleted: false },
+        select: purchaseOrderScalars,
+      });
       if (!existing) throw new NotFoundException('Purchase order not found');
       if (existing.status !== 'DRAFT') throw new BadRequestException('Only DRAFT purchase orders can be edited');
       this.core.assertVersion(dto.version, existing.version, 'Purchase order');
@@ -511,14 +603,22 @@ export class PurchaseProcurementService {
               }
             : undefined,
         },
-        include: { items: true, charges: true, supplier: true },
+        select: {
+          ...purchaseOrderScalars,
+          items: true,
+          charges: true,
+          supplier: true,
+        },
       });
     });
   }
 
   async submitOrder(user: any, id: string) {
     return this.prisma.$transaction(async (tx) => {
-      const po = await tx.purchaseOrder.findFirst({ where: { id, businessId: user.businessId, isDeleted: false } });
+      const po = await tx.purchaseOrder.findFirst({
+        where: { id, businessId: user.businessId, isDeleted: false },
+        select: purchaseOrderScalars,
+      });
       if (!po) throw new NotFoundException('Purchase order not found');
       assertPurchaseTransition('PO', po.status, 'PENDING_APPROVAL');
 
@@ -533,37 +633,49 @@ export class PurchaseProcurementService {
       return tx.purchaseOrder.update({
         where: { id },
         data: { status: nextStatus, updatedById: user.id, version: { increment: 1 } },
+        select: purchaseOrderScalars,
       });
     });
   }
 
   async approveOrder(user: any, id: string) {
     return this.prisma.$transaction(async (tx) => {
-      const po = await tx.purchaseOrder.findFirst({ where: { id, businessId: user.businessId, isDeleted: false } });
+      const po = await tx.purchaseOrder.findFirst({
+        where: { id, businessId: user.businessId, isDeleted: false },
+        select: purchaseOrderScalars,
+      });
       if (!po) throw new NotFoundException('Purchase order not found');
       assertPurchaseTransition('PO', po.status, 'APPROVED');
       return tx.purchaseOrder.update({
         where: { id },
         data: { status: 'APPROVED', updatedById: user.id, version: { increment: 1 } },
+        select: purchaseOrderScalars,
       });
     });
   }
 
   async closeOrder(user: any, id: string) {
     return this.prisma.$transaction(async (tx) => {
-      const po = await tx.purchaseOrder.findFirst({ where: { id, businessId: user.businessId, isDeleted: false } });
+      const po = await tx.purchaseOrder.findFirst({
+        where: { id, businessId: user.businessId, isDeleted: false },
+        select: purchaseOrderScalars,
+      });
       if (!po) throw new NotFoundException('Purchase order not found');
       assertPurchaseTransition('PO', po.status, 'CLOSED');
       return tx.purchaseOrder.update({
         where: { id },
         data: { status: 'CLOSED', updatedById: user.id, version: { increment: 1 } },
+        select: purchaseOrderScalars,
       });
     });
   }
 
   async cancelOrder(user: any, id: string, reason: string) {
     return this.prisma.$transaction(async (tx) => {
-      const po = await tx.purchaseOrder.findFirst({ where: { id, businessId: user.businessId, isDeleted: false } });
+      const po = await tx.purchaseOrder.findFirst({
+        where: { id, businessId: user.businessId, isDeleted: false },
+        select: purchaseOrderScalars,
+      });
       if (!po) throw new NotFoundException('Purchase order not found');
       const postedGrns = await tx.grn.count({ where: { purchaseOrderId: id, status: 'POSTED', isDeleted: false } });
       if (postedGrns > 0) throw new BadRequestException('Cannot cancel a PO that has posted GRNs');
@@ -571,6 +683,7 @@ export class PurchaseProcurementService {
       return tx.purchaseOrder.update({
         where: { id },
         data: { status: 'CANCELLED', notes: reason, updatedById: user.id, version: { increment: 1 } },
+        select: purchaseOrderScalars,
       });
     });
   }
@@ -596,10 +709,13 @@ export class PurchaseProcurementService {
         where,
         skip: (page - 1) * limit,
         take: limit,
-        include: {
+        select: {
+          ...grnScalars,
           supplier: true,
           branch: true,
-          purchaseOrder: true,
+          purchaseOrder: {
+            select: { id: true, orderNumber: true, status: true },
+          },
           items: { include: { variant: { include: { product: true } } } },
         },
         orderBy: { createdAt: 'desc' },
@@ -614,16 +730,48 @@ export class PurchaseProcurementService {
   async getGrn(user: any, id: string) {
     const row = await this.prisma.grn.findFirst({
       where: { id, businessId: user.businessId, isDeleted: false, ...(user.branchId ? { branchId: user.branchId } : {}) },
-      include: {
+      select: {
+        ...grnScalars,
         supplier: true,
         branch: true,
-        purchaseOrder: { include: { items: true } },
-        invoiceLinks: { include: { purchaseInvoice: true } },
+        purchaseOrder: {
+          select: {
+            ...purchaseOrderScalars,
+            items: true,
+          },
+        },
+        invoiceLinks: {
+          include: {
+            purchaseInvoice: {
+              select: { id: true, invoiceNumber: true, invoiceDate: true, status: true, grandTotal: true },
+            },
+          },
+        },
         items: { include: { variant: { include: { product: true } } } },
       },
     });
     if (!row) throw new NotFoundException('GRN not found');
     return row;
+  }
+
+  private calculateGrnTax(items: any[], branch: any, supplier: any, settings: any) {
+    return calculatePurchaseDocument(
+      items.map((item, index) => ({
+        id: item.variantId || item.itemName || `grn-line-${index}`,
+        quantity: String(item.quantity),
+        rate: String(item.unitCost),
+        taxRate: String(item.taxRate),
+      })),
+      {
+        businessStateCode: branch.stateCode,
+        supplierStateCode: supplier.stateCode || branch.stateCode,
+        taxRegime: settings.taxRegime,
+        pricesIncludeTax: false,
+        invoiceDiscountType: 'AMOUNT',
+        invoiceDiscountValue: '0',
+        charges: [],
+      },
+    );
   }
 
   async createGrn(user: any, dto: CreateGrnDto) {
@@ -633,7 +781,7 @@ export class PurchaseProcurementService {
       if (dto.purchaseOrderId) {
         purchaseOrder = await tx.purchaseOrder.findFirst({
           where: { id: dto.purchaseOrderId, businessId: user.businessId, isDeleted: false },
-          include: { items: true },
+          select: { ...purchaseOrderScalars, items: true },
         });
         if (!purchaseOrder) throw new NotFoundException('Linked Purchase Order not found');
         if (!['APPROVED', 'PARTIALLY_RECEIVED'].includes(purchaseOrder.status)) {
@@ -642,30 +790,68 @@ export class PurchaseProcurementService {
       }
 
       const grnNumber = dto.grnNumber || (await this.core.nextNumber(tx, user.businessId, branchId, 'GRN'));
-      const totalAmount = dto.items.reduce(
-        (sum, item) => sum + Number(item.quantity) * Number(item.landedCost ?? item.unitCost ?? 0),
+      const resolvedItems = dto.items.map((item) => {
+        const poItem = purchaseOrder?.items?.find(
+          (p: any) => p.id === item.purchaseOrderItemId || (item.variantId && p.variantId === item.variantId),
+        );
+        const unitCost = Number(item.unitCost ?? poItem?.unitRate ?? 0);
+        return {
+          item,
+          poItem,
+          unitCost,
+          landedCost: Number(item.landedCost ?? unitCost),
+          taxRate: purchaseOrder ? 0 : Number(item.taxRate ?? poItem?.taxRate ?? 0),
+        };
+      });
+      const totalAmount = resolvedItems.reduce(
+        (sum, resolved) => sum + Number(resolved.item.quantity) * resolved.landedCost,
         0,
       );
+      const calculation = purchaseOrder
+        ? {
+            taxableAmount: totalAmount.toFixed(2),
+            totalTax: '0',
+            grandTotal: totalAmount.toFixed(2),
+            items: resolvedItems.map((r) => ({
+              taxableValue: (Number(r.item.quantity) * r.unitCost).toFixed(2),
+              cgstAmount: '0',
+              sgstAmount: '0',
+              igstAmount: '0',
+              vatAmount: '0',
+              taxAmount: '0',
+            })),
+          }
+        : this.calculateGrnTax(
+            resolvedItems.map(({ item, unitCost, taxRate }) => ({
+              ...item,
+              quantity: item.quantity,
+              unitCost,
+              taxRate,
+            })),
+            branch,
+            supplier,
+            settings,
+          );
 
       const grn = await tx.grn.create({
         data: {
           businessId: user.businessId,
           branchId,
-          supplierId: purchaseOrder?.supplierId || dto.supplierId,
+          supplierId,
           purchaseOrderId: purchaseOrder?.id || null,
           grnNumber,
           grnDate: new Date(dto.grnDate || new Date()),
+          deliveryDate: dto.deliveryDate ? new Date(dto.deliveryDate) : null,
           status: 'DRAFT',
           totalAmount: totalAmount.toFixed(2),
+          taxableAmount: calculation.taxableAmount,
+          totalTax: calculation.totalTax,
+          grandTotal: calculation.grandTotal,
           notes: dto.notes || null,
           createdById: user.id,
           items: {
-            create: dto.items.map((item) => {
-              const poItem = purchaseOrder?.items?.find(
-                (p: any) => p.id === item.purchaseOrderItemId || (item.variantId && p.variantId === item.variantId),
-              );
-              const cost = Number(item.unitCost ?? poItem?.unitRate ?? 0);
-              const landed = Number(item.landedCost ?? cost);
+            create: resolvedItems.map(({ item, poItem, unitCost, landedCost, taxRate }, index) => {
+              const calculatedItem = calculation.items[index];
               return {
                 variantId: item.variantId || null,
                 itemName: item.itemName || poItem?.itemName || null,
@@ -679,7 +865,7 @@ export class PurchaseProcurementService {
             }),
           },
         },
-        include: { items: true, supplier: true },
+        select: { ...grnScalars, items: true, supplier: true },
       });
 
       if (dto.post) {
@@ -691,22 +877,81 @@ export class PurchaseProcurementService {
 
   async updateGrn(user: any, id: string, dto: UpdateGrnDto) {
     return this.prisma.$transaction(async (tx) => {
-      const existing = await tx.grn.findFirst({ where: { id, businessId: user.businessId, isDeleted: false } });
+      const existing = await tx.grn.findFirst({
+        where: { id, businessId: user.businessId, isDeleted: false },
+        select: grnScalars,
+      });
       if (!existing) throw new NotFoundException('GRN not found');
       if (existing.status !== 'DRAFT') throw new BadRequestException('Only DRAFT GRNs can be edited');
       this.core.assertVersion(dto.version, existing.version, 'GRN');
 
       await tx.grnItem.deleteMany({ where: { grnId: id } });
-      const totalAmount = dto.items.reduce(
-        (sum, item) => sum + Number(item.quantity) * Number(item.landedCost ?? item.unitCost ?? 0),
+      const purchaseOrderId = dto.purchaseOrderId || existing.purchaseOrderId;
+      const purchaseOrder = purchaseOrderId
+        ? await tx.purchaseOrder.findFirst({
+            where: { id: purchaseOrderId, businessId: user.businessId, isDeleted: false },
+            select: { ...purchaseOrderScalars, items: true },
+          })
+        : null;
+      const supplierId = purchaseOrder?.supplierId || dto.supplierId || existing.supplierId;
+      const [branch, supplier, settings] = await Promise.all([
+        tx.branch.findUnique({ where: { id: existing.branchId } }),
+        tx.supplier.findUnique({ where: { id: supplierId } }),
+        this.core.getSettings(user.businessId, tx),
+      ]);
+      if (!branch) throw new NotFoundException('Branch not found');
+      if (!supplier) throw new NotFoundException('Supplier not found');
+      const resolvedItems = dto.items.map((item) => {
+        const poItem = purchaseOrder?.items?.find(
+          (p: any) => p.id === item.purchaseOrderItemId || (item.variantId && p.variantId === item.variantId),
+        );
+        const unitCost = Number(item.unitCost ?? poItem?.unitRate ?? 0);
+        return {
+          item,
+          poItem,
+          unitCost,
+          landedCost: Number(item.landedCost ?? unitCost),
+          taxRate: purchaseOrder ? 0 : Number(item.taxRate ?? poItem?.taxRate ?? 0),
+        };
+      });
+      const totalAmount = resolvedItems.reduce(
+        (sum, resolved) => sum + Number(resolved.item.quantity) * resolved.landedCost,
         0,
       );
+      const calculation = purchaseOrder
+        ? {
+            taxableAmount: totalAmount.toFixed(2),
+            totalTax: '0',
+            grandTotal: totalAmount.toFixed(2),
+            items: resolvedItems.map((r) => ({
+              taxableValue: (Number(r.item.quantity) * r.unitCost).toFixed(2),
+              cgstAmount: '0',
+              sgstAmount: '0',
+              igstAmount: '0',
+              vatAmount: '0',
+              taxAmount: '0',
+            })),
+          }
+        : this.calculateGrnTax(
+            resolvedItems.map(({ item, unitCost, taxRate }) => ({
+              ...item,
+              quantity: item.quantity,
+              unitCost,
+              taxRate,
+            })),
+            branch,
+            supplier,
+            settings,
+          );
 
       return tx.grn.update({
         where: { id },
         data: {
           grnDate: dto.grnDate ? new Date(dto.grnDate) : existing.grnDate,
           totalAmount: totalAmount.toFixed(2),
+          taxableAmount: calculation.taxableAmount,
+          totalTax: calculation.totalTax,
+          grandTotal: calculation.grandTotal,
           notes: dto.notes ?? existing.notes,
           updatedById: user.id,
           version: { increment: 1 },
@@ -723,7 +968,7 @@ export class PurchaseProcurementService {
             })),
           },
         },
-        include: { items: true, supplier: true },
+        select: { ...grnScalars, items: true, supplier: true },
       });
     });
   }
@@ -735,9 +980,10 @@ export class PurchaseProcurementService {
   private async postGrnInTx(tx: any, user: any, id: string) {
     const grn = await tx.grn.findFirst({
       where: { id, businessId: user.businessId, isDeleted: false },
-      include: {
+      select: {
+        ...grnScalars,
         items: { include: { variant: true } },
-        purchaseOrder: { include: { items: true } },
+        purchaseOrder: { select: { ...purchaseOrderScalars, items: true } },
         supplier: true,
       },
     });
@@ -813,6 +1059,7 @@ export class PurchaseProcurementService {
           updatedById: user.id,
           version: { increment: 1 },
         },
+        select: { id: true },
       });
     }
 
@@ -843,11 +1090,15 @@ export class PurchaseProcurementService {
         status: 'POSTED',
         totalAmount: totalAccrualValue.toFixed(2),
         journalEntryId: journalId,
-        postedAt: new Date(),
         updatedById: user.id,
         version: { increment: 1 },
       },
-      include: { items: true, supplier: true, purchaseOrder: true },
+      select: {
+        ...grnScalars,
+        items: true,
+        supplier: true,
+        purchaseOrder: { select: { ...purchaseOrderScalars } },
+      },
     });
   }
 
@@ -855,7 +1106,11 @@ export class PurchaseProcurementService {
     return this.prisma.$transaction(async (tx) => {
       const grn = await tx.grn.findFirst({
         where: { id, businessId: user.businessId, isDeleted: false },
-        include: { items: true, purchaseOrder: { include: { items: true } } },
+        select: {
+          ...grnScalars,
+          items: true,
+          purchaseOrder: { select: { ...purchaseOrderScalars, items: true } },
+        },
       });
       if (!grn) throw new NotFoundException('GRN not found');
 
@@ -906,6 +1161,7 @@ export class PurchaseProcurementService {
           await tx.purchaseOrder.update({
             where: { id: grn.purchaseOrder.id },
             data: { status: anyRec ? 'PARTIALLY_RECEIVED' : 'APPROVED', updatedById: user.id, version: { increment: 1 } },
+            select: { id: true },
           });
         }
 
@@ -923,6 +1179,7 @@ export class PurchaseProcurementService {
           updatedById: user.id,
           version: { increment: 1 },
         },
+        select: grnScalars,
       });
     });
   }

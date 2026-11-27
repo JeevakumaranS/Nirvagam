@@ -23,6 +23,7 @@ import {
   Lock,
   ArrowUpRight,
   Database,
+  Percent,
   Ruler,
   Trash2,
   Receipt,
@@ -36,10 +37,13 @@ export default function CustomizationPage() {
   const [templates, setTemplates] = useState<any[]>([]);
   const [units, setUnits] = useState<any[]>([]);
   const [newUnit, setNewUnit] = useState({ symbol: '', name: '', decimalPlaces: '0' });
+  const [taxRates, setTaxRates] = useState<any[]>([]);
+  const [newTaxRate, setNewTaxRate] = useState({ name: '', rate: '0' });
+  const [taxRatesError, setTaxRatesError] = useState('');
   const [additionalCharges, setAdditionalCharges] = useState<any[]>([]);
   const [newCharge, setNewCharge] = useState({ name: '' });
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'units' | 'charges' | 'fields' | 'entities' | 'templates' | 'history'>('units');
+  const [activeTab, setActiveTab] = useState<'units' | 'taxes' | 'charges' | 'fields' | 'entities' | 'templates' | 'history'>('units');
 
   // Modals
   const [isAddFieldModalOpen, setIsAddFieldModalOpen] = useState(false);
@@ -68,8 +72,78 @@ export default function CustomizationPage() {
     loadEntities();
     loadTemplates();
     loadUnits();
+    loadTaxRates();
     loadAdditionalCharges();
   }, []);
+
+  async function loadTaxRates() {
+    try {
+      const res = await apiFetch('/products/meta/tax-rates?activeOnly=false');
+      setTaxRates(Array.isArray(res) ? res : []);
+      setTaxRatesError('');
+    } catch (err: any) {
+      setTaxRatesError(err.message || 'Failed to load tax rates');
+    }
+  }
+
+  async function handleCreateTaxRate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newTaxRate.name.trim()) return;
+    try {
+      await apiFetch('/products/meta/tax-rates', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: newTaxRate.name.trim(),
+          rate: Number(newTaxRate.rate),
+        }),
+      });
+      setNewTaxRate({ name: '', rate: '0' });
+      loadTaxRates();
+    } catch (err: any) {
+      alert(err.message || 'Failed to create tax rate');
+    }
+  }
+
+  async function handleUpdateTaxRate(taxRate: any) {
+    const rate = Number(taxRate.rate);
+    if (!taxRate.name.trim() || taxRate.rate === '' || !Number.isFinite(rate) || rate < 0 || rate > 100) {
+      alert('Enter a tax name and a rate between 0 and 100');
+      return;
+    }
+    try {
+      await apiFetch(`/products/meta/tax-rates/${taxRate.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: taxRate.name.trim(),
+          rate,
+        }),
+      });
+      loadTaxRates();
+    } catch (err: any) {
+      alert(err.message || 'Failed to update tax rate');
+    }
+  }
+
+  async function handleToggleTaxRate(id: string, isActive: boolean) {
+    try {
+      await apiFetch(`/products/meta/tax-rates/${id}/toggle`, {
+        method: 'PATCH',
+        body: JSON.stringify({ isActive }),
+      });
+      setTaxRates((prev) => prev.map((taxRate) => (taxRate.id === id ? { ...taxRate, isActive } : taxRate)));
+    } catch (err: any) {
+      alert(err.message || 'Failed to update tax rate');
+    }
+  }
+
+  async function handleDeleteTaxRate(id: string) {
+    try {
+      await apiFetch(`/products/meta/tax-rates/${id}`, { method: 'DELETE' });
+      setTaxRates((prev) => prev.filter((taxRate) => taxRate.id !== id));
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete tax rate');
+    }
+  }
 
   async function loadAdditionalCharges() {
     try {
@@ -363,7 +437,7 @@ export default function CustomizationPage() {
       </div>
 
       {/* Segmented Navigation Tabs */}
-      <div className="inline-flex p-1 rounded-lg bg-black/5 dark:bg-white/5 border border-border/60">
+      <div className="inline-flex flex-wrap p-1 rounded-lg bg-black/5 dark:bg-white/5 border border-border/60">
         <button
           onClick={() => setActiveTab('units')}
           className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all flex items-center gap-1.5 ${
@@ -374,6 +448,17 @@ export default function CustomizationPage() {
         >
           <Ruler className="w-3.5 h-3.5" />
           Units of Measure ({units.filter((u) => u.isActive).length}/{units.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('taxes')}
+          className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-all flex items-center gap-1.5 ${
+            activeTab === 'taxes'
+              ? 'bg-surface text-accent shadow-subtle'
+              : 'text-text-secondary hover:text-text-primary'
+          }`}
+        >
+          <Percent className="w-3.5 h-3.5" />
+          Tax Rates ({taxRates.filter((taxRate) => taxRate.isActive).length}/{taxRates.length})
         </button>
         <button
           onClick={() => setActiveTab('charges')}
@@ -486,6 +571,78 @@ export default function CustomizationPage() {
             />
             <Button type="submit" variant="primary" size="sm" className="w-full" icon={<Plus className="w-3.5 h-3.5" />}>
               Add Custom Unit
+            </Button>
+          </form>
+        </div>
+      )}
+
+      {activeTab === 'taxes' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+          <div className="lg:col-span-2 bg-surface border border-border/80 rounded-xl p-5 space-y-4">
+            <div>
+              <h3 className="text-sm font-semibold text-text-primary">Tax Rates</h3>
+              <p className="text-xs text-text-secondary mt-0.5">
+                Manage the rates available in purchase order, invoice, and GRN tax dropdowns.
+              </p>
+              {taxRatesError && <p className="text-xs text-danger mt-2">{taxRatesError}</p>}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {taxRates.map((taxRate) => (
+                <div key={taxRate.id} className="rounded-lg border border-border/70 bg-surface-secondary/30 p-3 space-y-3">
+                  <div className="grid grid-cols-[minmax(0,1fr)_6rem] gap-2">
+                    <Input
+                      label="Tax Name"
+                      value={taxRate.name}
+                      onChange={(e) => setTaxRates((prev) => prev.map((item) => item.id === taxRate.id ? { ...item, name: e.target.value } : item))}
+                    />
+                    <Input
+                      label="Rate (%)"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      value={taxRate.rate}
+                      onChange={(e) => setTaxRates((prev) => prev.map((item) => item.id === taxRate.id ? { ...item, rate: e.target.value } : item))}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <Switch checked={taxRate.isActive} onChange={(isActive) => handleToggleTaxRate(taxRate.id, isActive)} />
+                    <div className="flex items-center gap-2">
+                      <Button type="button" size="sm" variant="secondary" onClick={() => handleUpdateTaxRate(taxRate)}>
+                        Save
+                      </Button>
+                      <button type="button" onClick={() => handleDeleteTaxRate(taxRate.id)} className="text-danger p-1 hover:bg-danger/10 rounded">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <form onSubmit={handleCreateTaxRate} className="bg-surface border border-border/80 rounded-xl p-5 space-y-3">
+            <h3 className="text-sm font-semibold text-text-primary">Add Tax Rate</h3>
+            <p className="text-xs text-text-secondary">New rates become available in purchase tax dropdowns.</p>
+            <Input
+              label="Tax Name *"
+              placeholder="e.g. GST 5%"
+              value={newTaxRate.name}
+              onChange={(e) => setNewTaxRate({ ...newTaxRate, name: e.target.value })}
+              required
+            />
+            <Input
+              label="Rate (%) *"
+              type="number"
+              min="0"
+              max="100"
+              step="0.01"
+              value={newTaxRate.rate}
+              onChange={(e) => setNewTaxRate({ ...newTaxRate, rate: e.target.value })}
+              required
+            />
+            <Button type="submit" variant="primary" size="sm" className="w-full" icon={<Plus className="w-3.5 h-3.5" />}>
+              Add Tax Rate
             </Button>
           </form>
         </div>

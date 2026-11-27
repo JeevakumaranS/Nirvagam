@@ -315,14 +315,10 @@ export class GrnLineInputDto {
 }
 
 export class CreateGrnDto {
-  @ApiProperty()
-  @IsUUID()
-  supplierId!: string;
-
   @ApiPropertyOptional()
   @IsUUID()
   @IsOptional()
-  purchaseOrderId?: string;
+  supplierId?: string;
 
 
   @ApiPropertyOptional()
@@ -334,6 +330,11 @@ export class CreateGrnDto {
   @IsDateString()
   @IsOptional()
   grnDate?: string;
+
+  @ApiPropertyOptional()
+  @IsDateString()
+  @IsOptional()
+  deliveryDate?: string;
 
   @ApiPropertyOptional({ default: false })
   @IsBoolean()
