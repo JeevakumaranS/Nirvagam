@@ -3,9 +3,55 @@ import { PurchaseCoreService } from './services/purchase-core.service';
 import { PurchaseApprovalsService } from './services/purchase-approvals.service';
 import { PurchaseProcurementService } from './services/purchase-procurement.service';
 import { PurchaseBillingService } from './services/purchase-billing.service';
+import { PurchaseFinancialsReportsService } from './services/purchase-financials-reports.service';
 
 describe('Module 3 Purchase Management Integration Flows', () => {
   const user = { id: 'u1', businessId: 'b1', branchId: 'br1' };
+
+  it('lists purchase invoices without removed warehouse and unit-price columns', async () => {
+    const prisma: any = {
+      purchaseInvoice: {
+        count: jest.fn().mockResolvedValue(0),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
+    const billing = new PurchaseBillingService(prisma, {} as any, {} as any);
+
+    await billing.listInvoices(user, {});
+
+    const query = prisma.purchaseInvoice.findMany.mock.calls[0][0];
+    expect(query.select).not.toHaveProperty('warehouseId');
+    expect(query.select.items.select).not.toHaveProperty('unitPrice');
+  });
+
+  it('lists purchase returns without the removed warehouse column', async () => {
+    const prisma: any = {
+      purchaseReturn: {
+        count: jest.fn().mockResolvedValue(0),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
+    const billing = new PurchaseBillingService(prisma, {} as any, {} as any);
+
+    await billing.listReturns(user, {});
+
+    const query = prisma.purchaseReturn.findMany.mock.calls[0][0];
+    expect(query.select).not.toHaveProperty('warehouseId');
+  });
+
+  it('loads purchase-order print data without the removed warehouse column', async () => {
+    const prisma: any = {
+      business: { findUnique: jest.fn().mockResolvedValue({ id: 'b1' }) },
+      purchaseOrder: { findFirst: jest.fn().mockResolvedValue({ id: 'po1' }) },
+    };
+    const reports = new PurchaseFinancialsReportsService(prisma);
+
+    await reports.getPrintData(user, 'PO', 'po1');
+
+    const query = prisma.purchaseOrder.findFirst.mock.calls[0][0];
+    expect(query.select).not.toHaveProperty('warehouseId');
+    expect(query.select.items.select).not.toHaveProperty('warehouseId');
+  });
 
   const makeMockPrisma = () => {
     const state: any = {
@@ -106,9 +152,9 @@ describe('Module 3 Purchase Management Integration Flows', () => {
         }),
       },
       stockBalance: {
-        findUnique: jest.fn(async ({ where }: any) => state.stockBalances.get(`${where.warehouseId_variantId.warehouseId}:${where.warehouseId_variantId.variantId}`) || null),
+        findUnique: jest.fn(async ({ where }: any) => state.stockBalances.get(`${where.branchId_variantId.branchId}:${where.branchId_variantId.variantId}`) || null),
         upsert: jest.fn(async ({ where, create, update }: any) => {
-          const k = `${where.warehouseId_variantId.warehouseId}:${where.warehouseId_variantId.variantId}`;
+          const k = `${where.branchId_variantId.branchId}:${where.branchId_variantId.variantId}`;
           const cur = state.stockBalances.get(k);
           const next = cur ? { ...cur, ...update } : { id: `sb-${state.seq++}`, ...create };
           state.stockBalances.set(k, next);
@@ -132,6 +178,8 @@ describe('Module 3 Purchase Management Integration Flows', () => {
         }),
       },
       purchaseRequest: {
+        count: jest.fn(async () => state.prs.size),
+        findMany: jest.fn(async () => Array.from(state.prs.values())),
         create: jest.fn(async ({ data }: any) => {
           const pr = { id: `pr-${state.seq++}`, ...data, version: 1, items: (data.items?.create || []).map((i: any, idx: number) => ({ id: `pri-${idx}`, ...i, variant: { purchasePrice: 100, product: { taxRate: { rate: 18 } } } })) };
           state.prs.set(pr.id, pr);
@@ -156,6 +204,15 @@ describe('Module 3 Purchase Management Integration Flows', () => {
           state.pos.set(po.id, po);
           return po;
         }),
+        findMany: jest.fn(async ({ where }: any) =>
+          Array.from(state.pos.values())
+            .filter((po: any) =>
+              po.businessId === where.businessId &&
+              !po.isDeleted &&
+              where.purchaseRequestId.in.includes(po.purchaseRequestId),
+            )
+            .map((po: any) => ({ purchaseRequestId: po.purchaseRequestId })),
+        ),
         findFirst: jest.fn(async ({ where }: any) => state.pos.get(where.id) || null),
         findUnique: jest.fn(async ({ where }: any) => state.pos.get(where.id) || null),
         update: jest.fn(async ({ where, data }: any) => {
@@ -268,6 +325,28 @@ describe('Module 3 Purchase Management Integration Flows', () => {
     return { prisma, state };
   };
 
+  it('marks purchase requests that already have a linked PO', async () => {
+    const { prisma, state } = makeMockPrisma();
+    state.prs.set('pr-1', { id: 'pr-1' });
+    state.prs.set('pr-2', { id: 'pr-2' });
+    state.pos.set('po-1', {
+      id: 'po-1',
+      businessId: 'b1',
+      purchaseRequestId: 'pr-1',
+      isDeleted: false,
+    });
+    const core = new PurchaseCoreService(prisma);
+    const approvals = new PurchaseApprovalsService(prisma, core);
+    const procurement = new PurchaseProcurementService(prisma, core, approvals);
+
+    const result = await procurement.listRequests(user, {});
+
+    expect(result.data.map((request: any) => [request.id, request.isConvertedToPo])).toEqual([
+      ['pr-1', true],
+      ['pr-2', false],
+    ]);
+  });
+
   it('Flow 1 & 3: Full PR -> PO -> Partial GRN (Accrual) -> Partial Invoice -> Partial Payment', async () => {
     const { prisma, state } = makeMockPrisma();
     const core = new PurchaseCoreService(prisma);
@@ -295,7 +374,16 @@ describe('Module 3 Purchase Management Integration Flows', () => {
     });
     expect(grn.status).toBe('POSTED');
     expect(state.pos.get(po.id).status).toBe('PARTIALLY_RECEIVED');
-    expect(state.stockBalances.get('wh1:v1').quantity).toBe('6.00');
+    expect(prisma.warehouse.findFirst).not.toHaveBeenCalled();
+    expect(state.stockBalances.get('br1:v1').quantity).toBe('6.00');
+    expect(state.stockMovements[0]).toMatchObject({ branchId: 'br1', variantId: 'v1' });
+    expect(state.stockMovements[0]).not.toHaveProperty('warehouseId');
+    expect(prisma.stockBalance.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      select: { id: true, quantity: true, averageCost: true },
+    }));
+    expect(prisma.stockBalance.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      select: { id: true },
+    }));
 
     // 4. Partial Invoice against GRN (4 of 6 invoiced) -> Clears GRN Accrual, never double counts stock
     const inv = await billing.createInvoice(user, {
@@ -308,7 +396,7 @@ describe('Module 3 Purchase Management Integration Flows', () => {
       items: [{ variantId: 'v1', grnItemId: grn.items[0].id, purchaseOrderItemId: po.items[0].id, quantity: '4', unitRate: '100', taxRate: '18' }],
     });
     expect(inv.status).toBe('APPROVED');
-    expect(state.stockBalances.get('wh1:v1').quantity).toBe('6.00'); // Still 6!
+    expect(state.stockBalances.get('br1:v1').quantity).toBe('6.00'); // Still 6!
 
     // 5. Partial Payment
     await billing.createPayment(user, {
@@ -332,7 +420,7 @@ describe('Module 3 Purchase Management Integration Flows', () => {
       post: true,
       items: [{ variantId: 'v1', quantity: '5', unitRate: '100', taxRate: '18' }],
     });
-    expect(state.stockBalances.get('wh1:v1').quantity).toBe('5.00');
+    expect(state.stockBalances.get('br1:v1').quantity).toBe('5.00');
 
     // Cannot cancel invoice if return exists; first test return
     const ret = await billing.createReturn(user, {
@@ -342,7 +430,7 @@ describe('Module 3 Purchase Management Integration Flows', () => {
     });
     const postedRet = await billing.postReturn(user, ret.id);
     expect(postedRet.status).toBe('POSTED');
-    expect(state.stockBalances.get('wh1:v1').quantity).toBe('3.00');
+    expect(state.stockBalances.get('br1:v1').quantity).toBe('3.00');
 
     // Verify journal lines for return are balanced (AP debit = Inventory + CGST + SGST credit)
     const retLines = state.journalLines.filter((l: any) => l.journalEntryId === postedRet.journalEntryId);

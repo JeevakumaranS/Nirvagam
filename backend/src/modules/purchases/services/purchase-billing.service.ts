@@ -12,6 +12,144 @@ import {
   UpdatePurchaseInvoiceDto,
 } from '../dto/purchase.dto';
 
+const purchaseInvoiceScalars = {
+  id: true,
+  businessId: true,
+  branchId: true,
+  supplierId: true,
+  purchaseOrderId: true,
+  journalEntryId: true,
+  invoiceNumber: true,
+  supplierBillNumber: true,
+  invoiceDate: true,
+  dueDate: true,
+  mode: true,
+  currencyCode: true,
+  status: true,
+  pricesIncludeTax: true,
+  invoiceDiscountType: true,
+  invoiceDiscountValue: true,
+  discountAmount: true,
+  roundOff: true,
+  taxableAmount: true,
+  cgstAmount: true,
+  sgstAmount: true,
+  igstAmount: true,
+  vatAmount: true,
+  totalTax: true,
+  additionalCharges: true,
+  grandTotal: true,
+  paidAmount: true,
+  balanceAmount: true,
+  calculationRule: true,
+  taxSummary: true,
+  idempotencyKey: true,
+  postedAt: true,
+  cancelledAt: true,
+  cancellationReason: true,
+  notes: true,
+  terms: true,
+  createdById: true,
+  updatedById: true,
+  version: true,
+  isDeleted: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+const purchaseInvoiceItemScalars = {
+  id: true,
+  purchaseInvoiceId: true,
+  variantId: true,
+  itemName: true,
+  unit: true,
+  grnItemId: true,
+  purchaseOrderItemId: true,
+  description: true,
+  unitRate: true,
+  discountAmount: true,
+  quantity: true,
+  taxableValue: true,
+  gstRate: true,
+  taxRate: true,
+  cgstAmount: true,
+  sgstAmount: true,
+  igstAmount: true,
+  vatAmount: true,
+  landedCost: true,
+  totalAmount: true,
+  batchNumber: true,
+  serialNumber: true,
+  expiryDate: true,
+} as const;
+
+const purchaseInvoiceItemsWithVariants = {
+  select: {
+    ...purchaseInvoiceItemScalars,
+    variant: { include: { product: true } },
+  },
+} as const;
+
+const purchaseReturnScalars = {
+  id: true,
+  businessId: true,
+  branchId: true,
+  supplierId: true,
+  purchaseInvoiceId: true,
+  journalEntryId: true,
+  postedAt: true,
+  cancelledAt: true,
+  cancellationReason: true,
+  returnNumber: true,
+  returnDate: true,
+  currencyCode: true,
+  status: true,
+  taxableAmount: true,
+  totalTax: true,
+  grandTotal: true,
+  cgstAmount: true,
+  sgstAmount: true,
+  igstAmount: true,
+  vatAmount: true,
+  calculationRule: true,
+  taxSummary: true,
+  reason: true,
+  createdById: true,
+  updatedById: true,
+  version: true,
+  isDeleted: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+const purchaseReturnItemScalars = {
+  id: true,
+  purchaseReturnId: true,
+  variantId: true,
+  itemName: true,
+  unit: true,
+  invoiceItemId: true,
+  description: true,
+  quantity: true,
+  unitRate: true,
+  discountAmount: true,
+  taxableValue: true,
+  taxRate: true,
+  cgstAmount: true,
+  sgstAmount: true,
+  igstAmount: true,
+  vatAmount: true,
+  landedCost: true,
+  totalAmount: true,
+} as const;
+
+const purchaseReturnItemsWithVariants = {
+  select: {
+    ...purchaseReturnItemScalars,
+    variant: { include: { product: true } },
+  },
+} as const;
+
 @Injectable()
 export class PurchaseBillingService {
   constructor(
@@ -49,13 +187,27 @@ export class PurchaseBillingService {
         where,
         skip: (page - 1) * limit,
         take: limit,
-        include: {
+        select: {
+          ...purchaseInvoiceScalars,
           supplier: true,
           branch: true,
-          purchaseOrder: true,
+          purchaseOrder: { select: { id: true, orderNumber: true, status: true } },
           charges: true,
-          grnLinks: { include: { grn: true } },
-          items: { include: { variant: { include: { product: true } } } },
+          grnLinks: {
+            include: {
+              grn: {
+                select: {
+                  id: true,
+                  grnNumber: true,
+                  grnDate: true,
+                  status: true,
+                  totalAmount: true,
+                  grandTotal: true,
+                },
+              },
+            },
+          },
+          items: purchaseInvoiceItemsWithVariants,
         },
         orderBy: { createdAt: 'desc' },
       }),
@@ -69,14 +221,28 @@ export class PurchaseBillingService {
   async getInvoice(user: any, id: string) {
     const row = await this.prisma.purchaseInvoice.findFirst({
       where: { id, businessId: user.businessId, isDeleted: false, ...(user.branchId ? { branchId: user.branchId } : {}) },
-      include: {
+      select: {
+        ...purchaseInvoiceScalars,
         supplier: true,
         branch: true,
-        purchaseOrder: true,
+        purchaseOrder: { select: { id: true, orderNumber: true, status: true } },
         charges: true,
-        grnLinks: { include: { grn: true } },
+        grnLinks: {
+          include: {
+            grn: {
+              select: {
+                id: true,
+                grnNumber: true,
+                grnDate: true,
+                status: true,
+                totalAmount: true,
+                grandTotal: true,
+              },
+            },
+          },
+        },
         paymentAllocations: { include: { purchasePayment: true } },
-        items: { include: { variant: { include: { product: true } } } },
+        items: purchaseInvoiceItemsWithVariants,
       },
     });
     if (!row) throw new NotFoundException('Purchase invoice not found');
@@ -570,7 +736,7 @@ export class PurchaseBillingService {
         include: { items: true, paymentAllocations: true },
       });
       if (!invoice) throw new NotFoundException('Purchase invoice not found');
-      if (invoice.paymentAllocations.length > 0) {
+      if ((invoice.paymentAllocations?.length || 0) > 0) {
         throw new BadRequestException('Cannot cancel an invoice with payment allocations');
       }
       const returnsCount = await tx.purchaseReturn.count({
@@ -665,7 +831,12 @@ export class PurchaseBillingService {
         where,
         skip: (page - 1) * limit,
         take: limit,
-        include: { supplier: true, branch: true, items: { include: { variant: { include: { product: true } } } } },
+        select: {
+          ...purchaseReturnScalars,
+          supplier: true,
+          branch: true,
+          items: purchaseReturnItemsWithVariants,
+        },
         orderBy: { createdAt: 'desc' },
       }),
     ]);
@@ -678,7 +849,12 @@ export class PurchaseBillingService {
   async getReturn(user: any, id: string) {
     const row = await this.prisma.purchaseReturn.findFirst({
       where: { id, businessId: user.businessId, isDeleted: false, ...(user.branchId ? { branchId: user.branchId } : {}) },
-      include: { supplier: true, branch: true, items: { include: { variant: { include: { product: true } } } } },
+      select: {
+        ...purchaseReturnScalars,
+        supplier: true,
+        branch: true,
+        items: purchaseReturnItemsWithVariants,
+      },
     });
     if (!row) throw new NotFoundException('Purchase return not found');
     return row;
@@ -689,7 +865,12 @@ export class PurchaseBillingService {
     return this.prisma.$transaction(async (tx) => {
       const invoice = await tx.purchaseInvoice.findFirst({
         where: { id: dto.purchaseInvoiceId, businessId: user.businessId, isDeleted: false },
-        include: { items: true, supplier: true, branch: true },
+        select: {
+          ...purchaseInvoiceScalars,
+          items: { select: purchaseInvoiceItemScalars },
+          supplier: true,
+          branch: true,
+        },
       });
       if (!invoice) throw new NotFoundException('Original purchase invoice not found');
       if (!['APPROVED', 'PARTIALLY_PAID', 'PAID'].includes(invoice.status)) {
@@ -697,11 +878,6 @@ export class PurchaseBillingService {
       }
 
       const settings = await this.core.getSettings(user.businessId, tx);
-      const warehouseId =
-        dto.warehouseId ||
-        invoice.warehouseId ||
-        (await tx.warehouse.findFirst({ where: { branchId, isDefault: true } }))?.id;
-      if (!warehouseId) throw new BadRequestException('A warehouse is required for purchase return');
 
       const lines: PurchaseCalculationLine[] = dto.items.map((item) => {
         const orig = invoice.items.find(
@@ -743,7 +919,6 @@ export class PurchaseBillingService {
           returnDate: new Date(dto.returnDate || new Date()),
           currencyCode: invoice.currencyCode,
           status: 'DRAFT',
-          warehouseId,
           taxableAmount: calc.taxableAmount,
           cgstAmount: calc.cgstAmount,
           sgstAmount: calc.sgstAmount,
@@ -782,19 +957,27 @@ export class PurchaseBillingService {
             }),
           },
         },
-        include: { items: true, supplier: true },
+        select: {
+          ...purchaseReturnScalars,
+          items: true,
+          supplier: true,
+        },
       });
     });
   }
 
   async approveReturn(user: any, id: string) {
     return this.prisma.$transaction(async (tx) => {
-      const ret = await tx.purchaseReturn.findFirst({ where: { id, businessId: user.businessId, isDeleted: false } });
+      const ret = await tx.purchaseReturn.findFirst({
+        where: { id, businessId: user.businessId, isDeleted: false },
+        select: purchaseReturnScalars,
+      });
       if (!ret) throw new NotFoundException('Purchase return not found');
       assertPurchaseTransition('RETURN', ret.status, 'APPROVED');
       return tx.purchaseReturn.update({
         where: { id },
         data: { status: 'APPROVED', updatedById: user.id, version: { increment: 1 } },
+        select: purchaseReturnScalars,
       });
     });
   }
@@ -803,7 +986,11 @@ export class PurchaseBillingService {
     return this.prisma.$transaction(async (tx) => {
       const doc = await tx.purchaseReturn.findFirst({
         where: { id, businessId: user.businessId, isDeleted: false },
-        include: { items: true, supplier: true },
+        select: {
+          ...purchaseReturnScalars,
+          items: { select: purchaseReturnItemScalars },
+          supplier: true,
+        },
       });
       if (!doc) throw new NotFoundException('Purchase return not found');
       if (doc.status === 'DRAFT') {
@@ -819,12 +1006,8 @@ export class PurchaseBillingService {
 
       for (const item of doc.items) {
         if (item.variantId) {
-          if (!doc.warehouseId) {
-            throw new BadRequestException('A warehouse is required to post purchase returns');
-          }
           await this.core.applyStockOut(tx, {
             branchId: doc.branchId,
-            warehouseId: doc.warehouseId,
             variantId: item.variantId,
             quantity: Number(item.quantity),
             unitCost: Number(item.unitRate),
@@ -885,7 +1068,11 @@ export class PurchaseBillingService {
           updatedById: user.id,
           version: { increment: 1 },
         },
-        include: { items: true, supplier: true },
+        select: {
+          ...purchaseReturnScalars,
+          items: true,
+          supplier: true,
+        },
       });
     });
   }

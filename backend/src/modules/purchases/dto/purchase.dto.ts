@@ -330,6 +330,10 @@ export class GrnLineInputDto {
   @IsOptional()
   landedCost?: string | number;
 
+  @ApiPropertyOptional({ example: '18' })
+  @IsOptional()
+  taxRate?: string | number;
+
   @ApiPropertyOptional()
   @IsString()
   @IsOptional()
@@ -347,9 +351,10 @@ export class GrnLineInputDto {
 }
 
 export class CreateGrnDto {
-  @ApiProperty()
+  @ApiPropertyOptional()
   @IsUUID()
-  supplierId!: string;
+  @IsOptional()
+  supplierId?: string;
 
   @ApiPropertyOptional()
   @IsUUID()
@@ -370,6 +375,11 @@ export class CreateGrnDto {
   @IsDateString()
   @IsOptional()
   grnDate?: string;
+
+  @ApiPropertyOptional()
+  @IsDateString()
+  @IsOptional()
+  deliveryDate?: string;
 
   @ApiPropertyOptional({ default: false })
   @IsBoolean()

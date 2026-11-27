@@ -3,6 +3,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagg
 import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { CreateUnitDto, UpdateUnitDto } from './dto/create-unit.dto';
+import { CreateTaxRateDto, UpdateTaxRateDto } from './dto/tax-rate.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { TenantResolverGuard } from '../../tenancy/tenant-resolver.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -107,9 +108,41 @@ export class ProductsController {
 
   @Get('meta/tax-rates')
   @RequirePermissions('product:view')
-  @ApiOperation({ summary: 'Get GST tax slabs' })
-  async getTaxRates(@CurrentUser() user: AuthUser) {
-    return this.productsService.getTaxRates(user.businessId);
+  @ApiOperation({ summary: 'Get configured tax rates' })
+  async getTaxRates(@CurrentUser() user: AuthUser, @Query('activeOnly') activeOnly?: string) {
+    return this.productsService.getTaxRates(user.businessId, activeOnly !== 'false');
+  }
+
+  @Post('meta/tax-rates')
+  @RequirePermissions('product:create')
+  async createTaxRate(@CurrentUser() user: AuthUser, @Body() dto: CreateTaxRateDto) {
+    return this.productsService.createTaxRate(user.businessId, dto);
+  }
+
+  @Patch('meta/tax-rates/:id')
+  @RequirePermissions('product:edit')
+  async updateTaxRate(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateTaxRateDto,
+  ) {
+    return this.productsService.updateTaxRate(user.businessId, id, dto);
+  }
+
+  @Patch('meta/tax-rates/:id/toggle')
+  @RequirePermissions('product:edit')
+  async toggleTaxRate(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: { isActive: boolean },
+  ) {
+    return this.productsService.toggleTaxRate(user.businessId, id, Boolean(dto.isActive));
+  }
+
+  @Delete('meta/tax-rates/:id')
+  @RequirePermissions('product:delete')
+  async deleteTaxRate(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.productsService.deleteTaxRate(user.businessId, id);
   }
 
   @Post('inventory/warehouses')

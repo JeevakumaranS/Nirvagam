@@ -2,6 +2,49 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ProductsService } from './products.service';
 
 describe('ProductsService branch inventory', () => {
+  it('omits the legacy warehouse column when listing branch stock', async () => {
+    const product = {
+      id: 'product-id',
+      hasVariants: false,
+      minStockLevel: 0,
+      variants: [{
+        id: 'variant-id',
+        isActive: true,
+        minStockLevel: 0,
+        stockBalances: [{ id: 'balance-id', branchId: 'branch-id', variantId: 'variant-id', quantity: 3, averageCost: 10, updatedAt: new Date(), branch: { id: 'branch-id' } }],
+      }],
+    };
+    const prisma = {
+      product: {
+        count: jest.fn().mockResolvedValue(1),
+        findMany: jest.fn().mockResolvedValue([product]),
+      },
+    };
+    const service = new ProductsService(prisma as unknown as PrismaService);
+
+    await service.findAll('business-id', {});
+
+    expect(prisma.product.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      include: expect.objectContaining({
+        variants: {
+          include: {
+            stockBalances: {
+              select: {
+                id: true,
+                branchId: true,
+                variantId: true,
+                quantity: true,
+                averageCost: true,
+                updatedAt: true,
+                branch: true,
+              },
+            },
+          },
+        },
+      }),
+    }));
+  });
+
   it('updates product details and its standard inventory variant together', async () => {
     const updatedProduct = { id: 'product-id', sku: 'NEW-SKU' };
     const tx = {
@@ -191,6 +234,45 @@ describe('ProductsService branch inventory', () => {
 
     await expect(service.deleteUnit('business-id', 'unit-id')).resolves.toBe(deletedUnit);
     expect(prisma.unit.delete).toHaveBeenCalledWith({ where: { id: 'unit-id' } });
+  });
+
+  it('creates tax rates with calculated GST component rates', async () => {
+    const createdRate = { id: 'tax-rate-id', name: 'GST 5%', rate: 5 };
+    const prisma = {
+      taxRate: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue(createdRate),
+      },
+    };
+    const service = new ProductsService(prisma as unknown as PrismaService);
+
+    await expect(service.createTaxRate('business-id', {
+      name: ' GST 5% ',
+      rate: 5,
+    })).resolves.toBe(createdRate);
+    expect(prisma.taxRate.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        businessId: 'business-id',
+        name: 'GST 5%',
+        rate: 5,
+        cgstRate: 2.5,
+        sgstRate: 2.5,
+        igstRate: 5,
+        isActive: true,
+      }),
+    });
+  });
+
+  it('prevents deleting tax rates used by products', async () => {
+    const prisma = {
+      taxRate: { findFirst: jest.fn().mockResolvedValue({ id: 'tax-rate-id', isActive: true }) },
+      product: { count: jest.fn().mockResolvedValue(1) },
+    };
+    const service = new ProductsService(prisma as unknown as PrismaService);
+
+    await expect(service.deleteTaxRate('business-id', 'tax-rate-id')).rejects.toThrow(
+      'assigned to existing products',
+    );
   });
 
   it('moves legacy stock into variants without removing movement history', async () => {

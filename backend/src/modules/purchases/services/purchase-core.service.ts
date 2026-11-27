@@ -167,7 +167,7 @@ export class PurchaseCoreService {
         businessId,
         startDate: { lte: date },
         endDate: { gte: date },
-        isClosed: true,
+        isLocked: true,
       },
     });
     if (closed) {
@@ -253,13 +253,13 @@ export class PurchaseCoreService {
   }
 
   /**
-   * Increases warehouse stock using WAC or FIFO costing and records a StockMovement.
+   * Increases branch stock using WAC or FIFO costing and records a StockMovement.
    */
   async applyStockIn(
     tx: any,
     params: {
       branchId: string;
-      warehouseId: string;
+      warehouseId?: string;
       variantId: string;
       quantity: number;
       landedUnitCost: number;
@@ -275,7 +275,8 @@ export class PurchaseCoreService {
     },
   ) {
     const existing = await tx.stockBalance.findUnique({
-      where: { warehouseId_variantId: { warehouseId: params.warehouseId, variantId: params.variantId } },
+      where: { branchId_variantId: { branchId: params.branchId, variantId: params.variantId } },
+      select: { id: true, quantity: true, averageCost: true },
     });
 
     const oldQty = Number(existing?.quantity || 0);
@@ -291,10 +292,9 @@ export class PurchaseCoreService {
     }
 
     await tx.stockBalance.upsert({
-      where: { warehouseId_variantId: { warehouseId: params.warehouseId, variantId: params.variantId } },
+      where: { branchId_variantId: { branchId: params.branchId, variantId: params.variantId } },
       create: {
         branchId: params.branchId,
-        warehouseId: params.warehouseId,
         variantId: params.variantId,
         quantity: params.quantity.toFixed(2),
         averageCost: nextAvgCost.toFixed(2),
@@ -303,12 +303,12 @@ export class PurchaseCoreService {
         quantity: newQty.toFixed(2),
         averageCost: nextAvgCost.toFixed(2),
       },
+      select: { id: true },
     });
 
     await tx.stockMovement.create({
       data: {
         branchId: params.branchId,
-        warehouseId: params.warehouseId,
         variantId: params.variantId,
         type: 'IN_PURCHASE',
         quantity: params.quantity.toFixed(2),
@@ -319,23 +319,21 @@ export class PurchaseCoreService {
         referenceDocumentType: params.referenceDocumentType,
         idempotencyKey: params.idempotencyKey,
         performedById: params.performedById || null,
-        batchNumber: params.batchNumber || null,
-        serialNumber: params.serialNumber || null,
-        expiryDate: params.expiryDate || null,
         notes: params.notes,
       },
+      select: { id: true },
     });
   }
 
   /**
-   * Decreases warehouse stock (for Purchase Return or GRN/Invoice cancellation).
+   * Decreases branch stock (for Purchase Return or GRN/Invoice cancellation).
    * Enforces stock sufficiency when `blockOnInsufficient` is true.
    */
   async applyStockOut(
     tx: any,
     params: {
       branchId: string;
-      warehouseId: string;
+      warehouseId?: string;
       variantId: string;
       quantity: number;
       unitCost: number;
@@ -350,13 +348,14 @@ export class PurchaseCoreService {
     },
   ): Promise<number> {
     const balance = await tx.stockBalance.findUnique({
-      where: { warehouseId_variantId: { warehouseId: params.warehouseId, variantId: params.variantId } },
+      where: { branchId_variantId: { branchId: params.branchId, variantId: params.variantId } },
+      select: { id: true, quantity: true, averageCost: true },
     });
 
     const currentQty = Number(balance?.quantity || 0);
     if (params.blockOnInsufficient && currentQty < params.quantity) {
       throw new BadRequestException(
-        `Insufficient stock in warehouse for item ${params.variantId} (available: ${currentQty}, required: ${params.quantity})`,
+        `Insufficient stock in branch for item ${params.variantId} (available: ${currentQty}, required: ${params.quantity})`,
       );
     }
 
@@ -365,12 +364,13 @@ export class PurchaseCoreService {
     if (params.costingMethod === 'FIFO') {
       const layers = await tx.stockMovement.findMany({
         where: {
-          warehouseId: params.warehouseId,
+          branchId: params.branchId,
           variantId: params.variantId,
           type: 'IN_PURCHASE',
           remainingQuantity: { gt: 0 },
         },
         orderBy: { createdAt: 'asc' },
+        select: { id: true, remainingQuantity: true, unitCost: true },
       });
       let remainingToConsume = params.quantity;
       let fifoCost = 0;
@@ -383,6 +383,7 @@ export class PurchaseCoreService {
         await tx.stockMovement.update({
           where: { id: layer.id },
           data: { remainingQuantity: (avail - take).toFixed(3) },
+          select: { id: true },
         });
       }
       if (remainingToConsume > 0) {
@@ -395,16 +396,17 @@ export class PurchaseCoreService {
       await tx.stockBalance.update({
         where: { id: balance.id },
         data: { quantity: (currentQty - params.quantity).toFixed(2) },
+        select: { id: true },
       });
     } else {
       await tx.stockBalance.create({
         data: {
           branchId: params.branchId,
-          warehouseId: params.warehouseId,
           variantId: params.variantId,
           quantity: (-params.quantity).toFixed(2),
           averageCost: params.unitCost.toFixed(2),
         },
+        select: { id: true },
       });
     }
 
@@ -413,7 +415,6 @@ export class PurchaseCoreService {
     await tx.stockMovement.create({
       data: {
         branchId: params.branchId,
-        warehouseId: params.warehouseId,
         variantId: params.variantId,
         type: params.movementType,
         quantity: params.quantity.toFixed(2),
@@ -426,6 +427,7 @@ export class PurchaseCoreService {
         performedById: params.performedById || null,
         notes: params.notes,
       },
+      select: { id: true },
     });
 
     return totalOutCost;
