@@ -105,6 +105,7 @@ export class BusinessesService {
     return this.prisma.branch.findMany({
       where: { businessId, isActive: true },
       include: {
+        warehouses: true,
         _count: {
           select: {
             salesInvoices: true,
@@ -152,6 +153,16 @@ export class BusinessesService {
           state: dto.state,
           stateCode: dto.stateCode,
           pincode: dto.pincode,
+        },
+      });
+
+      // Create a default stockroom/warehouse for this new branch
+      await tx.warehouse.create({
+        data: {
+          branchId: branch.id,
+          name: `${dto.name} Warehouse`,
+          code: `WH-${dto.code.toUpperCase().trim()}`,
+          isDefault: true,
         },
       });
 

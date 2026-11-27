@@ -308,6 +308,8 @@ export class ProductsService {
         include: {
           unit: true,
           taxRate: true,
+          category: true,
+          brand: true,
           variants: {
             include: {
               stockBalances: { include: { branch: true } },
@@ -352,7 +354,11 @@ export class ProductsService {
     };
   }
 
-  async create(businessId: string, dto: CreateProductDto) {
+  async create(
+    businessId: string,
+    branchId: string | undefined,
+    dto: CreateProductDto,
+  ) {
     await this.ensureInventoryMetadata(businessId);
     const existing = await this.prisma.product.findFirst({
       where: { businessId, sku: dto.sku.trim() },
@@ -397,8 +403,8 @@ export class ProductsService {
       );
 
     const purchasePrice = Number(dto.purchasePrice || 0);
-    const retailPrice = Number(dto.retailPrice || 0);
-    const mrp = Number(dto.mrp || retailPrice);
+    const salesPrice = Number(dto.salesPrice ?? dto.retailPrice ?? 0);
+    const mrp = Number(dto.mrp || salesPrice);
 
     return this.prisma.$transaction(async (tx) => {
       const product = await tx.product.create({
@@ -406,14 +412,16 @@ export class ProductsService {
           businessId,
           unitId,
           taxRateId,
+          categoryId: dto.categoryId,
+          brandId: dto.brandId,
           name: dto.name,
           sku: dto.sku.trim(),
           barcode: dto.barcode,
           hsnCode: dto.hsnCode,
           purchasePrice,
           mrp,
-          wholesalePrice: Number(dto.wholesalePrice || retailPrice),
-          retailPrice,
+          wholesalePrice: Number(dto.wholesalePrice || salesPrice),
+          retailPrice: Number(dto.retailPrice || salesPrice),
           minStockLevel: dto.minStockLevel || 0,
           description: dto.description,
           imageUrl: dto.imageUrl,
@@ -438,6 +446,37 @@ export class ProductsService {
             minStockLevel: dto.minStockLevel || 0,
           },
         });
+      }
+
+      // If opening stock provided, allocate to default warehouse
+      if (dto.openingStock && dto.openingStock > 0 && branchId) {
+        const warehouse = await tx.warehouse.findFirst({
+          where: { branchId, isDefault: true },
+        });
+
+        if (warehouse) {
+          await tx.stockBalance.create({
+            data: {
+              warehouseId: warehouse.id,
+              variantId: variant.id,
+              quantity: dto.openingStock,
+              averageCost: purchasePrice,
+            },
+          });
+
+          await tx.stockMovement.create({
+            data: {
+              branchId: warehouse.branchId,
+              warehouseId: warehouse.id,
+              variantId: variant.id,
+              type: StockMovementType.ADJUSTMENT_ADD,
+              quantity: dto.openingStock,
+              unitCost: purchasePrice,
+              totalCost: dto.openingStock * purchasePrice,
+              notes: "Opening Stock Balance",
+            },
+          });
+        }
       }
 
       return product;
@@ -723,6 +762,7 @@ export class ProductsService {
           });
         }
       }
+
       return updatedProduct;
     });
   }
@@ -1172,6 +1212,14 @@ export class ProductsService {
       }),
     ]);
     return { data, meta: this.paginationMeta(total, page, limit) };
+  }
+
+  async warehouses(businessId: string) {
+    return this.prisma.warehouse.findMany({
+      where: { branch: { businessId } },
+      include: { branch: true },
+      orderBy: { name: "asc" },
+    });
   }
 
   async balances(businessId: string, search?: string) {

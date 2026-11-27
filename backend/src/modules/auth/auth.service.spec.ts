@@ -34,6 +34,9 @@ describe('AuthService', () => {
     branch: {
       create: jest.fn(),
     },
+    warehouse: {
+      create: jest.fn(),
+    },
     fiscalPeriod: {
       create: jest.fn(),
     },

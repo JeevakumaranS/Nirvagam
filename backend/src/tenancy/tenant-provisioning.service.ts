@@ -11,7 +11,7 @@ const PERMISSION_RESOURCES = [
   'business', 'branch', 'user', 'role', 'customer', 'supplier', 'product', 'inventory',
   'sales_invoice', 'quotation', 'sales_order', 'credit_note', 'purchase_invoice',
   'purchase_order', 'debit_note', 'payment', 'expense', 'accounting', 'journal_entry',
-  'financial_period', 'pos', 'gst_report', 'report',
+  'financial_period', 'stock_adjustment', 'warehouse', 'pos', 'gst_report', 'report',
   'settings', 'subscription',
 ];
 const PERMISSION_ACTIONS = [
@@ -199,6 +199,18 @@ export class TenantProvisioningService {
         ]
       );
       businessId = business.rows[0].id;
+
+      await client.query(
+        `INSERT INTO chart_of_accounts (
+          business_id, code, name, "group", sub_group, description, is_system, is_active, created_at, updated_at
+        ) VALUES
+          ($1::uuid, '1030', 'Accounts Receivable', 'ASSET'::"AccountGroup", 'AR',
+           'System receivable account for customer invoices', TRUE, TRUE, NOW(), NOW()),
+          ($1::uuid, '4010', 'Sales Revenue', 'INCOME'::"AccountGroup", 'Revenue',
+           'System revenue account for sales documents', TRUE, TRUE, NOW(), NOW())
+        ON CONFLICT (business_id, code) DO NOTHING;`,
+        [businessId]
+      );
 
       if (dto.gstin?.trim()) {
         await client.query(

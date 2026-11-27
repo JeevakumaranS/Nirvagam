@@ -1,78 +1,53 @@
-import {
-  BadRequestException,
-  ConflictException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PaginationParams } from '@nirvagam/shared';
-import { calculatePurchaseDocument, PurchaseCalculationLine } from '@nirvagam/shared';
-import { assertPurchaseTransition, PurchaseDocumentType } from './purchase-status';
+import { CreatePurchaseDto } from './dto/create-purchase.dto';
+import { PaginationParams, StockMovementType, InvoiceStatus } from '@nirvagam/shared';
 
 @Injectable()
 export class PurchasesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) {}
 
-  private async nextNumber(
-    tx: any,
-    businessId: string,
-    branchId: string,
-    documentType: 'PR' | 'PO' | 'GRN' | 'PI' | 'PRN' | 'PAY',
-  ) {
-    const series = await tx.documentNumberSeries.findFirst({
-      where: { businessId, branchId, documentType, isActive: true },
-    });
-    if (!series) {
-      return `${documentType}-${Date.now()}`;
-    }
-    const number = series.currentNumber;
-    await tx.documentNumberSeries.update({
-      where: { id: series.id },
-      data: { currentNumber: { increment: 1 }, resetYear: new Date().getUTCFullYear() },
-    });
-    return `${series.prefix}${String(number).padStart(series.padding, '0')}${series.suffix || ''}`;
-  }
-
-  private requireBranch(user: any) {
-    if (!user.branchId) throw new BadRequestException('A branch is required for purchase transactions');
-  }
-
-  async findAll(user: any, params: PaginationParams & Record<string, any>, document: 'requests' | 'orders' | 'grns' | 'invoices' | 'returns' | 'payments') {
+  async findAll(businessId: string, branchId: string | undefined, params: PaginationParams) {
     const page = Math.max(1, Number(params.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(params.limit) || 50));
     const skip = (page - 1) * limit;
-    const model = ({
-      requests: 'purchaseRequest',
-      orders: 'purchaseOrder',
-      grns: 'grn',
-      invoices: 'purchaseInvoice',
-      returns: 'purchaseReturn',
-      payments: 'purchasePayment',
-    } as const)[document];
+
     const where: any = {
-      businessId: user.businessId,
-      isDeleted: false,
-      ...(user.branchId ? { branchId: user.branchId } : {}),
-      ...(params.status ? { status: params.status } : {}),
-      ...(params.supplierId ? { supplierId: params.supplierId } : {}),
+      ...(branchId ? { branchId } : { branch: { businessId } }),
+      ...(params.search && {
+        OR: [
+          { billNumber: { contains: params.search, mode: 'insensitive' } },
+          { supplier: { name: { contains: params.search, mode: 'insensitive' } } },
+        ],
+      }),
     };
-    const [total, data] = await Promise.all([
-      (this.prisma as any)[model].count({ where }),
-      (this.prisma as any)[model].findMany({
+
+    const [total, purchases] = await Promise.all([
+      this.prisma.purchaseInvoice.count({ where }),
+      this.prisma.purchaseInvoice.findMany({
         where,
         skip,
         take: limit,
         include: {
           supplier: true,
           branch: true,
-          items: true,
+          items: {
+            include: {
+              variant: {
+                include: { product: true },
+              },
+            },
+          },
         },
         orderBy: { createdAt: 'desc' },
       }),
     ]);
+
+    const totalPages = Math.ceil(total / limit);
+
     return {
-      data,
-      meta: { total, page, limit, totalPages: Math.ceil(total / limit), hasNextPage: page * limit < total, hasPrevPage: page > 1 },
+      data: purchases,
+      meta: { total, page, limit, totalPages, hasNextPage: page < totalPages, hasPrevPage: page > 1 },
     };
   }
 
@@ -343,15 +318,6 @@ export class PurchasesService {
       const po = await this.prisma.purchaseOrder.findUnique({ where: { id: dto.purchaseOrderId } });
       if (po && new Date(dto.invoiceDate) < po.orderDate) throw new BadRequestException('Invoice date cannot be before PO date');
     }
-    return this.prisma.$transaction(async (tx) => {
-      const duplicate = await tx.purchaseInvoice.findFirst({
-        where: { branchId: user.branchId, supplierId: dto.supplierId, supplierBillNumber: dto.supplierBillNumber, isDeleted: false },
-      });
-      if (duplicate) throw new ConflictException('Duplicate supplier invoice number');
-      const supplier = await tx.supplier.findUnique({ where: { id: dto.supplierId } });
-      if (!supplier) throw new NotFoundException('Supplier not found');
-      const branch = await tx.branch.findUnique({ where: { id: user.branchId } });
-      if (!branch) throw new NotFoundException('Branch not found');
 
       const mode = dto.mode === 'DIRECT' ? 'DIRECT' : 'AGAINST_PO_GRN';
       const lines: PurchaseCalculationLine[] = dto.items.map((item: any) => ({
@@ -482,29 +448,54 @@ export class PurchasesService {
       tx.chartOfAccount.findFirst({ where: { businessId: invoice.businessId, code: '1052' } }),
       tx.chartOfAccount.findFirst({ where: { businessId: invoice.businessId, code: '1053' } }),
     ]);
-    if (!ap || !purchase) throw new BadRequestException('Default Accounts Payable and Purchase accounts are not configured');
 
-    const debitTotal = Number(invoice.taxableAmount) + Number(invoice.additionalCharges) + Number(invoice.totalTax);
-    const creditTotal = Number(invoice.grandTotal);
-    if (Math.abs(debitTotal - creditTotal) > 0.01) throw new BadRequestException('Purchase journal entry is out of balance');
+    if (!branch || !supplier) {
+      throw new NotFoundException('Branch or Supplier not found');
+    }
 
-    const journal = await tx.journalEntry.create({
-      data: {
-        businessId: invoice.businessId,
-        entryNumber: `JRN-${invoice.invoiceNumber}`,
-        date: invoice.invoiceDate,
-        narration: `Purchase invoice ${invoice.invoiceNumber} from ${supplier.name}`,
-        reference: invoice.invoiceNumber,
-        isPosted: true,
-      },
+    const warehouse = branch.warehouses[0];
+    if (!warehouse) {
+      throw new BadRequestException('Default warehouse required for stock intake');
+    }
+
+    const supplierStateCode = supplier.stateCode || branch.stateCode;
+    const isInterState = branch.stateCode !== supplierStateCode;
+
+    // Calculate totals
+    let taxableAmount = 0;
+    let cgstAmount = 0;
+    let sgstAmount = 0;
+    let igstAmount = 0;
+
+    const lineCalculations = dto.items.map((item) => {
+      const taxable = item.quantity * item.unitPrice;
+      const totalTax = (taxable * item.gstRate) / 100;
+
+      let itemCgst = 0;
+      let itemSgst = 0;
+      let itemIgst = 0;
+
+      if (isInterState) {
+        itemIgst = totalTax;
+      } else {
+        itemCgst = Math.round((totalTax / 2) * 100) / 100;
+        itemSgst = totalTax - itemCgst;
+      }
+
+      taxableAmount += taxable;
+      cgstAmount += itemCgst;
+      sgstAmount += itemSgst;
+      igstAmount += itemIgst;
+
+      return {
+        ...item,
+        taxableValue: taxable,
+        cgstAmount: itemCgst,
+        sgstAmount: itemSgst,
+        igstAmount: itemIgst,
+        totalAmount: taxable + totalTax,
+      };
     });
-    await tx.journalLine.create({
-      data: { journalEntryId: journal.id, accountId: (inventory || purchase).id, debit: Number(invoice.taxableAmount) + Number(invoice.additionalCharges), credit: 0, notes: 'Purchase inventory and charges' },
-    });
-    if (Number(invoice.cgstAmount) > 0 && cgst) await tx.journalLine.create({ data: { journalEntryId: journal.id, accountId: cgst.id, debit: invoice.cgstAmount, credit: 0, notes: 'Input CGST' } });
-    if (Number(invoice.sgstAmount) > 0 && sgst) await tx.journalLine.create({ data: { journalEntryId: journal.id, accountId: sgst.id, debit: invoice.sgstAmount, credit: 0, notes: 'Input SGST' } });
-    if (Number(invoice.igstAmount) > 0 && igst) await tx.journalLine.create({ data: { journalEntryId: journal.id, accountId: igst.id, debit: invoice.igstAmount, credit: 0, notes: 'Input IGST' } });
-    await tx.journalLine.create({ data: { journalEntryId: journal.id, accountId: ap.id, debit: 0, credit: invoice.grandTotal, notes: `Payable to ${supplier.name}` } });
 
     if (invoice.mode === 'DIRECT') {
       const items = await tx.purchaseInvoiceItem.findMany({ where: { purchaseInvoiceId: invoice.id } });
@@ -529,41 +520,21 @@ export class PurchasesService {
           },
         });
       }
-    }
 
-    await tx.purchaseInvoice.update({
-      where: { id: invoice.id },
-      data: { status: 'APPROVED', journalEntryId: journal.id, postedAt: new Date(), balanceAmount: invoice.grandTotal, updatedById: user.id, version: { increment: 1 } },
-    });
-  }
-
-  async postInvoice(user: any, id: string) {
-    return this.prisma.$transaction(async (tx) => {
-      const invoice = await tx.purchaseInvoice.findFirst({
-        where: { id, businessId: user.businessId, isDeleted: false },
-        include: { items: true, charges: true, grnLinks: true },
-      });
-      if (!invoice) throw new NotFoundException('Purchase invoice not found');
-      assertPurchaseTransition('INVOICE', invoice.status, 'APPROVED');
-      await this.postInvoiceInTransaction(tx, user, invoice);
-      return tx.purchaseInvoice.findUnique({ where: { id }, include: { items: true, charges: true, supplier: true } });
-    });
-  }
-
-  async cancelInvoice(user: any, id: string, dto: any = {}) {
-    if (!dto.reason) throw new BadRequestException('Cancellation reason is mandatory');
-    return this.prisma.$transaction(async (tx) => {
-      const invoice = await tx.purchaseInvoice.findFirst({
-        where: { id, businessId: user.businessId, isDeleted: false },
-        include: { items: true, allocations: true, grnLinks: true },
-      });
-      if (!invoice) throw new NotFoundException('Purchase invoice not found');
-      if (invoice.allocations.length) throw new BadRequestException('Cannot cancel an invoice with payment allocations');
-      if (invoice.status === 'PAID') throw new BadRequestException('Paid invoices cannot be cancelled');
-      assertPurchaseTransition('INVOICE', invoice.status, 'CANCELLED');
-      if (invoice.mode === 'DIRECT') {
-        for (const item of invoice.items) {
-          await tx.stockMovement.create({
+      // Debit Input Taxes
+      if (isInterState && inIgstAcc && igstAmount > 0) {
+        await tx.journalLine.create({
+          data: {
+            journalEntryId: journal.id,
+            accountId: inIgstAcc.id,
+            debit: igstAmount,
+            credit: 0,
+            notes: 'Input IGST Claimable',
+          },
+        });
+      } else {
+        if (inCgstAcc && cgstAmount > 0) {
+          await tx.journalLine.create({
             data: {
               branchId: invoice.branchId,
               variantId: item.variantId,
@@ -583,30 +554,56 @@ export class PurchasesService {
           });
         }
       }
-      return tx.purchaseInvoice.update({
-        where: { id },
+
+      // Credit Accounts Payable (Supplier)
+      if (apAcc) {
+        await tx.journalLine.create({
+          data: {
+            journalEntryId: journal.id,
+            accountId: apAcc.id,
+            debit: 0,
+            credit: grandTotal,
+            notes: `Payable to ${supplier.name}`,
+          },
+        });
+      }
+
+      // 3. Purchase Invoice
+      const bill = await tx.purchaseInvoice.create({
         data: {
-          status: 'CANCELLED',
-          cancelledAt: new Date(),
-          cancellationReason: dto.reason,
-          updatedById: user.id,
-          version: { increment: 1 },
+          branchId,
+          supplierId: supplier.id,
+          journalEntryId: journal.id,
+          billNumber: dto.billNumber,
+          billDate: dto.billDate ? new Date(dto.billDate) : new Date(),
+          dueDate: dto.dueDate ? new Date(dto.dueDate) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          status: InvoiceStatus.POSTED,
+          taxableAmount,
+          cgstAmount,
+          sgstAmount,
+          igstAmount,
+          totalTax,
+          grandTotal,
+          paidAmount: 0,
         },
       });
-    });
-  }
 
-  async createReturn(user: any, dto: any) {
-    this.requireBranch(user);
-    if (!dto.purchaseInvoiceId) throw new BadRequestException('Original purchase invoice is required');
-    if (!dto.items?.length) throw new BadRequestException('At least one return item is required');
-    return this.prisma.$transaction(async (tx) => {
-      const invoice = await tx.purchaseInvoice.findFirst({
-        where: { id: dto.purchaseInvoiceId, businessId: user.businessId, isDeleted: false },
-        include: { items: true, supplier: true },
-      });
-      if (!invoice) throw new NotFoundException('Purchase invoice not found');
-      if (!['APPROVED', 'PARTIALLY_PAID', 'PAID'].includes(invoice.status)) throw new BadRequestException('Only posted purchase invoices can be returned');
+      // 4. Line items & Increment Inventory
+      for (const line of lineCalculations) {
+        await tx.purchaseInvoiceItem.create({
+          data: {
+            purchaseInvoiceId: bill.id,
+            variantId: line.variantId,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+            taxableValue: line.taxableValue,
+            gstRate: line.gstRate,
+            cgstAmount: line.cgstAmount,
+            sgstAmount: line.sgstAmount,
+            igstAmount: line.igstAmount,
+            totalAmount: line.totalAmount,
+          },
+        });
 
       let taxable = 0;
       let totalTax = 0;
@@ -672,6 +669,24 @@ export class PurchasesService {
           where: { id: balance.id },
           data: { quantity: { decrement: item.quantity } },
         });
+
+        if (balance) {
+          await tx.stockBalance.update({
+            where: { id: balance.id },
+            data: { quantity: { increment: line.quantity } },
+          });
+        } else {
+          await tx.stockBalance.create({
+            data: {
+              warehouseId: warehouse.id,
+              variantId: line.variantId,
+              quantity: line.quantity,
+              averageCost: line.unitPrice,
+            },
+          });
+        }
+
+        // Record stock movement
         await tx.stockMovement.create({
           data: {
             branchId: document.branchId,

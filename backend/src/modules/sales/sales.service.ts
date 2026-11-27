@@ -173,6 +173,7 @@ export class SalesService {
       this.prisma.branch.findUnique({
         where: { id: branchId },
         include: {
+          warehouses: { where: { isDefault: true } },
           business: { select: { gstRegistrations: { select: { id: true } } } },
         },
       }),
@@ -269,6 +270,11 @@ export class SalesService {
           (returnedQuantities.get(item.variantId) || 0) + item.quantity
         );
       }
+    }
+
+    const warehouse = branch.warehouses[0];
+    if (shouldUpdateStock && !warehouse) {
+      throw new BadRequestException('No default warehouse assigned to branch for inventory deduction');
     }
 
     if (dto.invoiceNumber && !canUseManualInvoiceNumber) {
@@ -655,7 +661,7 @@ export class SalesService {
               reference: paymentInput.reference,
             },
           });
-          await tx.paymentAllocation.create({
+          await tx.paymentAllocation.createMany({
             data: { paymentId: payment.id, salesInvoiceId: invoice.id, amount: paymentInput.amount },
           });
 
@@ -711,11 +717,11 @@ export class SalesService {
           },
         });
 
-        if (shouldUpdateStock) {
+        if (shouldUpdateStock && warehouse) {
           const balance = await tx.stockBalance.findUnique({
             where: {
-              branchId_variantId: {
-                branchId: branch.id,
+              warehouseId_variantId: {
+                warehouseId: warehouse.id,
                 variantId: item.id,
               },
             },
@@ -732,13 +738,14 @@ export class SalesService {
             });
           } else if (STOCK_IN_DOCUMENT_TYPES.has(invoiceType)) {
             await tx.stockBalance.create({
-              data: { branchId: branch.id, variantId: item.id, quantity: item.quantity },
+              data: { warehouseId: warehouse.id, variantId: item.id, quantity: item.quantity },
             });
           }
 
           await tx.stockMovement.create({
             data: {
               branchId: branch.id,
+              warehouseId: warehouse.id,
               variantId: item.id,
               type: STOCK_IN_DOCUMENT_TYPES.has(invoiceType)
                 ? StockMovementType.RETURN_IN_CREDIT_NOTE
@@ -816,7 +823,7 @@ export class SalesService {
           reference: dto.reference,
         },
       });
-      await tx.paymentAllocation.create({
+      await tx.paymentAllocation.createMany({
         data: { paymentId: payment.id, salesInvoiceId: invoice.id, amount: dto.amount },
       });
 
@@ -941,7 +948,7 @@ export class SalesService {
       where: { id, branch: { businessId, ...(branchId ? { id: branchId } : {}) } },
       include: {
         items: true,
-        branch: { include: { business: true } },
+        branch: { include: { warehouses: true, business: true } },
       },
     });
 
@@ -952,6 +959,8 @@ export class SalesService {
     if (Number(invoice.paidAmount) > 0) {
       throw new BadRequestException('Refund or reverse recorded payments before cancelling this invoice');
     }
+
+    const warehouse = invoice.branch.warehouses.find((w) => w.isDefault) || invoice.branch.warehouses[0];
 
     return this.prisma.$transaction(async (tx) => {
       // 1. Mark as cancelled
@@ -991,12 +1000,13 @@ export class SalesService {
       }
 
       if (
+        warehouse &&
         (STOCK_OUT_DOCUMENT_TYPES.has(invoice.invoiceType) ||
           STOCK_IN_DOCUMENT_TYPES.has(invoice.invoiceType))
       ) {
         for (const item of invoice.items) {
           await tx.stockBalance.updateMany({
-            where: { branchId: invoice.branchId, variantId: item.variantId },
+            where: { warehouseId: warehouse.id, variantId: item.variantId },
             data: {
               quantity: STOCK_OUT_DOCUMENT_TYPES.has(invoice.invoiceType)
                 ? { increment: item.quantity }
@@ -1007,6 +1017,7 @@ export class SalesService {
           await tx.stockMovement.create({
             data: {
               branchId: invoice.branchId,
+              warehouseId: warehouse.id,
               variantId: item.variantId,
               type: STOCK_OUT_DOCUMENT_TYPES.has(invoice.invoiceType)
                 ? StockMovementType.RETURN_IN_CREDIT_NOTE
