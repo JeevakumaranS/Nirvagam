@@ -2,12 +2,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { BusinessesService } from './businesses.service';
 
 describe('BusinessesService profile settings', () => {
-  it('creates a business without creating a default branch or warehouse', async () => {
+  it('creates a business without creating a default branch', async () => {
     const business = { id: 'business-id' };
     const transaction = {
       business: { create: jest.fn().mockResolvedValue(business) },
       branch: { create: jest.fn() },
-      warehouse: { create: jest.fn() },
     };
     const prisma: any = {
       $transaction: jest.fn((callback: (tx: any) => unknown) => callback(transaction)),
@@ -25,7 +24,6 @@ describe('BusinessesService profile settings', () => {
     })).resolves.toEqual(business);
 
     expect(transaction.branch.create).not.toHaveBeenCalled();
-    expect(transaction.warehouse.create).not.toHaveBeenCalled();
   });
 
   it('persists tax settings, logo, and digital signature', async () => {

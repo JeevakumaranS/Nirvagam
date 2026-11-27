@@ -531,7 +531,7 @@ export default function BusinessSettingsPage() {
         title={editingBranchId ? 'Edit Branch Configuration' : 'Register New Branch'}
         description={editingBranchId
           ? 'Update branch details, tax registration, and location.'
-          : 'Configure a new branch store, warehouse, or regional sales outlet.'}
+          : 'Configure a new branch store or regional sales outlet.'}
       >
         <form onSubmit={handleSaveBranch} className="space-y-3">
           <div className="grid grid-cols-2 gap-2.5">

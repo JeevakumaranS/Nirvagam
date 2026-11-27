@@ -16,16 +16,6 @@ async function main() {
     const branch = await prisma.branch.findFirstOrThrow({
       where: { businessId, isActive: true },
     });
-    const warehouse =
-      (await prisma.warehouse.findFirst({ where: { branchId: branch.id } })) ||
-      (await prisma.warehouse.create({
-        data: {
-          branchId: branch.id,
-          name: "Textile Main Warehouse",
-          code: "TXT-MAIN",
-          isDefault: true,
-        },
-      }));
     for (const item of [
       {
         name: "Organic Cotton Poplin",

@@ -215,11 +215,6 @@ export class CreatePurchaseOrderDto {
   purchaseRequestId?: string;
 
   @ApiPropertyOptional()
-  @IsUUID()
-  @IsOptional()
-  warehouseId?: string;
-
-  @ApiPropertyOptional()
   @IsString()
   @IsOptional()
   orderNumber?: string;
@@ -362,11 +357,6 @@ export class CreateGrnDto {
   purchaseOrderId?: string;
 
   @ApiPropertyOptional()
-  @IsUUID()
-  @IsOptional()
-  warehouseId?: string;
-
-  @ApiPropertyOptional()
   @IsString()
   @IsOptional()
   grnNumber?: string;
@@ -424,11 +414,6 @@ export class CreatePurchaseInvoiceDto {
   @IsArray()
   @IsOptional()
   grnIds?: string[];
-
-  @ApiPropertyOptional()
-  @IsUUID()
-  @IsOptional()
-  warehouseId?: string;
 
   @ApiPropertyOptional()
   @IsString()
@@ -540,11 +525,6 @@ export class CreatePurchaseReturnDto {
   @ApiProperty()
   @IsUUID()
   purchaseInvoiceId!: string;
-
-  @ApiPropertyOptional()
-  @IsUUID()
-  @IsOptional()
-  warehouseId?: string;
 
   @ApiPropertyOptional()
   @IsString()

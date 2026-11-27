@@ -114,7 +114,7 @@ export function PurchaseSettingsApprovals({ mode }: { mode: 'settings' | 'approv
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={settings.blockReturnOnInsufficientStock} onChange={(e) => setSettings({ ...settings, blockReturnOnInsufficientStock: e.target.checked })} />
-              <span>Strictly block Purchase Return when warehouse stock is insufficient</span>
+              <span>Strictly block Purchase Return when branch stock is insufficient</span>
             </label>
           </div>
         </div>

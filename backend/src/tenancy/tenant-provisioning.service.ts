@@ -11,7 +11,7 @@ const PERMISSION_RESOURCES = [
   'business', 'branch', 'user', 'role', 'customer', 'supplier', 'product', 'inventory',
   'sales_invoice', 'quotation', 'sales_order', 'credit_note', 'purchase_invoice',
   'purchase_order', 'debit_note', 'payment', 'expense', 'accounting', 'journal_entry',
-  'financial_period', 'stock_adjustment', 'warehouse', 'pos', 'gst_report', 'report',
+  'financial_period', 'stock_adjustment', 'pos', 'gst_report', 'report',
   'settings', 'subscription',
 ];
 const PERMISSION_ACTIONS = [

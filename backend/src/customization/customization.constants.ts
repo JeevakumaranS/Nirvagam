@@ -19,7 +19,6 @@ export const EXTENSIBLE_CORE_TABLES = new Set([
   'sales_invoices',
   'purchase_orders',
   'branches',
-  'warehouses',
   'quotes',
   'credit_notes',
   'grn',

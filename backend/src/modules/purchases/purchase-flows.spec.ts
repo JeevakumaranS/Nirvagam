@@ -66,7 +66,6 @@ describe('Module 3 Purchase Management Integration Flows', () => {
       },
       branch: { id: 'br1', businessId: 'b1', name: 'HQ', stateCode: '33' },
       supplier: { id: 'sup1', businessId: 'b1', name: 'Mill Co', stateCode: '33', creditPeriodDays: 30 },
-      warehouse: { id: 'wh1', branchId: 'br1', isDefault: true },
       accounts: [
         { id: 'coa-ap', code: '2010', businessId: 'b1', isActive: true },
         { id: 'coa-inv', code: '1020', businessId: 'b1', isActive: true },
@@ -114,7 +113,6 @@ describe('Module 3 Purchase Management Integration Flows', () => {
       },
       branch: { findUnique: jest.fn(async () => state.branch) },
       supplier: { findUnique: jest.fn(async () => state.supplier) },
-      warehouse: { findFirst: jest.fn(async () => state.warehouse) },
       approvalRule: { findMany: jest.fn(async () => state.approvalRules), findUnique: jest.fn(async ({ where }: any) => state.approvalRules.find((r: any) => r.id === where.id)) },
       approvalRequest: {
         create: jest.fn(async ({ data }: any) => {
@@ -267,7 +265,10 @@ describe('Module 3 Purchase Management Integration Flows', () => {
       },
       purchaseInvoice: {
         findFirst: jest.fn(async ({ where }: any) => {
-          if (where?.id) return state.invoices.get(where.id) || null;
+          if (where?.id) {
+            const invoice = state.invoices.get(where.id);
+            return invoice ? { ...invoice, paymentAllocations: [] } : null;
+          }
           return null;
         }),
         findUnique: jest.fn(async ({ where }: any) => state.invoices.get(where.id) || null),
@@ -277,6 +278,7 @@ describe('Module 3 Purchase Management Integration Flows', () => {
             ...data,
             items: (data.items?.create || []).map((i: any, idx: number) => ({ id: `ii-${idx}`, ...i })),
             allocations: [],
+            paymentAllocations: [],
             supplier: state.supplier,
             branch: state.branch,
             version: 1,
@@ -293,7 +295,9 @@ describe('Module 3 Purchase Management Integration Flows', () => {
       },
       purchaseInvoiceGrn: { count: jest.fn(async () => 0) },
       purchaseReturn: {
-        count: jest.fn(async () => 0),
+        count: jest.fn(async ({ where }: any) => Array.from(state.returns.values()).filter(
+          (ret: any) => ret.purchaseInvoiceId === where.purchaseInvoiceId && ret.status !== 'CANCELLED',
+        ).length),
         create: jest.fn(async ({ data }: any) => {
           const ret = { id: `ret-${state.seq++}`, ...data, items: (data.items?.create || []).map((i: any, idx: number) => ({ id: `ri-${idx}`, ...i })), supplier: state.supplier, version: 1 };
           state.returns.set(ret.id, ret);
