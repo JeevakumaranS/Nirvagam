@@ -1,5 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsArray, IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { ProductVariantDto } from './product-variant.dto';
 
 export class CreateProductDto {
   @ApiProperty({ example: 'Cotton Formal Shirt' })
@@ -56,6 +58,20 @@ export class CreateProductDto {
   @IsOptional()
   description?: string;
 
+  @IsBoolean()
+  @IsOptional()
+  hasVariants?: boolean;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductVariantDto)
+  @IsOptional()
+  variants?: ProductVariantDto[];
+
+  @IsArray()
+  @IsOptional()
+  stockAllocations?: Array<{ branchId: string; sku: string; quantity: number }>;
+
   @IsNumber()
   @IsOptional()
   wholesalePrice?: number;
@@ -67,10 +83,6 @@ export class CreateProductDto {
   @IsString()
   @IsOptional()
   imageUrl?: string;
-
-  @IsString()
-  @IsOptional()
-  trackingMode?: string;
 
   @IsBoolean()
   @IsOptional()
