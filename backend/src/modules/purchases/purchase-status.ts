@@ -1,18 +1,19 @@
 import { BadRequestException } from "@nestjs/common";
 
-type PurchaseDocumentType = "PR" | "PO" | "GRN" | "INVOICE" | "RETURN";
+type PurchaseDocumentType = "PR" | "PO" | "GRN" | "INVOICE";
 
 const allowedTransitions: Record<
   PurchaseDocumentType,
   Record<string, readonly string[]>
 > = {
   PR: {
-    DRAFT: ["PENDING_APPROVAL", "CANCELLED"],
+    DRAFT: ["APPROVED", "PENDING_APPROVAL", "CANCELLED"],
     PENDING_APPROVAL: ["APPROVED", "REJECTED", "CANCELLED"],
   },
   PO: {
-    DRAFT: ["PENDING_APPROVAL", "CANCELLED"],
+    DRAFT: ["APPROVED", "ORDER_PLACED", "PENDING_APPROVAL", "CANCELLED"],
     PENDING_APPROVAL: ["APPROVED", "CANCELLED"],
+    ORDER_PLACED: ["PARTIALLY_RECEIVED", "FULLY_RECEIVED", "CLOSED", "CANCELLED"],
     APPROVED: ["PARTIALLY_RECEIVED", "FULLY_RECEIVED", "CLOSED", "CANCELLED"],
   },
   GRN: {
@@ -21,10 +22,6 @@ const allowedTransitions: Record<
   INVOICE: {
     DRAFT: ["PENDING_APPROVAL", "APPROVED", "CANCELLED"],
     PENDING_APPROVAL: ["APPROVED", "CANCELLED"],
-  },
-  RETURN: {
-    DRAFT: ["APPROVED", "CANCELLED"],
-    APPROVED: ["POSTED", "CANCELLED"],
   },
 };
 

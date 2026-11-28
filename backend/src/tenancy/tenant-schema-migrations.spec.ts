@@ -43,6 +43,63 @@ describe("tenant schema migrations", () => {
     expect(migration?.sql).toContain('ADD COLUMN IF NOT EXISTS "total_tax"');
   });
 
+  it("repairs the purchase invoice-to-GRN table mapping without dropping legacy links", () => {
+    const migrations = getTenantSchemaMigrations();
+    const purchaseMigrationIndex = migrations.findIndex(
+      (item) => item.name === "20261126130000_module3_purchase_management",
+    );
+    const repairMigrationIndex = migrations.findIndex(
+      (item) => item.name === "20261128121000_fix_purchase_invoice_grn_mapping",
+    );
+    const migration = migrations[repairMigrationIndex];
+
+    expect(repairMigrationIndex).toBeGreaterThan(purchaseMigrationIndex);
+    expect(migration?.sql).toContain('CREATE TABLE IF NOT EXISTS "purchase_invoice_grn"');
+    expect(migration?.sql).toContain('FROM "purchase_invoice_grns"');
+    expect(migration?.sql).toContain('ON CONFLICT ("purchase_invoice_id", "grn_id") DO NOTHING');
+    expect(migration?.sql).not.toContain('DROP TABLE "purchase_invoice_grns"');
+  });
+
+  it("adds the order-placed purchase order status", () => {
+    const migrations = getTenantSchemaMigrations();
+    const purchaseMigrationIndex = migrations.findIndex(
+      (item) => item.name === "20261126130000_module3_purchase_management",
+    );
+    const statusMigrationIndex = migrations.findIndex(
+      (item) => item.name === "20261128121800_add_order_placed_purchase_order_status",
+    );
+
+    expect(statusMigrationIndex).toBeGreaterThan(purchaseMigrationIndex);
+    expect(migrations[statusMigrationIndex]?.sql).toContain(
+      `ALTER TYPE "PurchaseOrderStatus" ADD VALUE IF NOT EXISTS 'ORDER_PLACED'`,
+    );
+  });
+
+  it("removes per-item discounts from purchase document tables", () => {
+    const migrations = getTenantSchemaMigrations();
+    const statusMigrationIndex = migrations.findIndex(
+      (item) => item.name === "20261128121800_add_order_placed_purchase_order_status",
+    );
+    const discountMigrationIndex = migrations.findIndex(
+      (item) => item.name === "20261128140000_remove_purchase_item_discounts",
+    );
+    const migration = migrations[discountMigrationIndex];
+
+    expect(discountMigrationIndex).toBeGreaterThan(statusMigrationIndex);
+    expect(migration?.sql).toContain(
+      'ALTER TABLE IF EXISTS "purchase_order_items"',
+    );
+    expect(migration?.sql).toContain('DROP COLUMN IF EXISTS "discount_type"');
+    expect(migration?.sql).toContain('DROP COLUMN IF EXISTS "discount_value"');
+    expect(migration?.sql).toContain('DROP COLUMN IF EXISTS "discount_amount"');
+    expect(migration?.sql).toContain(
+      'ALTER TABLE IF EXISTS "purchase_invoice_items"',
+    );
+    expect(migration?.sql).toContain(
+      'ALTER TABLE IF EXISTS "purchase_return_items"',
+    );
+  });
+
   it("includes member profile fields required by tenant user provisioning", () => {
     const migration = getTenantSchemaMigrations().find(
       (item) => item.name === "20261125120000_user_member_profile_fields",

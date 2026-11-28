@@ -80,15 +80,6 @@ export class PurchaseLineDto {
   @IsOptional()
   weight?: string | number;
 
-  @ApiPropertyOptional({ enum: ['PERCENT', 'AMOUNT'], default: 'AMOUNT' })
-  @IsIn(['PERCENT', 'AMOUNT'])
-  @IsOptional()
-  discountType?: 'PERCENT' | 'AMOUNT';
-
-  @ApiPropertyOptional({ example: '0' })
-  @IsOptional()
-  discountValue?: string | number;
-
   @ApiPropertyOptional({ example: '18' })
   @IsOptional()
   taxRate?: string | number;
@@ -312,9 +303,18 @@ export class GrnLineInputDto {
   @IsOptional()
   landedCost?: string | number;
 
+  @ApiPropertyOptional({ example: '18' })
+  @IsOptional()
+  taxRate?: string | number;
+
 }
 
 export class CreateGrnDto {
+  @ApiPropertyOptional()
+  @IsUUID()
+  @IsOptional()
+  purchaseOrderId?: string;
+
   @ApiPropertyOptional()
   @IsUUID()
   @IsOptional()
@@ -466,99 +466,20 @@ export class UpdatePurchaseInvoiceDto extends CreatePurchaseInvoiceDto {
   version?: number;
 }
 
-export class PurchaseReturnLineDto {
-  @ApiPropertyOptional()
-  @IsUUID()
-  @IsOptional()
-  variantId?: string;
-
-  @ApiPropertyOptional()
-  @IsString()
-  @IsOptional()
-  itemName?: string;
-
-  @ApiPropertyOptional()
-  @IsUUID()
-  @IsOptional()
-  invoiceItemId?: string;
-
-  @ApiProperty({ example: '2' })
-  @IsNotEmpty()
-  quantity!: string | number;
-}
-
-export class CreatePurchaseReturnDto {
-  @ApiProperty()
-  @IsUUID()
-  purchaseInvoiceId!: string;
-
-
-  @ApiPropertyOptional()
-  @IsString()
-  @IsOptional()
-  returnNumber?: string;
-
-  @ApiPropertyOptional()
-  @IsDateString()
-  @IsOptional()
-  returnDate?: string;
-
-  @ApiPropertyOptional()
-  @IsString()
-  @IsOptional()
-  reason?: string;
-
-  @ApiProperty({ type: [PurchaseReturnLineDto] })
-  @IsArray()
-  @ArrayMinSize(1)
-  @ValidateNested({ each: true })
-  @Type(() => PurchaseReturnLineDto)
-  items!: PurchaseReturnLineDto[];
-}
-
-export class PaymentAllocationDto {
-  @ApiProperty()
-  @IsUUID()
-  purchaseInvoiceId!: string;
-
-  @ApiProperty({ example: '500' })
+export class CreateInvoicePaymentDto {
+  @ApiProperty({ example: '1250.00' })
   @IsNotEmpty()
   amount!: string | number;
-}
 
-export class CreatePurchasePaymentDto {
-  @ApiProperty()
-  @IsUUID()
-  supplierId!: string;
-
-  @ApiPropertyOptional()
-  @IsString()
+  @ApiPropertyOptional({ enum: ['CASH', 'BANK_TRANSFER', 'UPI', 'CHEQUE'], default: 'BANK_TRANSFER' })
+  @IsIn(['CASH', 'BANK_TRANSFER', 'UPI', 'CHEQUE'])
   @IsOptional()
-  paymentNumber?: string;
+  mode?: 'CASH' | 'BANK_TRANSFER' | 'UPI' | 'CHEQUE';
 
   @ApiPropertyOptional()
   @IsDateString()
   @IsOptional()
   paymentDate?: string;
-
-  @ApiPropertyOptional({ enum: ['BILL_PAYMENT', 'ADVANCE'], default: 'BILL_PAYMENT' })
-  @IsIn(['BILL_PAYMENT', 'ADVANCE'])
-  @IsOptional()
-  paymentType?: 'BILL_PAYMENT' | 'ADVANCE';
-
-  @ApiPropertyOptional({ enum: ['CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'CHEQUE'], default: 'BANK_TRANSFER' })
-  @IsIn(['CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'CHEQUE'])
-  @IsOptional()
-  mode?: 'CASH' | 'UPI' | 'CARD' | 'BANK_TRANSFER' | 'CHEQUE';
-
-  @ApiProperty({ example: '1000' })
-  @IsNotEmpty()
-  amount!: string | number;
-
-  @ApiPropertyOptional()
-  @IsUUID()
-  @IsOptional()
-  bankAccountId?: string;
 
   @ApiPropertyOptional()
   @IsString()
@@ -574,22 +495,6 @@ export class CreatePurchasePaymentDto {
   @IsString()
   @IsOptional()
   idempotencyKey?: string;
-
-  @ApiPropertyOptional({ type: [PaymentAllocationDto] })
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => PaymentAllocationDto)
-  @IsOptional()
-  allocations?: PaymentAllocationDto[];
-}
-
-export class AdjustAdvancePaymentDto {
-  @ApiProperty({ type: [PaymentAllocationDto] })
-  @IsArray()
-  @ArrayMinSize(1)
-  @ValidateNested({ each: true })
-  @Type(() => PaymentAllocationDto)
-  allocations!: PaymentAllocationDto[];
 }
 
 export class CancelReasonDto {
@@ -597,55 +502,6 @@ export class CancelReasonDto {
   @IsString()
   @IsNotEmpty()
   reason!: string;
-}
-
-export class ApprovalActionDto {
-  @ApiPropertyOptional()
-  @IsString()
-  @IsOptional()
-  reason?: string;
-
-  @ApiPropertyOptional()
-  @IsUUID()
-  @IsOptional()
-  delegatedToId?: string;
-}
-
-export class CreateApprovalRuleDto {
-  @ApiProperty({ enum: ['PR', 'PO', 'INVOICE', 'RETURN'] })
-  @IsIn(['PR', 'PO', 'INVOICE', 'RETURN'])
-  documentType!: string;
-
-  @ApiPropertyOptional()
-  @IsUUID()
-  @IsOptional()
-  branchId?: string;
-
-  @ApiPropertyOptional()
-  @IsString()
-  @IsOptional()
-  department?: string;
-
-  @ApiPropertyOptional({ default: 0 })
-  @IsNumber()
-  @Min(0)
-  @IsOptional()
-  minAmount?: number;
-
-  @ApiPropertyOptional()
-  @IsNumber()
-  @IsOptional()
-  maxAmount?: number;
-
-  @ApiProperty({ example: [{ level: 1, roleName: 'MANAGER', userIds: [] }] })
-  @IsArray()
-  @ArrayMinSize(1)
-  levels!: Array<{ level: number; roleName?: string; userIds?: string[] }>;
-
-  @ApiPropertyOptional({ default: true })
-  @IsBoolean()
-  @IsOptional()
-  isActive?: boolean;
 }
 
 export class UpdatePurchaseSettingsDto {

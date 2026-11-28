@@ -1,6 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
 import { PurchaseCoreService } from './services/purchase-core.service';
-import { PurchaseApprovalsService } from './services/purchase-approvals.service';
 import { PurchaseProcurementService } from './services/purchase-procurement.service';
 import { PurchaseBillingService } from './services/purchase-billing.service';
 import { PurchaseFinancialsReportsService } from './services/purchase-financials-reports.service';
@@ -15,28 +13,14 @@ describe('Module 3 Purchase Management Integration Flows', () => {
         findMany: jest.fn().mockResolvedValue([]),
       },
     };
-    const billing = new PurchaseBillingService(prisma, {} as any, {} as any);
+    const billing = new PurchaseBillingService(prisma, {} as any);
 
     await billing.listInvoices(user, {});
 
     const query = prisma.purchaseInvoice.findMany.mock.calls[0][0];
     expect(query.select).not.toHaveProperty('warehouseId');
     expect(query.select.items.select).not.toHaveProperty('unitPrice');
-  });
-
-  it('lists purchase returns without the removed warehouse column', async () => {
-    const prisma: any = {
-      purchaseReturn: {
-        count: jest.fn().mockResolvedValue(0),
-        findMany: jest.fn().mockResolvedValue([]),
-      },
-    };
-    const billing = new PurchaseBillingService(prisma, {} as any, {} as any);
-
-    await billing.listReturns(user, {});
-
-    const query = prisma.purchaseReturn.findMany.mock.calls[0][0];
-    expect(query.select).not.toHaveProperty('warehouseId');
+    expect(query.select.items.select).not.toHaveProperty('discountAmount');
   });
 
   it('loads purchase-order print data without the removed warehouse column', async () => {
@@ -88,8 +72,8 @@ describe('Module 3 Purchase Management Integration Flows', () => {
       grns: new Map<string, any>(),
       grnItems: new Map<string, any>(),
       invoices: new Map<string, any>(),
-      returns: new Map<string, any>(),
-      payments: new Map<string, any>(),
+      attachmentCount: 0,
+      payments: [] as any[],
       approvalRules: [] as any[],
       approvalRequests: new Map<string, any>(),
       seq: 1,
@@ -288,38 +272,48 @@ describe('Module 3 Purchase Management Integration Flows', () => {
         }),
         update: jest.fn(async ({ where, data }: any) => {
           const cur = state.invoices.get(where.id);
-          const next = { ...cur, ...data };
+          const next = {
+            ...cur,
+            ...data,
+            version: data.version?.increment ? (cur.version || 0) + data.version.increment : data.version ?? cur.version,
+          };
           state.invoices.set(where.id, next);
           return next;
         }),
+        updateMany: jest.fn(async ({ where, data }: any) => {
+          const cur = state.invoices.get(where.id);
+          if (!cur || cur.version !== where.version || cur.balanceAmount !== where.balanceAmount) {
+            return { count: 0 };
+          }
+          const next = {
+            ...cur,
+            ...data,
+            version: (cur.version || 0) + (data.version?.increment || 0),
+          };
+          state.invoices.set(where.id, next);
+          return { count: 1 };
+        }),
       },
-      purchaseInvoiceGrn: { count: jest.fn(async () => 0) },
-      purchaseReturn: {
-        count: jest.fn(async ({ where }: any) => Array.from(state.returns.values()).filter(
-          (ret: any) => ret.purchaseInvoiceId === where.purchaseInvoiceId && ret.status !== 'CANCELLED',
-        ).length),
-        create: jest.fn(async ({ data }: any) => {
-          const ret = { id: `ret-${state.seq++}`, ...data, items: (data.items?.create || []).map((i: any, idx: number) => ({ id: `ri-${idx}`, ...i })), supplier: state.supplier, version: 1 };
-          state.returns.set(ret.id, ret);
-          return ret;
-        }),
-        findFirst: jest.fn(async ({ where }: any) => state.returns.get(where.id) || null),
-        update: jest.fn(async ({ where, data }: any) => {
-          const cur = state.returns.get(where.id);
-          const next = { ...cur, ...data };
-          state.returns.set(where.id, next);
-          return next;
-        }),
+      purchaseAttachment: {
+        count: jest.fn(async () => state.attachmentCount),
       },
       purchasePayment: {
         findUnique: jest.fn(async () => null),
-        findFirst: jest.fn(async ({ where }: any) => state.payments.get(where.id) || null),
         create: jest.fn(async ({ data }: any) => {
-          const pay = { id: `pay-${state.seq++}`, ...data, supplier: state.supplier, version: 1 };
-          state.payments.set(pay.id, pay);
-          return pay;
+          const payment = {
+            id: `payment-${state.seq++}`,
+            ...data,
+            allocations: (data.allocations?.create || []).map((allocation: any) => ({
+              id: `payment-allocation-${state.seq++}`,
+              ...allocation,
+            })),
+            supplier: state.supplier,
+          };
+          state.payments.push(payment);
+          return payment;
         }),
       },
+      purchaseInvoiceGrn: { count: jest.fn(async () => 0) },
     };
 
     const prisma: any = {
@@ -340,8 +334,7 @@ describe('Module 3 Purchase Management Integration Flows', () => {
       isDeleted: false,
     });
     const core = new PurchaseCoreService(prisma);
-    const approvals = new PurchaseApprovalsService(prisma, core);
-    const procurement = new PurchaseProcurementService(prisma, core, approvals);
+    const procurement = new PurchaseProcurementService(prisma, core);
 
     const result = await procurement.listRequests(user, {});
 
@@ -351,12 +344,11 @@ describe('Module 3 Purchase Management Integration Flows', () => {
     ]);
   });
 
-  it('Flow 1 & 3: Full PR -> PO -> Partial GRN (Accrual) -> Partial Invoice -> Partial Payment', async () => {
+  it('Flow 1 & 3: Full PR -> PO -> Partial GRN (Accrual) -> Partial Invoice', async () => {
     const { prisma, state } = makeMockPrisma();
     const core = new PurchaseCoreService(prisma);
-    const approvals = new PurchaseApprovalsService(prisma, core);
-    const proc = new PurchaseProcurementService(prisma, core, approvals);
-    const billing = new PurchaseBillingService(prisma, core, approvals);
+    const proc = new PurchaseProcurementService(prisma, core);
+    const billing = new PurchaseBillingService(prisma, core);
 
     // 1. PR Create -> Submit (auto-approved when no rules)
     const pr = await proc.createRequest(user, { items: [{ variantId: 'v1', quantity: '10', preferredRate: '100' }] });
@@ -365,9 +357,12 @@ describe('Module 3 Purchase Management Integration Flows', () => {
 
     // 2. Convert PR to PO
     const po = await proc.convertRequestToPo(user, pr.id, { supplierId: 'sup1' });
+    expect(po.items[0]).not.toHaveProperty('discountType');
+    expect(po.items[0]).not.toHaveProperty('discountValue');
+    expect(po.items[0]).not.toHaveProperty('discountAmount');
     expect(state.prs.get(pr.id).status).toBe('CONVERTED');
     await proc.submitOrder(user, po.id);
-    expect(state.pos.get(po.id).status).toBe('APPROVED');
+    expect(state.pos.get(po.id).status).toBe('ORDER_PLACED');
 
     // 3. Partial GRN (6 of 10 received) + GRN Accrual Journal
     const grn = await proc.createGrn(user, {
@@ -391,53 +386,14 @@ describe('Module 3 Purchase Management Integration Flows', () => {
       items: [{ variantId: 'v1', grnItemId: grn.items[0].id, purchaseOrderItemId: po.items[0].id, quantity: '4', unitRate: '100', taxRate: '18' }],
     });
     expect(inv.status).toBe('APPROVED');
+    expect(inv.items[0]).not.toHaveProperty('discountAmount');
+    expect(inv.items[0]).not.toHaveProperty('discountType');
+    expect(inv.items[0]).not.toHaveProperty('discountValue');
     expect(state.stockBalances.get('br1:v1').quantity).toBe('6.00'); // Still 6!
 
-    // 5. Partial Payment
-    await billing.createPayment(user, {
-      supplierId: 'sup1',
-      amount: '200',
-      allocations: [{ purchaseInvoiceId: inv.id, amount: '200' }],
-    });
-    expect(state.invoices.get(inv.id).status).toBe('PARTIALLY_PAID');
   });
 
-  it('Flow 2 & 4 & 6: Direct Invoice -> Purchase Return (balanced reversal) -> Cancellation check', async () => {
-    const { prisma, state } = makeMockPrisma();
-    const core = new PurchaseCoreService(prisma);
-    const approvals = new PurchaseApprovalsService(prisma, core);
-    const billing = new PurchaseBillingService(prisma, core, approvals);
-
-    const inv = await billing.createInvoice(user, {
-      supplierId: 'sup1',
-      mode: 'DIRECT',
-      supplierBillNumber: 'DIRECT-001',
-      post: true,
-      items: [{ variantId: 'v1', quantity: '5', unitRate: '100', taxRate: '18' }],
-    });
-    expect(state.stockBalances.get('br1:v1').quantity).toBe('5.00');
-
-    // Cannot cancel invoice if return exists; first test return
-    const ret = await billing.createReturn(user, {
-      purchaseInvoiceId: inv.id,
-      reason: 'Defective',
-      items: [{ variantId: 'v1', quantity: '2' }],
-    });
-    const postedRet = await billing.postReturn(user, ret.id);
-    expect(postedRet.status).toBe('POSTED');
-    expect(state.stockBalances.get('br1:v1').quantity).toBe('3.00');
-
-    // Verify journal lines for return are balanced (AP debit = Inventory + CGST + SGST credit)
-    const retLines = state.journalLines.filter((l: any) => l.journalEntryId === postedRet.journalEntryId);
-    const dr = retLines.reduce((s: number, l: any) => s + Number(l.debit), 0);
-    const cr = retLines.reduce((s: number, l: any) => s + Number(l.credit), 0);
-    expect(Math.abs(dr - cr)).toBeLessThan(0.01);
-
-    // Cancellation of invoice blocked because return exists
-    await expect(billing.cancelInvoice(user, inv.id, 'Cancel test')).rejects.toThrow(BadRequestException);
-  });
-
-  it('Flow 5: Approval rejection requires mandatory reason and blocks downstream conversion', async () => {
+  it('submits PRs and POs directly without approval workflow', async () => {
     const { prisma, state } = makeMockPrisma();
     state.approvalRules.push({
       id: 'rule1',
@@ -450,22 +406,46 @@ describe('Module 3 Purchase Management Integration Flows', () => {
     });
 
     const core = new PurchaseCoreService(prisma);
-    const approvals = new PurchaseApprovalsService(prisma, core);
-    const proc = new PurchaseProcurementService(prisma, core, approvals);
+    const proc = new PurchaseProcurementService(prisma, core);
 
     const pr = await proc.createRequest(user, { items: [{ variantId: 'v1', quantity: '5', preferredRate: '100' }] });
     const submitted = await proc.submitRequest(user, pr.id);
-    expect(submitted.status).toBe('PENDING_APPROVAL');
+    expect(submitted.status).toBe('APPROVED');
+    expect(state.approvalRequests.size).toBe(0);
 
-    // Downstream conversion blocked before approval
-    await expect(proc.convertRequestToPo(user, pr.id, { supplierId: 'sup1' })).rejects.toThrow(BadRequestException);
+    const po = await proc.convertRequestToPo(user, pr.id, { supplierId: 'sup1' });
+    await proc.submitOrder(user, po.id);
+    expect(state.pos.get(po.id).status).toBe('ORDER_PLACED');
+    expect(state.approvalRequests.size).toBe(0);
+  });
 
-    // Reject without reason fails
-    const req = Array.from(state.approvalRequests.values())[0] as any;
-    await expect(approvals.actOnRequest(user, req.id, 'REJECT', {})).rejects.toThrow(BadRequestException);
+  it('requires an uploaded bill before recording an invoice-only payment', async () => {
+    const { prisma, state } = makeMockPrisma();
+    const core = new PurchaseCoreService(prisma);
+    const billing = new PurchaseBillingService(prisma, core);
+    const invoice = await billing.createInvoice(user, {
+      supplierId: 'sup1',
+      mode: 'DIRECT',
+      supplierBillNumber: 'BILL-PAY-1',
+      post: true,
+      items: [{ itemName: 'Paper', quantity: '1', unitRate: '100', taxRate: '0' }],
+    });
 
-    // Reject with reason updates PR to REJECTED
-    await approvals.actOnRequest(user, req.id, 'REJECT', { reason: 'Budget exceeded' });
-    expect(state.prs.get(pr.id).status).toBe('REJECTED');
+    await expect(
+      billing.recordInvoicePayment(user, invoice.id, { amount: '40.00' }),
+    ).rejects.toThrow('Upload the supplier bill');
+
+    state.attachmentCount = 1;
+    await expect(
+      billing.recordInvoicePayment(user, invoice.id, { amount: '101.00' }),
+    ).rejects.toThrow('exceeds the invoice balance');
+    await billing.recordInvoicePayment(user, invoice.id, { amount: '40.00' });
+
+    const paidInvoice = state.invoices.get(invoice.id);
+    expect(paidInvoice.status).toBe('PARTIALLY_PAID');
+    expect(paidInvoice.paidAmount).toBe('40.00');
+    expect(paidInvoice.balanceAmount).toBe('60.00');
+    expect(state.payments[0].paymentType).toBe('BILL_PAYMENT');
+    expect(state.payments[0].allocations).toHaveLength(1);
   });
 });

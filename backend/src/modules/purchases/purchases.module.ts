@@ -3,7 +3,6 @@ import { PurchasesController } from './purchases.controller';
 import { PurchaseCoreService } from './services/purchase-core.service';
 import { PurchaseProcurementService } from './services/purchase-procurement.service';
 import { PurchaseBillingService } from './services/purchase-billing.service';
-import { PurchaseApprovalsService } from './services/purchase-approvals.service';
 import { PurchaseAttachmentsService } from './services/purchase-attachments.service';
 import { PurchaseFinancialsReportsService } from './services/purchase-financials-reports.service';
 
@@ -13,7 +12,6 @@ import { PurchaseFinancialsReportsService } from './services/purchase-financials
     PurchaseCoreService,
     PurchaseProcurementService,
     PurchaseBillingService,
-    PurchaseApprovalsService,
     PurchaseAttachmentsService,
     PurchaseFinancialsReportsService,
   ],
@@ -21,7 +19,6 @@ import { PurchaseFinancialsReportsService } from './services/purchase-financials
     PurchaseCoreService,
     PurchaseProcurementService,
     PurchaseBillingService,
-    PurchaseApprovalsService,
     PurchaseAttachmentsService,
     PurchaseFinancialsReportsService,
   ],

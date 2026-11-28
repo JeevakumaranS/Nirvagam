@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
+import { formatSupplierDisplayName } from '@/lib/formatters';
 import { Modal } from '@/components/ui/modal';
 import { Button } from '@/components/ui/button';
 import { Printer } from 'lucide-react';
@@ -9,7 +10,7 @@ import { Printer } from 'lucide-react';
 interface PurchasePrintModalProps {
   isOpen: boolean;
   onClose: () => void;
-  documentType: 'PO' | 'GRN' | 'INVOICE' | 'RETURN' | 'PAYMENT';
+  documentType: 'PO' | 'GRN' | 'INVOICE';
   documentId: string | null;
 }
 
@@ -33,8 +34,6 @@ export function PurchasePrintModal({ isOpen, onClose, documentType, documentId }
     PO: 'PURCHASE ORDER',
     GRN: 'GOODS RECEIVED NOTE (GRN)',
     INVOICE: 'PURCHASE INVOICE / VENDOR BILL',
-    RETURN: 'PURCHASE RETURN / DEBIT NOTE',
-    PAYMENT: 'SUPPLIER PAYMENT VOUCHER',
   };
 
   return (
@@ -63,10 +62,10 @@ export function PurchasePrintModal({ isOpen, onClose, documentType, documentId }
               <div className="text-right">
                 <div className="text-xs font-bold tracking-wider text-blue-700">{titles[documentType]}</div>
                 <div className="font-mono font-semibold text-sm mt-1">
-                  {doc.orderNumber || doc.grnNumber || doc.invoiceNumber || doc.returnNumber || doc.paymentNumber}
+                  {doc.orderNumber || doc.grnNumber || doc.invoiceNumber}
                 </div>
                 <div className="text-[11px] text-slate-500 mt-0.5">
-                  Date: {new Date(doc.orderDate || doc.grnDate || doc.invoiceDate || doc.returnDate || doc.paymentDate).toLocaleDateString()}
+                  Date: {new Date(doc.orderDate || doc.grnDate || doc.invoiceDate).toLocaleDateString()}
                 </div>
               </div>
             </div>
@@ -75,7 +74,7 @@ export function PurchasePrintModal({ isOpen, onClose, documentType, documentId }
             <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded border border-slate-100">
               <div>
                 <div className="text-[10px] font-semibold uppercase text-slate-500">Supplier</div>
-                <div className="font-semibold text-slate-900">{doc.supplier?.name}</div>
+                <div className="font-semibold text-slate-900">{formatSupplierDisplayName(doc.supplier)}</div>
                 <div className="text-[11px] text-slate-600">{doc.supplier?.addressStreet}, {doc.supplier?.city}, {doc.supplier?.state}</div>
                 {doc.supplier?.gstin && <div className="font-mono text-[11px] text-slate-700">GSTIN: {doc.supplier.gstin}</div>}
               </div>

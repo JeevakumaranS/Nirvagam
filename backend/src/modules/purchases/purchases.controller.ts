@@ -32,20 +32,15 @@ import { RequirePermissions } from "../../common/decorators/permissions.decorato
 import { PurchaseCoreService } from "./services/purchase-core.service";
 import { PurchaseProcurementService } from "./services/purchase-procurement.service";
 import { PurchaseBillingService } from "./services/purchase-billing.service";
-import { PurchaseApprovalsService } from "./services/purchase-approvals.service";
 import { PurchaseAttachmentsService } from "./services/purchase-attachments.service";
 import { PurchaseFinancialsReportsService } from "./services/purchase-financials-reports.service";
 import {
-  AdjustAdvancePaymentDto,
-  ApprovalActionDto,
   CancelReasonDto,
-  CreateApprovalRuleDto,
+  CreateInvoicePaymentDto,
   CreateGrnDto,
   CreatePurchaseInvoiceDto,
   CreatePurchaseOrderDto,
-  CreatePurchasePaymentDto,
   CreatePurchaseRequestDto,
-  CreatePurchaseReturnDto,
   UpdateGrnDto,
   UpdatePurchaseInvoiceDto,
   UpdatePurchaseOrderDto,
@@ -63,7 +58,6 @@ export class PurchasesController {
     private readonly core: PurchaseCoreService,
     private readonly procurement: PurchaseProcurementService,
     private readonly billing: PurchaseBillingService,
-    private readonly approvals: PurchaseApprovalsService,
     private readonly attachments: PurchaseAttachmentsService,
     private readonly financials: PurchaseFinancialsReportsService,
   ) {}
@@ -145,22 +139,6 @@ export class PurchasesController {
     return this.procurement.submitRequest(user, id);
   }
 
-  @Post("requests/:id/approve")
-  @RequirePermissions("purchase_request:approve")
-  approveRequest(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.procurement.approveRequest(user, id);
-  }
-
-  @Post("requests/:id/reject")
-  @RequirePermissions("purchase_request:approve")
-  rejectRequest(
-    @CurrentUser() user: AuthUser,
-    @Param("id") id: string,
-    @Body() dto: CancelReasonDto,
-  ) {
-    return this.procurement.rejectRequest(user, id, dto.reason);
-  }
-
   @Post("requests/:id/cancel")
   @RequirePermissions("purchase_request:cancel")
   cancelRequest(
@@ -221,12 +199,6 @@ export class PurchasesController {
   @RequirePermissions("purchase_order:edit")
   submitOrder(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.procurement.submitOrder(user, id);
-  }
-
-  @Post("orders/:id/approve")
-  @RequirePermissions("purchase_order:approve")
-  approveOrder(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.procurement.approveOrder(user, id);
   }
 
   @Post("orders/:id/close")
@@ -344,6 +316,16 @@ export class PurchasesController {
     return this.billing.createInvoice(user, dto);
   }
 
+  @Post("invoices/:id/payments")
+  @RequirePermissions("purchase_payment:create")
+  recordInvoicePayment(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body() dto: CreateInvoicePaymentDto,
+  ) {
+    return this.billing.recordInvoicePayment(user, id, dto);
+  }
+
   @Put("invoices/:id")
   @RequirePermissions("purchase_invoice:edit")
   updateInvoice(
@@ -354,21 +336,9 @@ export class PurchasesController {
     return this.billing.updateInvoice(user, id, dto);
   }
 
-  @Post("invoices/:id/submit")
-  @RequirePermissions("purchase_invoice:edit")
-  submitInvoice(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.billing.submitInvoice(user, id);
-  }
-
   @Post("invoices/:id/post")
   @RequirePermissions("purchase_invoice:post")
   postInvoice(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.billing.postInvoice(user, id);
-  }
-
-  @Post("invoices/:id/approve")
-  @RequirePermissions("purchase_invoice:approve")
-  approveInvoice(@CurrentUser() user: AuthUser, @Param("id") id: string) {
     return this.billing.postInvoice(user, id);
   }
 
@@ -382,173 +352,7 @@ export class PurchasesController {
     return this.billing.cancelInvoice(user, id, dto.reason);
   }
 
-  /* ---------------------------- PURCHASE RETURNS ---------------------------- */
-
-  @Get("returns")
-  @RequirePermissions("purchase_return:view")
-  listReturns(
-    @CurrentUser() user: AuthUser,
-    @Query() query: PaginationParams & Record<string, any>,
-  ) {
-    return this.billing.listReturns(user, query);
-  }
-
-  @Get("returns/:id")
-  @RequirePermissions("purchase_return:view")
-  getReturn(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.billing.getReturn(user, id);
-  }
-
-  @Post("returns")
-  @RequirePermissions("purchase_return:create")
-  createReturn(
-    @CurrentUser() user: AuthUser,
-    @Body() dto: CreatePurchaseReturnDto,
-  ) {
-    return this.billing.createReturn(user, dto);
-  }
-
-  @Post("returns/:id/approve")
-  @RequirePermissions("purchase_return:approve")
-  approveReturn(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.billing.approveReturn(user, id);
-  }
-
-  @Post("returns/:id/post")
-  @RequirePermissions("purchase_return:post")
-  postReturn(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.billing.postReturn(user, id);
-  }
-
-  /* ---------------------------- PURCHASE PAYMENTS --------------------------- */
-
-  @Get("payments")
-  @RequirePermissions("purchase_payment:view")
-  listPayments(
-    @CurrentUser() user: AuthUser,
-    @Query() query: PaginationParams & Record<string, any>,
-  ) {
-    return this.billing.listPayments(user, query);
-  }
-
-  @Get("payments/:id")
-  @RequirePermissions("purchase_payment:view")
-  getPayment(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.billing.getPayment(user, id);
-  }
-
-  @Post("payments")
-  @RequirePermissions("purchase_payment:create")
-  createPayment(
-    @CurrentUser() user: AuthUser,
-    @Body() dto: CreatePurchasePaymentDto,
-  ) {
-    return this.billing.createPayment(user, dto);
-  }
-
-  @Post("payments/:id/adjust-advance")
-  @RequirePermissions("purchase_payment:edit")
-  adjustAdvance(
-    @CurrentUser() user: AuthUser,
-    @Param("id") id: string,
-    @Body() dto: AdjustAdvancePaymentDto,
-  ) {
-    return this.billing.adjustAdvance(user, id, dto);
-  }
-
-  /* --------------------------- APPROVALS & INBOX ---------------------------- */
-
-  @Get("approvals/rules")
-  @RequirePermissions("purchase_approval:view")
-  listApprovalRules(@CurrentUser() user: AuthUser) {
-    return this.approvals.listRules(user);
-  }
-
-  @Post("approvals/rules")
-  @RequirePermissions("purchase_approval:create")
-  createApprovalRule(
-    @CurrentUser() user: AuthUser,
-    @Body() dto: CreateApprovalRuleDto,
-  ) {
-    return this.approvals.createRule(user, dto);
-  }
-
-  @Delete("approvals/rules/:id")
-  @RequirePermissions("purchase_approval:delete")
-  deleteApprovalRule(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.approvals.deleteRule(user, id);
-  }
-
-  @Get("approvals/requests")
-  @RequirePermissions("purchase_approval:view")
-  listApprovalRequests(
-    @CurrentUser() user: AuthUser,
-    @Query("status") status?: string,
-  ) {
-    return this.approvals.listRequests(user, status);
-  }
-
-  @Get("approvals/timeline/:documentType/:documentId")
-  @RequirePermissions("purchase_approval:view")
-  getTimeline(
-    @CurrentUser() user: AuthUser,
-    @Param("documentType") documentType: string,
-    @Param("documentId") documentId: string,
-  ) {
-    return this.approvals.getDocumentTimeline(user, documentType, documentId);
-  }
-
-  @Post("approvals/requests/:id/approve")
-  @RequirePermissions("purchase_approval:approve")
-  actApprove(
-    @CurrentUser() user: AuthUser,
-    @Param("id") id: string,
-    @Body() dto: ApprovalActionDto,
-  ) {
-    return this.approvals.actOnRequest(user, id, "APPROVE", dto);
-  }
-
-  @Post("approvals/requests/:id/reject")
-  @RequirePermissions("purchase_approval:approve")
-  actReject(
-    @CurrentUser() user: AuthUser,
-    @Param("id") id: string,
-    @Body() dto: ApprovalActionDto,
-  ) {
-    return this.approvals.actOnRequest(user, id, "REJECT", dto);
-  }
-
-  @Post("approvals/requests/:id/send-back")
-  @RequirePermissions("purchase_approval:approve")
-  actSendBack(
-    @CurrentUser() user: AuthUser,
-    @Param("id") id: string,
-    @Body() dto: ApprovalActionDto,
-  ) {
-    return this.approvals.actOnRequest(user, id, "SEND_BACK", dto);
-  }
-
-  @Post("approvals/requests/:id/delegate")
-  @RequirePermissions("purchase_approval:approve")
-  actDelegate(
-    @CurrentUser() user: AuthUser,
-    @Param("id") id: string,
-    @Body() dto: ApprovalActionDto,
-  ) {
-    return this.approvals.actOnRequest(user, id, "DELEGATE", dto);
-  }
-
-  @Get("notifications")
-  listNotifications(@CurrentUser() user: AuthUser) {
-    return this.approvals.listNotifications(user);
-  }
-
-  @Post("notifications/:id/read")
-  markNotificationRead(@CurrentUser() user: AuthUser, @Param("id") id: string) {
-    return this.approvals.markNotificationRead(user, id);
-  }
-
-  /* ---------------------- SUPPLIER FINANCIALS & REPORTS --------------------- */
+  /* -------------------------- SUPPLIER SELECTION ---------------------------- */
 
   @Get("suppliers")
   @RequirePermissions("purchase_invoice:view")
@@ -559,57 +363,12 @@ export class PurchasesController {
     return this.financials.searchSuppliersWithMetrics(user, query);
   }
 
-  @Get("suppliers/:id/ledger")
-  @RequirePermissions("purchase_report:view")
-  getSupplierLedger(
-    @CurrentUser() user: AuthUser,
-    @Param("id") id: string,
-    @Query() query: { from?: string; to?: string },
-  ) {
-    return this.financials.getSupplierLedger(user, id, query);
-  }
-
-  @Get("outstanding")
-  @RequirePermissions("purchase_report:view")
-  getOutstanding(
-    @CurrentUser() user: AuthUser,
-    @Query("supplierId") supplierId?: string,
-  ) {
-    return this.financials.getSupplierOutstanding(user, supplierId);
-  }
-
-  @Get("history")
-  @RequirePermissions("purchase_report:view")
-  getHistory(
-    @CurrentUser() user: AuthUser,
-    @Query()
-    query: {
-      supplierId?: string;
-      variantId?: string;
-      from?: string;
-      to?: string;
-      status?: string;
-    },
-  ) {
-    return this.financials.getPurchaseHistory(user, query);
-  }
-
-  @Get("reports/:reportType")
-  @RequirePermissions("purchase_report:view")
-  getReport(
-    @CurrentUser() user: AuthUser,
-    @Param("reportType") reportType: any,
-    @Query() query: { from?: string; to?: string },
-  ) {
-    return this.financials.getReport(user, reportType, query);
-  }
-
   @Get("print/:documentType/:id")
   @RequirePermissions("purchase_invoice:print")
   getPrintData(
     @CurrentUser() user: AuthUser,
     @Param("documentType")
-    documentType: "PO" | "GRN" | "INVOICE" | "RETURN" | "PAYMENT",
+    documentType: "PO" | "GRN" | "INVOICE",
     @Param("id") id: string,
   ) {
     return this.financials.getPrintData(user, documentType, id);

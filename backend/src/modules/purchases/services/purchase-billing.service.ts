@@ -3,12 +3,10 @@ import { calculatePurchaseDocument, PaginationParams, PurchaseCalculationLine } 
 import { PrismaService } from '../../../prisma/prisma.service';
 import { assertPurchaseTransition } from '../purchase-status';
 import { PurchaseCoreService, JournalLineInput } from './purchase-core.service';
-import { PurchaseApprovalsService } from './purchase-approvals.service';
+import { PURCHASE_INVOICE_BILL_MIME_TYPES } from './purchase-attachments.service';
 import {
-  AdjustAdvancePaymentDto,
+  CreateInvoicePaymentDto,
   CreatePurchaseInvoiceDto,
-  CreatePurchasePaymentDto,
-  CreatePurchaseReturnDto,
   UpdatePurchaseInvoiceDto,
 } from '../dto/purchase.dto';
 
@@ -67,10 +65,8 @@ const purchaseInvoiceItemScalars = {
   purchaseOrderItemId: true,
   description: true,
   unitRate: true,
-  discountAmount: true,
   quantity: true,
   taxableValue: true,
-  gstRate: true,
   taxRate: true,
   cgstAmount: true,
   sgstAmount: true,
@@ -78,9 +74,6 @@ const purchaseInvoiceItemScalars = {
   vatAmount: true,
   landedCost: true,
   totalAmount: true,
-  batchNumber: true,
-  serialNumber: true,
-  expiryDate: true,
 } as const;
 
 const purchaseInvoiceItemsWithVariants = {
@@ -90,72 +83,11 @@ const purchaseInvoiceItemsWithVariants = {
   },
 } as const;
 
-const purchaseReturnScalars = {
-  id: true,
-  businessId: true,
-  branchId: true,
-  supplierId: true,
-  purchaseInvoiceId: true,
-  journalEntryId: true,
-  postedAt: true,
-  cancelledAt: true,
-  cancellationReason: true,
-  returnNumber: true,
-  returnDate: true,
-  currencyCode: true,
-  status: true,
-  taxableAmount: true,
-  totalTax: true,
-  grandTotal: true,
-  cgstAmount: true,
-  sgstAmount: true,
-  igstAmount: true,
-  vatAmount: true,
-  calculationRule: true,
-  taxSummary: true,
-  reason: true,
-  createdById: true,
-  updatedById: true,
-  version: true,
-  isDeleted: true,
-  createdAt: true,
-  updatedAt: true,
-} as const;
-
-const purchaseReturnItemScalars = {
-  id: true,
-  purchaseReturnId: true,
-  variantId: true,
-  itemName: true,
-  unit: true,
-  invoiceItemId: true,
-  description: true,
-  quantity: true,
-  unitRate: true,
-  discountAmount: true,
-  taxableValue: true,
-  taxRate: true,
-  cgstAmount: true,
-  sgstAmount: true,
-  igstAmount: true,
-  vatAmount: true,
-  landedCost: true,
-  totalAmount: true,
-} as const;
-
-const purchaseReturnItemsWithVariants = {
-  select: {
-    ...purchaseReturnItemScalars,
-    variant: { include: { product: true } },
-  },
-} as const;
-
 @Injectable()
 export class PurchaseBillingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly core: PurchaseCoreService,
-    private readonly approvals: PurchaseApprovalsService,
   ) {}
 
   /* -------------------------------------------------------------------------- */
@@ -313,8 +245,6 @@ export class PurchaseBillingService {
         quantity: String(item.quantity),
         rate: String(item.unitRate),
         weight: item.weight ? String(item.weight) : undefined,
-        lineDiscountType: item.discountType || 'AMOUNT',
-        lineDiscountValue: String(item.discountValue || 0),
         taxRate: String(item.taxRate || 0),
       }));
 
@@ -385,9 +315,6 @@ export class PurchaseBillingService {
                 description: item.description || null,
                 quantity: String(item.quantity),
                 unitRate: String(item.unitRate),
-                discountType: item.discountType || 'AMOUNT',
-                discountValue: String(item.discountValue || 0),
-                discountAmount: c.lineDiscount,
                 taxableValue: c.taxableValue,
                 taxRate: String(item.taxRate || 0),
                 cgstAmount: c.cgstAmount,
@@ -445,8 +372,6 @@ export class PurchaseBillingService {
         quantity: String(item.quantity),
         rate: String(item.unitRate),
         weight: item.weight ? String(item.weight) : undefined,
-        lineDiscountType: item.discountType || 'AMOUNT',
-        lineDiscountValue: String(item.discountValue || 0),
         taxRate: String(item.taxRate || 0),
       }));
 
@@ -508,9 +433,6 @@ export class PurchaseBillingService {
                 description: item.description || null,
                 quantity: String(item.quantity),
                 unitRate: String(item.unitRate),
-                discountType: item.discountType || 'AMOUNT',
-                discountValue: String(item.discountValue || 0),
-                discountAmount: c.lineDiscount,
                 taxableValue: c.taxableValue,
                 taxRate: String(item.taxRate || 0),
                 cgstAmount: c.cgstAmount,
@@ -541,32 +463,135 @@ export class PurchaseBillingService {
     });
   }
 
-  async submitInvoice(user: any, id: string) {
-    return this.prisma.$transaction(async (tx) => {
-      const inv = await tx.purchaseInvoice.findFirst({ where: { id, businessId: user.businessId, isDeleted: false } });
-      if (!inv) throw new NotFoundException('Purchase invoice not found');
-      assertPurchaseTransition('INVOICE', inv.status, 'PENDING_APPROVAL');
-
-      const approval = await this.approvals.submitForApproval(tx, user, {
-        documentType: 'INVOICE',
-        documentId: inv.id,
-        documentNumber: inv.invoiceNumber,
-        amount: Number(inv.grandTotal),
-      });
-
-      if (approval.autoApproved) {
-        return this.postInvoiceInTx(tx, user, inv.id);
-      }
-
-      return tx.purchaseInvoice.update({
-        where: { id },
-        data: { status: 'PENDING_APPROVAL', updatedById: user.id, version: { increment: 1 } },
-      });
-    });
-  }
-
   async postInvoice(user: any, id: string) {
     return this.prisma.$transaction((tx) => this.postInvoiceInTx(tx, user, id));
+  }
+
+  async recordInvoicePayment(user: any, invoiceId: string, dto: CreateInvoicePaymentDto) {
+    const branchId = this.core.requireBranch(user);
+    const rawAmount = Number(dto.amount);
+    const amount = Number(rawAmount.toFixed(2));
+    if (!Number.isFinite(rawAmount) || rawAmount <= 0 || Math.abs(rawAmount - amount) > 0.000001) {
+      throw new BadRequestException('Payment amount must be positive and have no more than two decimal places');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      if (dto.idempotencyKey) {
+        const existing = await tx.purchasePayment.findUnique({
+          where: { idempotencyKey: dto.idempotencyKey },
+          include: { allocations: true },
+        });
+        if (existing) return existing;
+      }
+
+      const invoice = await tx.purchaseInvoice.findFirst({
+        where: {
+          id: invoiceId,
+          businessId: user.businessId,
+          branchId,
+          isDeleted: false,
+        },
+      });
+      if (!invoice) throw new NotFoundException('Purchase invoice not found');
+      if (!['APPROVED', 'PARTIALLY_PAID'].includes(invoice.status)) {
+        throw new BadRequestException('Only posted, unpaid invoices can be paid');
+      }
+
+      const attachments = await tx.purchaseAttachment.count({
+        where: {
+          businessId: user.businessId,
+          branchId,
+          documentType: 'INVOICE',
+          documentId: invoiceId,
+          isDeleted: false,
+          mimeType: { in: PURCHASE_INVOICE_BILL_MIME_TYPES },
+        },
+      });
+      if (!attachments) {
+        throw new BadRequestException('Upload the supplier bill as a PDF or image before recording payment');
+      }
+
+      const balance = Number(invoice.balanceAmount);
+      if (!Number.isFinite(balance) || balance <= 0.01) {
+        throw new BadRequestException('This invoice has no outstanding balance');
+      }
+      if (amount > balance) {
+        throw new BadRequestException(`Payment amount exceeds the invoice balance (${balance.toFixed(2)})`);
+      }
+
+      const settings = await this.core.getSettings(user.businessId, tx);
+      const accounts = await this.core.resolveAccounts(tx, user.businessId, settings);
+      const cashAccount = dto.mode === 'CASH' ? accounts.cash : accounts.bank;
+      if (!accounts.ap || !cashAccount) {
+        throw new BadRequestException('Accounts Payable and Bank/Cash accounts must be configured');
+      }
+
+      const paymentDate = dto.paymentDate ? new Date(dto.paymentDate) : new Date();
+      const paymentNumber = await this.core.nextNumber(tx, user.businessId, branchId, 'PAY');
+      const supplier = await tx.supplier.findUnique({ where: { id: invoice.supplierId } });
+      const journal = await this.core.createBalancedJournal(tx, {
+        businessId: user.businessId,
+        entryNumber: `JRN-${paymentNumber}`,
+        date: paymentDate,
+        narration: `Supplier invoice payment ${paymentNumber} to ${supplier?.name || 'Supplier'}`,
+        reference: paymentNumber,
+        lines: [
+          { accountId: accounts.ap.id, debit: amount, credit: 0, notes: `Payment for ${invoice.invoiceNumber}` },
+          { accountId: cashAccount.id, debit: 0, credit: amount, notes: 'Payment outflow' },
+        ],
+      });
+
+      const paidAmount = Number(invoice.paidAmount) + amount;
+      const balanceAmount = Math.max(0, Number((balance - amount).toFixed(2)));
+      const invoiceUpdate = await tx.purchaseInvoice.updateMany({
+        where: {
+          id: invoice.id,
+          businessId: user.businessId,
+          branchId,
+          isDeleted: false,
+          version: invoice.version,
+          balanceAmount: invoice.balanceAmount,
+        },
+        data: {
+          paidAmount: paidAmount.toFixed(2),
+          balanceAmount: balanceAmount.toFixed(2),
+          status: balanceAmount <= 0.01 ? 'PAID' : 'PARTIALLY_PAID',
+          updatedById: user.id,
+          version: { increment: 1 },
+        },
+      });
+      if (invoiceUpdate.count !== 1) {
+        throw new ConflictException('Invoice balance changed; refresh the invoice before recording payment');
+      }
+
+      const payment = await tx.purchasePayment.create({
+        data: {
+          businessId: user.businessId,
+          branchId,
+          supplierId: invoice.supplierId,
+          paymentNumber,
+          paymentDate,
+          paymentType: 'BILL_PAYMENT',
+          mode: dto.mode || 'BANK_TRANSFER',
+          amount: amount.toFixed(2),
+          allocatedAmount: amount.toFixed(2),
+          unallocatedAmount: '0.00',
+          status: 'POSTED',
+          bankAccountId: cashAccount.id,
+          journalEntryId: journal.id,
+          reference: dto.reference || null,
+          notes: dto.notes || null,
+          idempotencyKey: dto.idempotencyKey || null,
+          createdById: user.id,
+          allocations: {
+            create: [{ purchaseInvoiceId: invoice.id, amount: amount.toFixed(2) }],
+          },
+        },
+        include: { allocations: true, supplier: true },
+      });
+
+      return payment;
+    });
   }
 
   private async postInvoiceInTx(tx: any, user: any, id: string) {
@@ -795,520 +820,4 @@ export class PurchaseBillingService {
   }
 
   /* -------------------------------------------------------------------------- */
-  /*                       PURCHASE RETURNS (DEBIT NOTES)                       */
-  /* -------------------------------------------------------------------------- */
-
-  async listReturns(user: any, params: PaginationParams & Record<string, any>) {
-    const page = Math.max(1, Number(params.page) || 1);
-    const limit = Math.min(100, Math.max(1, Number(params.limit) || 50));
-    const where: any = {
-      businessId: user.businessId,
-      isDeleted: false,
-      ...(user.branchId ? { branchId: user.branchId } : {}),
-      ...(params.status ? { status: params.status } : {}),
-      ...(params.supplierId ? { supplierId: params.supplierId } : {}),
-    };
-    const [total, data] = await Promise.all([
-      this.prisma.purchaseReturn.count({ where }),
-      this.prisma.purchaseReturn.findMany({
-        where,
-        skip: (page - 1) * limit,
-        take: limit,
-        select: {
-          ...purchaseReturnScalars,
-          supplier: true,
-          branch: true,
-          items: purchaseReturnItemsWithVariants,
-        },
-        orderBy: { createdAt: 'desc' },
-      }),
-    ]);
-    return {
-      data,
-      meta: { total, page, limit, totalPages: Math.ceil(total / limit), hasNextPage: page * limit < total, hasPrevPage: page > 1 },
-    };
-  }
-
-  async getReturn(user: any, id: string) {
-    const row = await this.prisma.purchaseReturn.findFirst({
-      where: { id, businessId: user.businessId, isDeleted: false, ...(user.branchId ? { branchId: user.branchId } : {}) },
-      select: {
-        ...purchaseReturnScalars,
-        supplier: true,
-        branch: true,
-        items: purchaseReturnItemsWithVariants,
-      },
-    });
-    if (!row) throw new NotFoundException('Purchase return not found');
-    return row;
-  }
-
-  async createReturn(user: any, dto: CreatePurchaseReturnDto) {
-    const branchId = this.core.requireBranch(user);
-    return this.prisma.$transaction(async (tx) => {
-      const invoice = await tx.purchaseInvoice.findFirst({
-        where: { id: dto.purchaseInvoiceId, businessId: user.businessId, isDeleted: false },
-        select: {
-          ...purchaseInvoiceScalars,
-          items: { select: purchaseInvoiceItemScalars },
-          supplier: true,
-          branch: true,
-        },
-      });
-      if (!invoice) throw new NotFoundException('Original purchase invoice not found');
-      if (!['APPROVED', 'PARTIALLY_PAID', 'PAID'].includes(invoice.status)) {
-        throw new BadRequestException('Only posted purchase invoices can be returned');
-      }
-
-      const settings = await this.core.getSettings(user.businessId, tx);
-      const lines: PurchaseCalculationLine[] = dto.items.map((item) => {
-        const orig = invoice.items.find(
-          (l: any) =>
-            (item.invoiceItemId && l.id === item.invoiceItemId) ||
-            (item.variantId && l.variantId === item.variantId) ||
-            (item.itemName && l.itemName === item.itemName),
-        );
-        if (!orig) throw new BadRequestException(`Item ${item.itemName || item.variantId} does not belong to the purchase invoice`);
-        if (Number(item.quantity) <= 0 || Number(item.quantity) > Number(orig.quantity)) {
-          throw new BadRequestException(`Invalid return quantity for item ${item.itemName || item.variantId}`);
-        }
-        return {
-          id: orig.id,
-          quantity: String(item.quantity),
-          rate: String(orig.unitRate),
-          lineDiscountType: 'AMOUNT',
-          lineDiscountValue: '0',
-          taxRate: String(orig.taxRate),
-        };
-      });
-
-      const calc = calculatePurchaseDocument(lines, {
-        businessStateCode: invoice.branch.stateCode,
-        supplierStateCode: invoice.supplier.stateCode || invoice.branch.stateCode,
-        taxRegime: settings.taxRegime,
-        pricesIncludeTax: false,
-      });
-
-      const returnNumber = dto.returnNumber || (await this.core.nextNumber(tx, user.businessId, branchId, 'PRN'));
-
-      return tx.purchaseReturn.create({
-        data: {
-          businessId: user.businessId,
-          branchId,
-          supplierId: invoice.supplierId,
-          purchaseInvoiceId: invoice.id,
-          returnNumber,
-          returnDate: new Date(dto.returnDate || new Date()),
-          currencyCode: invoice.currencyCode,
-          status: 'DRAFT',
-          taxableAmount: calc.taxableAmount,
-          cgstAmount: calc.cgstAmount,
-          sgstAmount: calc.sgstAmount,
-          igstAmount: calc.igstAmount,
-          vatAmount: calc.vatAmount,
-          totalTax: calc.totalTax,
-          grandTotal: calc.grandTotal,
-          calculationRule: calc.rule as any,
-          taxSummary: calc.taxSummary as any,
-          reason: dto.reason || null,
-          createdById: user.id,
-          items: {
-            create: dto.items.map((item, idx) => {
-              const orig = invoice.items.find(
-                (l: any) =>
-                  (item.invoiceItemId && l.id === item.invoiceItemId) ||
-                  (item.variantId && l.variantId === item.variantId) ||
-                  (item.itemName && l.itemName === item.itemName),
-              )!;
-              const c = calc.items[idx];
-              return {
-                variantId: orig.variantId || null,
-                itemName: orig.itemName || null,
-                invoiceItemId: orig.id,
-                quantity: String(item.quantity),
-                unitRate: String(orig.unitRate),
-                discountAmount: c.lineDiscount,
-                taxableValue: c.taxableValue,
-                taxRate: String(orig.taxRate),
-                cgstAmount: c.cgstAmount,
-                sgstAmount: c.sgstAmount,
-                igstAmount: c.igstAmount,
-                vatAmount: c.vatAmount,
-                totalAmount: c.totalAmount,
-              };
-            }),
-          },
-        },
-        select: {
-          ...purchaseReturnScalars,
-          items: true,
-          supplier: true,
-        },
-      });
-    });
-  }
-
-  async approveReturn(user: any, id: string) {
-    return this.prisma.$transaction(async (tx) => {
-      const ret = await tx.purchaseReturn.findFirst({
-        where: { id, businessId: user.businessId, isDeleted: false },
-        select: purchaseReturnScalars,
-      });
-      if (!ret) throw new NotFoundException('Purchase return not found');
-      assertPurchaseTransition('RETURN', ret.status, 'APPROVED');
-      return tx.purchaseReturn.update({
-        where: { id },
-        data: { status: 'APPROVED', updatedById: user.id, version: { increment: 1 } },
-        select: purchaseReturnScalars,
-      });
-    });
-  }
-
-  async postReturn(user: any, id: string) {
-    return this.prisma.$transaction(async (tx) => {
-      const doc = await tx.purchaseReturn.findFirst({
-        where: { id, businessId: user.businessId, isDeleted: false },
-        select: {
-          ...purchaseReturnScalars,
-          items: { select: purchaseReturnItemScalars },
-          supplier: true,
-        },
-      });
-      if (!doc) throw new NotFoundException('Purchase return not found');
-      if (doc.status === 'DRAFT') {
-        assertPurchaseTransition('RETURN', doc.status, 'APPROVED');
-      }
-      assertPurchaseTransition('RETURN', doc.status === 'DRAFT' ? 'APPROVED' : doc.status, 'POSTED');
-
-      const settings = await this.core.getSettings(user.businessId, tx);
-      const accounts = await this.core.resolveAccounts(tx, user.businessId, settings);
-      if (!accounts.ap || !accounts.inventory) {
-        throw new BadRequestException('Accounts Payable or Inventory/Purchase account is not configured');
-      }
-
-      for (const item of doc.items) {
-        if (item.variantId) {
-          await this.core.applyStockOut(tx, {
-            branchId: doc.branchId,
-            variantId: item.variantId,
-            quantity: Number(item.quantity),
-            unitCost: Number(item.unitRate),
-            costingMethod: settings.costingMethod,
-            blockOnInsufficient: settings.blockReturnOnInsufficientStock,
-            movementType: 'RETURN_OUT_DEBIT_NOTE',
-            referenceId: doc.id,
-            referenceDocumentType: 'PURCHASE_RETURN',
-            idempotencyKey: `RETURN:${doc.id}:${item.id}:POST`,
-            performedById: user.id,
-            notes: doc.reason || `Purchase return ${doc.returnNumber}`,
-          });
-        }
-      }
-
-      const journalLines: JournalLineInput[] = [
-        {
-          accountId: accounts.ap.id,
-          debit: Number(doc.grandTotal),
-          credit: 0,
-          notes: `Debit note to ${doc.supplier?.name || 'Supplier'}`,
-        },
-        {
-          accountId: accounts.inventory.id,
-          debit: 0,
-          credit: Number(doc.taxableAmount),
-          notes: `Purchase return inventory reversal (${doc.returnNumber})`,
-        },
-      ];
-      if (Number(doc.cgstAmount) > 0 && accounts.cgst) {
-        journalLines.push({ accountId: accounts.cgst.id, debit: 0, credit: Number(doc.cgstAmount), notes: 'Input CGST reversal' });
-      }
-      if (Number(doc.sgstAmount) > 0 && accounts.sgst) {
-        journalLines.push({ accountId: accounts.sgst.id, debit: 0, credit: Number(doc.sgstAmount), notes: 'Input SGST reversal' });
-      }
-      if (Number(doc.igstAmount) > 0 && accounts.igst) {
-        journalLines.push({ accountId: accounts.igst.id, debit: 0, credit: Number(doc.igstAmount), notes: 'Input IGST reversal' });
-      }
-      if (Number(doc.vatAmount) > 0 && accounts.vat) {
-        journalLines.push({ accountId: accounts.vat.id, debit: 0, credit: Number(doc.vatAmount), notes: 'Input VAT reversal' });
-      }
-
-      const journal = await this.core.createBalancedJournal(tx, {
-        businessId: doc.businessId,
-        entryNumber: `JRN-${doc.returnNumber}`,
-        date: doc.returnDate,
-        narration: `Purchase return ${doc.returnNumber} to ${doc.supplier?.name || 'Supplier'}`,
-        reference: doc.returnNumber,
-        lines: journalLines,
-      });
-
-      return tx.purchaseReturn.update({
-        where: { id: doc.id },
-        data: {
-          status: 'POSTED',
-          journalEntryId: journal.id,
-          postedAt: new Date(),
-          updatedById: user.id,
-          version: { increment: 1 },
-        },
-        select: {
-          ...purchaseReturnScalars,
-          items: true,
-          supplier: true,
-        },
-      });
-    });
-  }
-
-  /* -------------------------------------------------------------------------- */
-  /*                    PURCHASE PAYMENTS & ADVANCE ADJUSTMENT                  */
-  /* -------------------------------------------------------------------------- */
-
-  async listPayments(user: any, params: PaginationParams & Record<string, any>) {
-    const page = Math.max(1, Number(params.page) || 1);
-    const limit = Math.min(100, Math.max(1, Number(params.limit) || 50));
-    const where: any = {
-      businessId: user.businessId,
-      isDeleted: false,
-      ...(user.branchId ? { branchId: user.branchId } : {}),
-      ...(params.supplierId ? { supplierId: params.supplierId } : {}),
-      ...(params.paymentType ? { paymentType: params.paymentType } : {}),
-    };
-    const [total, data] = await Promise.all([
-      this.prisma.purchasePayment.count({ where }),
-      this.prisma.purchasePayment.findMany({
-        where,
-        skip: (page - 1) * limit,
-        take: limit,
-        include: { supplier: true, branch: true, allocations: { include: { purchaseInvoice: true } } },
-        orderBy: { createdAt: 'desc' },
-      }),
-    ]);
-    return {
-      data,
-      meta: { total, page, limit, totalPages: Math.ceil(total / limit), hasNextPage: page * limit < total, hasPrevPage: page > 1 },
-    };
-  }
-
-  async getPayment(user: any, id: string) {
-    const row = await this.prisma.purchasePayment.findFirst({
-      where: { id, businessId: user.businessId, isDeleted: false, ...(user.branchId ? { branchId: user.branchId } : {}) },
-      include: { supplier: true, branch: true, allocations: { include: { purchaseInvoice: true } } },
-    });
-    if (!row) throw new NotFoundException('Purchase payment not found');
-    return row;
-  }
-
-  async createPayment(user: any, dto: CreatePurchasePaymentDto) {
-    const branchId = this.core.requireBranch(user);
-    if (Number(dto.amount) <= 0) throw new BadRequestException('Payment amount must be positive');
-    if (dto.idempotencyKey) {
-      const existing = await this.prisma.purchasePayment.findUnique({
-        where: { idempotencyKey: dto.idempotencyKey },
-        include: { allocations: true, supplier: true },
-      });
-      if (existing) return existing;
-    }
-
-    return this.prisma.$transaction(async (tx) => {
-      const paymentType = dto.paymentType === 'ADVANCE' ? 'ADVANCE' : 'BILL_PAYMENT';
-      const allocations = dto.allocations || [];
-      if (paymentType === 'ADVANCE' && allocations.length > 0) {
-        throw new BadRequestException('Advance payments cannot be allocated to invoices at creation');
-      }
-
-      let allocated = 0;
-      for (const alloc of allocations) {
-        const inv = await tx.purchaseInvoice.findFirst({
-          where: { id: alloc.purchaseInvoiceId, supplierId: dto.supplierId, isDeleted: false },
-        });
-        if (!inv) throw new BadRequestException('Allocation references an invalid supplier invoice');
-        if (!['APPROVED', 'PARTIALLY_PAID'].includes(inv.status)) {
-          throw new BadRequestException(`Invoice ${inv.invoiceNumber} is not open for payment`);
-        }
-        const amt = Number(alloc.amount);
-        if (amt <= 0 || amt > Number(inv.balanceAmount) + 0.01) {
-          throw new BadRequestException(`Allocation (${amt}) exceeds invoice ${inv.invoiceNumber} outstanding (${inv.balanceAmount})`);
-        }
-        allocated += amt;
-      }
-      if (allocated > Number(dto.amount) + 0.01) {
-        throw new BadRequestException('Total allocations cannot exceed payment amount');
-      }
-
-      const settings = await this.core.getSettings(user.businessId, tx);
-      const accounts = await this.core.resolveAccounts(tx, user.businessId, settings);
-      const payDate = new Date(dto.paymentDate || new Date());
-      const paymentNumber = dto.paymentNumber || (await this.core.nextNumber(tx, user.businessId, branchId, 'PAY'));
-      const supplier = await tx.supplier.findUnique({ where: { id: dto.supplierId } });
-
-      const creditAccount = dto.bankAccountId
-        ? { id: dto.bankAccountId }
-        : dto.mode === 'CASH'
-          ? accounts.cash
-          : accounts.bank;
-      const debitAccount = paymentType === 'ADVANCE' ? accounts.advance : accounts.ap;
-      if (!creditAccount || !debitAccount) {
-        throw new BadRequestException('Supplier Payable/Advance or Bank/Cash account is not configured');
-      }
-
-      const journal = await this.core.createBalancedJournal(tx, {
-        businessId: user.businessId,
-        entryNumber: `JRN-${paymentNumber}`,
-        date: payDate,
-        narration: `${paymentType === 'ADVANCE' ? 'Supplier advance' : 'Supplier payment'} ${paymentNumber} to ${supplier?.name || 'Supplier'}`,
-        reference: paymentNumber,
-        lines: [
-          { accountId: debitAccount.id, debit: Number(dto.amount), credit: 0, notes: 'Supplier liability / advance' },
-          { accountId: creditAccount.id, debit: 0, credit: Number(dto.amount), notes: 'Payment outflow' },
-        ],
-      });
-
-      const payment = await tx.purchasePayment.create({
-        data: {
-          businessId: user.businessId,
-          branchId,
-          supplierId: dto.supplierId,
-          paymentNumber,
-          paymentDate: payDate,
-          paymentType,
-          mode: dto.mode || 'BANK_TRANSFER',
-          amount: String(dto.amount),
-          allocatedAmount: allocated.toFixed(2),
-          unallocatedAmount: Math.max(0, Number(dto.amount) - allocated).toFixed(2),
-          status: 'POSTED',
-          bankAccountId: creditAccount.id,
-          journalEntryId: journal.id,
-          reference: dto.reference || null,
-          notes: dto.notes || null,
-          idempotencyKey: dto.idempotencyKey || null,
-          createdById: user.id,
-          allocations: allocations.length
-            ? {
-                create: allocations.map((a) => ({
-                  purchaseInvoiceId: a.purchaseInvoiceId,
-                  amount: String(a.amount),
-                })),
-              }
-            : undefined,
-        },
-        include: { allocations: true, supplier: true },
-      });
-
-      for (const alloc of allocations) {
-        const inv = await tx.purchaseInvoice.findUnique({ where: { id: alloc.purchaseInvoiceId } });
-        if (inv) {
-          const paid = Number(inv.paidAmount) + Number(alloc.amount);
-          const balance = Math.max(0, Number(inv.grandTotal) - paid);
-          await tx.purchaseInvoice.update({
-            where: { id: inv.id },
-            data: {
-              paidAmount: paid.toFixed(2),
-              balanceAmount: balance.toFixed(2),
-              status: balance <= 0.01 ? 'PAID' : 'PARTIALLY_PAID',
-              updatedById: user.id,
-              version: { increment: 1 },
-            },
-          });
-        }
-      }
-
-      return payment;
-    });
-  }
-
-  async adjustAdvance(user: any, paymentId: string, dto: AdjustAdvancePaymentDto) {
-    return this.prisma.$transaction(async (tx) => {
-      const payment = await tx.purchasePayment.findFirst({
-        where: { id: paymentId, businessId: user.businessId, isDeleted: false },
-        include: { supplier: true },
-      });
-      if (!payment) throw new NotFoundException('Advance payment not found');
-      if (payment.paymentType !== 'ADVANCE' || payment.status !== 'POSTED') {
-        throw new BadRequestException('Only posted ADVANCE payments can be adjusted against invoices');
-      }
-
-      let adjustTotal = 0;
-      for (const alloc of dto.allocations) {
-        const inv = await tx.purchaseInvoice.findFirst({
-          where: { id: alloc.purchaseInvoiceId, supplierId: payment.supplierId, isDeleted: false },
-        });
-        if (!inv || !['APPROVED', 'PARTIALLY_PAID'].includes(inv.status)) {
-          throw new BadRequestException('Invalid or non-open invoice in advance adjustment');
-        }
-        const amt = Number(alloc.amount);
-        if (amt <= 0 || amt > Number(inv.balanceAmount) + 0.01) {
-          throw new BadRequestException(`Adjustment (${amt}) exceeds invoice outstanding (${inv.balanceAmount})`);
-        }
-        adjustTotal += amt;
-      }
-
-      if (adjustTotal > Number(payment.unallocatedAmount) + 0.01) {
-        throw new BadRequestException(`Total adjustment (${adjustTotal}) exceeds unallocated advance (${payment.unallocatedAmount})`);
-      }
-
-      const settings = await this.core.getSettings(user.businessId, tx);
-      const accounts = await this.core.resolveAccounts(tx, user.businessId, settings);
-      if (!accounts.ap || !accounts.advance) {
-        throw new BadRequestException('Accounts Payable and Supplier Advance accounts must be configured');
-      }
-
-      await this.core.createBalancedJournal(tx, {
-        businessId: user.businessId,
-        entryNumber: `ADJ-${payment.paymentNumber}-${Date.now().toString().slice(-4)}`,
-        date: new Date(),
-        narration: `Advance adjustment for ${payment.paymentNumber} (${payment.supplier?.name || 'Supplier'})`,
-        reference: payment.paymentNumber,
-        lines: [
-          { accountId: accounts.ap.id, debit: adjustTotal, credit: 0, notes: 'Clear Accounts Payable via advance' },
-          { accountId: accounts.advance.id, debit: 0, credit: adjustTotal, notes: 'Adjust Supplier Advance' },
-        ],
-      });
-
-      for (const alloc of dto.allocations) {
-        await tx.purchasePaymentAllocation.upsert({
-          where: {
-            purchasePaymentId_purchaseInvoiceId: {
-              purchasePaymentId: payment.id,
-              purchaseInvoiceId: alloc.purchaseInvoiceId,
-            },
-          },
-          create: {
-            purchasePaymentId: payment.id,
-            purchaseInvoiceId: alloc.purchaseInvoiceId,
-            amount: String(alloc.amount),
-          },
-          update: {
-            amount: { increment: Number(alloc.amount) },
-          },
-        });
-
-        const inv = await tx.purchaseInvoice.findUnique({ where: { id: alloc.purchaseInvoiceId } });
-        if (inv) {
-          const paid = Number(inv.paidAmount) + Number(alloc.amount);
-          const balance = Math.max(0, Number(inv.grandTotal) - paid);
-          await tx.purchaseInvoice.update({
-            where: { id: inv.id },
-            data: {
-              paidAmount: paid.toFixed(2),
-              balanceAmount: balance.toFixed(2),
-              status: balance <= 0.01 ? 'PAID' : 'PARTIALLY_PAID',
-              updatedById: user.id,
-              version: { increment: 1 },
-            },
-          });
-        }
-      }
-
-      return tx.purchasePayment.update({
-        where: { id: payment.id },
-        data: {
-          allocatedAmount: (Number(payment.allocatedAmount) + adjustTotal).toFixed(2),
-          unallocatedAmount: Math.max(0, Number(payment.unallocatedAmount) - adjustTotal).toFixed(2),
-          updatedById: user.id,
-          version: { increment: 1 },
-        },
-        include: { allocations: { include: { purchaseInvoice: true } }, supplier: true },
-      });
-    });
-  }
 }

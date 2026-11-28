@@ -3,7 +3,6 @@ import { calculatePurchaseDocument, PaginationParams, PurchaseCalculationLine } 
 import { PrismaService } from '../../../prisma/prisma.service';
 import { assertPurchaseTransition } from '../purchase-status';
 import { PurchaseCoreService } from './purchase-core.service';
-import { PurchaseApprovalsService } from './purchase-approvals.service';
 import {
   CreateGrnDto,
   CreatePurchaseOrderDto,
@@ -81,7 +80,6 @@ export class PurchaseProcurementService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly core: PurchaseCoreService,
-    private readonly approvals: PurchaseApprovalsService,
   ) {}
 
   /* -------------------------------------------------------------------------- */
@@ -216,47 +214,11 @@ export class PurchaseProcurementService {
         include: { items: true },
       });
       if (!pr) throw new NotFoundException('Purchase request not found');
-      assertPurchaseTransition('PR', pr.status, 'PENDING_APPROVAL');
-
-      const estimatedTotal = pr.items.reduce((s, i) => s + Number(i.quantity) * Number(i.preferredRate), 0);
-      const approval = await this.approvals.submitForApproval(tx, user, {
-        documentType: 'PR',
-        documentId: pr.id,
-        documentNumber: pr.requestNumber,
-        amount: estimatedTotal,
-        department: pr.department,
-      });
-
-      const nextStatus = approval.autoApproved ? 'APPROVED' : 'PENDING_APPROVAL';
-      return tx.purchaseRequest.update({
-        where: { id },
-        data: { status: nextStatus, updatedById: user.id, version: { increment: 1 } },
-        include: { items: true },
-      });
-    });
-  }
-
-  async approveRequest(user: any, id: string) {
-    return this.prisma.$transaction(async (tx) => {
-      const pr = await tx.purchaseRequest.findFirst({ where: { id, businessId: user.businessId, isDeleted: false } });
-      if (!pr) throw new NotFoundException('Purchase request not found');
       assertPurchaseTransition('PR', pr.status, 'APPROVED');
       return tx.purchaseRequest.update({
         where: { id },
         data: { status: 'APPROVED', updatedById: user.id, version: { increment: 1 } },
-      });
-    });
-  }
-
-  async rejectRequest(user: any, id: string, reason: string) {
-    if (!reason?.trim()) throw new BadRequestException('Rejection reason is mandatory');
-    return this.prisma.$transaction(async (tx) => {
-      const pr = await tx.purchaseRequest.findFirst({ where: { id, businessId: user.businessId, isDeleted: false } });
-      if (!pr) throw new NotFoundException('Purchase request not found');
-      assertPurchaseTransition('PR', pr.status, 'REJECTED');
-      return tx.purchaseRequest.update({
-        where: { id },
-        data: { status: 'REJECTED', notes: reason, updatedById: user.id, version: { increment: 1 } },
+        include: { items: true },
       });
     });
   }
@@ -281,7 +243,7 @@ export class PurchaseProcurementService {
         include: { items: { include: { variant: { include: { taxRate: true } } } } },
       });
       if (!pr) throw new NotFoundException('Purchase request not found');
-      if (pr.status !== 'APPROVED') {
+      if (!['APPROVED', 'PENDING_APPROVAL'].includes(pr.status)) {
         throw new BadRequestException('Purchase request must be APPROVED before converting to PO');
       }
 
@@ -386,8 +348,6 @@ export class PurchaseProcurementService {
       quantity: String(item.quantity),
       rate: String(item.unitRate),
       weight: item.weight ? String(item.weight) : undefined,
-      lineDiscountType: item.discountType || 'AMOUNT',
-      lineDiscountValue: String(item.discountValue || 0),
       taxRate: String(item.taxRate || 0),
     }));
 
@@ -453,9 +413,6 @@ export class PurchaseProcurementService {
                   ? String(item.overReceiptTolerance)
                   : null,
               unitRate: String(item.unitRate),
-              discountType: item.discountType || 'AMOUNT',
-              discountValue: String(item.discountValue || 0),
-              discountAmount: c.lineDiscount,
               taxableValue: c.taxableValue,
               taxRate: String(item.taxRate || 0),
               cgstAmount: c.cgstAmount,
@@ -516,8 +473,6 @@ export class PurchaseProcurementService {
         quantity: String(item.quantity),
         rate: String(item.unitRate),
         weight: item.weight ? String(item.weight) : undefined,
-        lineDiscountType: item.discountType || 'AMOUNT',
-        lineDiscountValue: String(item.discountValue || 0),
         taxRate: String(item.taxRate || 0),
       }));
 
@@ -576,9 +531,6 @@ export class PurchaseProcurementService {
                 quantity: String(item.quantity),
                 overReceiptTolerance: item.overReceiptTolerance !== undefined ? String(item.overReceiptTolerance) : null,
                 unitRate: String(item.unitRate),
-                discountType: item.discountType || 'AMOUNT',
-                discountValue: String(item.discountValue || 0),
-                discountAmount: c.lineDiscount,
                 taxableValue: c.taxableValue,
                 taxRate: String(item.taxRate || 0),
                 cgstAmount: c.cgstAmount,
@@ -620,35 +572,10 @@ export class PurchaseProcurementService {
         select: purchaseOrderScalars,
       });
       if (!po) throw new NotFoundException('Purchase order not found');
-      assertPurchaseTransition('PO', po.status, 'PENDING_APPROVAL');
-
-      const approval = await this.approvals.submitForApproval(tx, user, {
-        documentType: 'PO',
-        documentId: po.id,
-        documentNumber: po.orderNumber,
-        amount: Number(po.grandTotal),
-      });
-
-      const nextStatus = approval.autoApproved ? 'APPROVED' : 'PENDING_APPROVAL';
+      assertPurchaseTransition('PO', po.status, 'ORDER_PLACED');
       return tx.purchaseOrder.update({
         where: { id },
-        data: { status: nextStatus, updatedById: user.id, version: { increment: 1 } },
-        select: purchaseOrderScalars,
-      });
-    });
-  }
-
-  async approveOrder(user: any, id: string) {
-    return this.prisma.$transaction(async (tx) => {
-      const po = await tx.purchaseOrder.findFirst({
-        where: { id, businessId: user.businessId, isDeleted: false },
-        select: purchaseOrderScalars,
-      });
-      if (!po) throw new NotFoundException('Purchase order not found');
-      assertPurchaseTransition('PO', po.status, 'APPROVED');
-      return tx.purchaseOrder.update({
-        where: { id },
-        data: { status: 'APPROVED', updatedById: user.id, version: { increment: 1 } },
+        data: { status: 'ORDER_PLACED', updatedById: user.id, version: { increment: 1 } },
         select: purchaseOrderScalars,
       });
     });
@@ -784,10 +711,20 @@ export class PurchaseProcurementService {
           select: { ...purchaseOrderScalars, items: true },
         });
         if (!purchaseOrder) throw new NotFoundException('Linked Purchase Order not found');
-        if (!['APPROVED', 'PARTIALLY_RECEIVED'].includes(purchaseOrder.status)) {
-          throw new BadRequestException('PO must be APPROVED or PARTIALLY_RECEIVED before creating a GRN');
+        if (!['ORDER_PLACED', 'APPROVED', 'PENDING_APPROVAL', 'PARTIALLY_RECEIVED'].includes(purchaseOrder.status)) {
+          throw new BadRequestException('PO must be ORDER_PLACED or PARTIALLY_RECEIVED before creating a GRN');
         }
       }
+
+      const supplierId = purchaseOrder?.supplierId || dto.supplierId;
+      if (!supplierId) throw new BadRequestException('Purchase Order or Supplier is required');
+      const [branch, supplier, settings] = await Promise.all([
+        tx.branch.findUnique({ where: { id: branchId } }),
+        tx.supplier.findUnique({ where: { id: supplierId } }),
+        this.core.getSettings(user.businessId, tx),
+      ]);
+      if (!branch) throw new NotFoundException('Branch not found');
+      if (!supplier) throw new NotFoundException('Supplier not found');
 
       const grnNumber = dto.grnNumber || (await this.core.nextNumber(tx, user.businessId, branchId, 'GRN'));
       const resolvedItems = dto.items.map((item) => {
@@ -859,8 +796,15 @@ export class PurchaseProcurementService {
                 purchaseOrderItemId: item.purchaseOrderItemId || poItem?.id || null,
                 quantity: String(item.quantity),
                 rejectedQuantity: String(item.rejectedQuantity || 0),
-                unitCost: cost.toFixed(4),
-                landedCost: landed.toFixed(4),
+                unitCost: unitCost.toFixed(4),
+                landedCost: landedCost.toFixed(4),
+                taxRate: String(taxRate),
+                taxableValue: calculatedItem.taxableValue,
+                cgstAmount: calculatedItem.cgstAmount,
+                sgstAmount: calculatedItem.sgstAmount,
+                igstAmount: calculatedItem.igstAmount,
+                vatAmount: calculatedItem.vatAmount,
+                totalTax: calculatedItem.taxAmount,
               };
             }),
           },
@@ -1160,7 +1104,7 @@ export class PurchaseProcurementService {
           const anyRec = allItems.some((i: any) => Number(i.receivedQuantity) > 0);
           await tx.purchaseOrder.update({
             where: { id: grn.purchaseOrder.id },
-            data: { status: anyRec ? 'PARTIALLY_RECEIVED' : 'APPROVED', updatedById: user.id, version: { increment: 1 } },
+            data: { status: anyRec ? 'PARTIALLY_RECEIVED' : 'ORDER_PLACED', updatedById: user.id, version: { increment: 1 } },
             select: { id: true },
           });
         }

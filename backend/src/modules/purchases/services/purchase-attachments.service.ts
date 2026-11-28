@@ -5,6 +5,8 @@ import * as path from 'path';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { PurchaseCoreService } from './purchase-core.service';
 
+export const PURCHASE_INVOICE_BILL_MIME_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+
 @Injectable()
 export class PurchaseAttachmentsService {
   private readonly uploadRoot = path.resolve(process.cwd(), 'uploads', 'purchases');
@@ -35,7 +37,10 @@ export class PurchaseAttachmentsService {
       ? (settings.allowedAttachmentMimeTypes as string[])
       : ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
 
-    if (!allowedMimes.includes(file.mimetype)) {
+    const permittedMimes = documentType.toUpperCase() === 'INVOICE'
+      ? allowedMimes.filter((mime) => PURCHASE_INVOICE_BILL_MIME_TYPES.includes(mime))
+      : allowedMimes;
+    if (!permittedMimes.includes(file.mimetype)) {
       throw new BadRequestException(`MIME type "${file.mimetype}" is not permitted`);
     }
 

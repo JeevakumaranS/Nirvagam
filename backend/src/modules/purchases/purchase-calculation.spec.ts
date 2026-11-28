@@ -1,15 +1,13 @@
 import { calculatePurchaseDocument } from '@nirvagam/shared';
 
 describe('purchase calculation engine', () => {
-  it('calculates line discount, invoice discount, and intra-state CGST/SGST in order', () => {
+  it('calculates invoice discount and intra-state CGST/SGST in order', () => {
     const result = calculatePurchaseDocument(
       [
         {
           id: 'line-1',
           quantity: '2',
           rate: '500',
-          lineDiscountType: 'PERCENT',
-          lineDiscountValue: '10',
           taxRate: '18',
         },
       ],
@@ -23,12 +21,12 @@ describe('purchase calculation engine', () => {
       }
     );
 
-    expect(result.taxableAmount).toBe('850');
-    expect(result.discountAmount).toBe('150');
-    expect(result.cgstAmount).toBe('76.5');
-    expect(result.sgstAmount).toBe('76.5');
-    expect(result.totalTax).toBe('153');
-    expect(result.grandTotal).toBe('1003');
+    expect(result.taxableAmount).toBe('950');
+    expect(result.discountAmount).toBe('50');
+    expect(result.cgstAmount).toBe('85.5');
+    expect(result.sgstAmount).toBe('85.5');
+    expect(result.totalTax).toBe('171');
+    expect(result.grandTotal).toBe('1121');
   });
 
   it('calculates inclusive tax and interstate IGST', () => {

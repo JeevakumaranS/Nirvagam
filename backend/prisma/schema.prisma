@@ -817,6 +817,7 @@ enum PurchaseOrderStatus {
   DRAFT
   PENDING_APPROVAL
   APPROVED
+  ORDER_PLACED
   PARTIALLY_RECEIVED
   FULLY_RECEIVED
   CLOSED
@@ -1028,9 +1029,6 @@ model PurchaseOrderItem {
   invoicedQuantity     Decimal      @default(0) @map("invoiced_quantity") @db.Decimal(15, 3)
   overReceiptTolerance Decimal?     @map("over_receipt_tolerance") @db.Decimal(5, 2)
   unitRate             Decimal      @map("unit_rate") @db.Decimal(15, 4)
-  discountType     DiscountType @default(AMOUNT) @map("discount_type")
-  discountValue    Decimal      @default(0) @map("discount_value") @db.Decimal(15, 2)
-  discountAmount   Decimal      @default(0) @map("discount_amount") @db.Decimal(15, 2)
   taxableValue     Decimal      @default(0) @map("taxable_value") @db.Decimal(15, 2)
   taxRate          Decimal      @default(0) @map("tax_rate") @db.Decimal(5, 2)
   cgstAmount       Decimal      @default(0) @map("cgst_amount") @db.Decimal(15, 2)
@@ -1203,11 +1201,8 @@ model PurchaseInvoiceItem {
   purchaseOrderItemId String? @map("purchase_order_item_id") @db.Uuid
   description       String?
   unitRate          Decimal @default(0) @map("unit_rate") @db.Decimal(15, 4)
-  discountAmount    Decimal @default(0) @map("discount_amount") @db.Decimal(15, 2)
   quantity          Decimal @db.Decimal(15, 2)
-  unitPrice         Decimal @default(0) @map("unit_price") @db.Decimal(15, 2)
   taxableValue      Decimal @map("taxable_value") @db.Decimal(15, 2)
-  gstRate           Decimal @default(0) @map("gst_rate") @db.Decimal(5, 2)
   taxRate           Decimal @default(0) @map("tax_rate") @db.Decimal(5, 2)
   cgstAmount        Decimal @default(0) @map("cgst_amount") @db.Decimal(15, 2)
   sgstAmount        Decimal @default(0) @map("sgst_amount") @db.Decimal(15, 2)
@@ -1287,7 +1282,6 @@ model PurchaseReturnItem {
   description      String?
   quantity         Decimal @db.Decimal(15, 3)
   unitRate         Decimal @map("unit_rate") @db.Decimal(15, 4)
-  discountAmount   Decimal @default(0) @map("discount_amount") @db.Decimal(15, 2)
   taxableValue     Decimal @default(0) @map("taxable_value") @db.Decimal(15, 2)
   taxRate          Decimal @default(0) @map("tax_rate") @db.Decimal(5, 2)
   cgstAmount       Decimal @default(0) @map("cgst_amount") @db.Decimal(15, 2)

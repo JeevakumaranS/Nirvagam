@@ -2,11 +2,11 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { formatSupplierDisplayName } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
-import { Modal } from "@/components/ui/modal";
 import { Badge } from "@/components/ui/badge";
+import { Modal } from "@/components/ui/modal";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -23,35 +23,27 @@ import {
   PurchaseDocKind,
 } from "@/components/purchases/purchase-document-drawer";
 import { PurchasePrintModal } from "@/components/purchases/purchase-print-modal";
-import { PurchaseFinancialsReports } from "@/components/purchases/purchase-financials-reports";
-import { PurchaseSettingsApprovals } from "@/components/purchases/purchase-settings-approvals";
 import {
   Plus,
   RefreshCw,
   Search,
   Printer,
   ArrowRight,
-  CreditCard,
-  RotateCcw,
   CheckCircle2,
   XCircle,
   Send,
+  Eye,
 } from "lucide-react";
 
 type MainTab =
   | "invoices"
   | "requests"
   | "orders"
-  | "grns"
-  | "returns"
-  | "payments"
-  | "approvals"
-  | "reports"
-  | "settings";
+  | "grns";
 
 export default function PurchasesPage() {
   const { toast } = useToast();
-  const [tab, setTab] = useState<MainTab>("invoices");
+  const [tab, setTab] = useState<MainTab>("requests");
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
@@ -60,6 +52,10 @@ export default function PurchasesPage() {
   const [products, setProducts] = useState<any[]>([]);
   const [branchStateCode, setBranchStateCode] = useState("33");
   const [taxRegime, setTaxRegime] = useState<"GST" | "VAT">("GST");
+  const [cancelRequest, setCancelRequest] = useState<{ url: string } | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelSubmitting, setCancelSubmitting] = useState(false);
+  const [viewingRequest, setViewingRequest] = useState<any | null>(null);
 
   // Drawer state
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -72,26 +68,13 @@ export default function PurchasesPage() {
   // Print modal
   const [printState, setPrintState] = useState<{
     open: boolean;
-    type: "PO" | "GRN" | "INVOICE" | "RETURN" | "PAYMENT";
+    type: "PO" | "GRN" | "INVOICE";
     id: string | null;
   }>({
     open: false,
     type: "INVOICE",
     id: null,
   });
-
-  // Payment modal
-  const [payModal, setPayModal] = useState<{
-    open: boolean;
-    invoice?: any;
-    isAdvance?: boolean;
-  }>({ open: false });
-  const [paySupplierId, setPaySupplierId] = useState("");
-  const [payAmount, setPayAmount] = useState("");
-  const [payMode, setPayMode] = useState<
-    "BANK_TRANSFER" | "CASH" | "UPI" | "CHEQUE"
-  >("BANK_TRANSFER");
-  const [payRef, setPayRef] = useState("");
 
   const loadMasterData = useCallback(async () => {
     try {
@@ -110,10 +93,6 @@ export default function PurchasesPage() {
   }, []);
 
   const loadTabList = useCallback(async () => {
-    if (["approvals", "reports", "settings"].includes(tab)) {
-      setLoading(false);
-      return;
-    }
     try {
       setLoading(true);
       const res = await apiFetch(`/purchases/${tab}`, { params: { search } });
@@ -161,76 +140,51 @@ export default function PurchasesPage() {
     }
   };
 
-  const handleCancel = async (url: string) => {
-    const reason = window.prompt("Enter mandatory cancellation reason:");
-    if (!reason?.trim()) return;
-    await runAction(url, "Document cancelled", { reason });
+  const handleCancel = (url: string) => {
+    setCancelReason("");
+    setCancelRequest({ url });
   };
 
-  const handleCreateReturn = async (invoice: any) => {
-    if (!invoice.items?.length) return;
-    const reason =
-      window.prompt("Enter reason for Purchase Return (Debit Note):") ||
-      "Damaged / Returned goods";
-    try {
-      const ret = await apiFetch("/purchases/returns", {
-        method: "POST",
-        body: JSON.stringify({
-          purchaseInvoiceId: invoice.id,
-          reason,
-          items: invoice.items.map((i: any) => ({
-            variantId: i.variantId,
-            invoiceItemId: i.id,
-            quantity: i.quantity,
-          })),
-        }),
-      });
-      await apiFetch(`/purchases/returns/${ret.id}/post`, { method: "POST" });
+  const closeCancelModal = () => {
+    if (cancelSubmitting) return;
+    setCancelRequest(null);
+    setCancelReason("");
+  };
+
+  const submitCancellation = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const reason = cancelReason.trim();
+    if (!reason) {
       toast({
-        type: "success",
-        title: "Purchase Return Posted",
-        message: "Stock and supplier ledger reversed.",
+        type: "warning",
+        title: "Reason required",
+        message: "Enter a reason before cancelling this document.",
       });
-      setTab("returns");
-      loadTabList();
-    } catch (err: any) {
-      toast({ type: "error", title: "Return failed", message: err.message });
+      return;
     }
-  };
+    if (!cancelRequest) return;
 
-  const handleSavePayment = async (e: React.FormEvent) => {
-    e.preventDefault();
+    setCancelSubmitting(true);
     try {
-      await apiFetch("/purchases/payments", {
+      await apiFetch(cancelRequest.url, {
         method: "POST",
-        body: JSON.stringify({
-          supplierId: payModal.invoice?.supplierId || paySupplierId,
-          paymentType: payModal.isAdvance ? "ADVANCE" : "BILL_PAYMENT",
-          mode: payMode,
-          amount: payAmount,
-          reference: payRef || undefined,
-          allocations: payModal.invoice
-            ? [{ purchaseInvoiceId: payModal.invoice.id, amount: payAmount }]
-            : [],
-        }),
+        body: JSON.stringify({ reason }),
       });
-      toast({
-        type: "success",
-        title: "Payment Posted",
-        message: "Accounts Payable & Supplier Ledger updated.",
-      });
-      setPayModal({ open: false });
-      setPayAmount("");
-      setPayRef("");
-      loadTabList();
+      setCancelRequest(null);
+      setCancelReason("");
+      toast({ type: "success", title: "Document cancelled" });
+      await loadTabList();
     } catch (err: any) {
-      toast({ type: "error", title: "Payment failed", message: err.message });
+      toast({ type: "error", title: "Cancellation failed", message: err.message });
+    } finally {
+      setCancelSubmitting(false);
     }
   };
 
   const statusBadge = (status: string) => {
     const variant =
       status === "APPROVED" ||
+      status === "ORDER_PLACED" ||
       status === "POSTED" ||
       status === "PAID" ||
       status === "FULLY_RECEIVED"
@@ -244,7 +198,7 @@ export default function PurchasesPage() {
             : "neutral";
     return (
       <Badge size="sm" variant={variant}>
-        {status}
+        {status === "ORDER_PLACED" ? "Order Placed" : status}
       </Badge>
     );
   };
@@ -258,8 +212,7 @@ export default function PurchasesPage() {
             Purchase Management
           </h2>
           <p className="text-xs text-text-secondary mt-0.5">
-            Complete procurement lifecycle: PR → PO → GRN → Purchase Invoice
-            (Direct & Linked) → Returns → Supplier Payments & Ledger.
+            Manage purchase requests, orders, goods received, and supplier invoices.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -309,35 +262,16 @@ export default function PurchasesPage() {
               New GRN
             </Button>
           )}
-          {tab === "payments" && (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => {
-                setPaySupplierId(suppliers[0]?.id || "");
-                setPayAmount("");
-                setPayModal({ open: true, isAdvance: true });
-              }}
-              icon={<CreditCard className="w-3.5 h-3.5" />}
-            >
-              Record Advance Payment
-            </Button>
-          )}
         </div>
       </div>
 
       {/* Navigation Tabs */}
       <div className="flex flex-wrap gap-1 p-1 bg-surface-secondary/70 rounded-xl border border-border text-xs">
         {[
-          { id: "invoices", label: "Purchase Invoices" },
           { id: "requests", label: "Purchase Requests (PR)" },
           { id: "orders", label: "Purchase Orders (PO)" },
           { id: "grns", label: "Goods Received (GRN)" },
-          { id: "returns", label: "Returns (Debit Notes)" },
-          { id: "payments", label: "Payments & Advances" },
-          { id: "approvals", label: "Approvals" },
-          { id: "reports", label: "Supplier Ledger & Reports" },
-          { id: "settings", label: "Settings" },
+          { id: "invoices", label: "Purchase Invoices" },
         ].map((t) => (
           <button
             key={t.id}
@@ -350,14 +284,7 @@ export default function PurchasesPage() {
       </div>
 
       {/* Sub-views */}
-      {tab === "approvals" && <PurchaseSettingsApprovals mode="approvals" />}
-      {tab === "settings" && <PurchaseSettingsApprovals mode="settings" />}
-      {tab === "reports" && (
-        <PurchaseFinancialsReports suppliers={suppliers} products={products} />
-      )}
-
-      {!["approvals", "reports", "settings"].includes(tab) && (
-        <>
+      <>
           <div className="max-w-sm">
             <Input
               placeholder="Search document number..."
@@ -379,7 +306,9 @@ export default function PurchasesPage() {
                   <TableHead>Document</TableHead>
                   <TableHead>Supplier</TableHead>
                   <TableHead>Date</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
+                  {tab !== "requests" && (
+                    <TableHead className="text-right">Total</TableHead>
+                  )}
                   <TableHead className="text-center">Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -394,9 +323,7 @@ export default function PurchasesPage() {
                         {row.invoiceNumber ||
                           row.orderNumber ||
                           row.grnNumber ||
-                          row.requestNumber ||
-                          row.returnNumber ||
-                          row.paymentNumber}
+                          row.requestNumber}
                         {row.supplierBillNumber && (
                           <div className="text-[10px] text-text-tertiary">
                             Bill: {row.supplierBillNumber}
@@ -413,30 +340,30 @@ export default function PurchasesPage() {
                         )}
                       </TableCell>
                       <TableCell className="font-medium text-text-primary">
-                        {row.supplier?.name || row.department || "—"}
+                        {formatSupplierDisplayName(row.supplier) || row.department || "—"}
                       </TableCell>
                       <TableCell className="text-xs text-text-secondary">
                         {new Date(
                           row.invoiceDate ||
                             row.orderDate ||
                             row.grnDate ||
-                            row.requestDate ||
-                            row.returnDate ||
-                            row.paymentDate,
+                            row.requestDate,
                         ).toLocaleDateString()}
                       </TableCell>
-                      <TableCell className="text-right font-mono font-semibold">
-                        ₹{" "}
-                        {Number(
-                          row.grandTotal ?? row.totalAmount ?? row.amount ?? 0,
-                        ).toFixed(2)}
-                        {row.balanceAmount !== undefined &&
-                          Number(row.balanceAmount) > 0 && (
-                            <div className="text-[10px] text-warning font-normal">
-                              Bal: ₹{Number(row.balanceAmount).toFixed(2)}
-                            </div>
-                          )}
-                      </TableCell>
+                      {tab !== "requests" && (
+                        <TableCell className="text-right font-mono font-semibold">
+                          ₹{" "}
+                          {Number(
+                            row.grandTotal ?? row.totalAmount ?? row.amount ?? 0,
+                          ).toFixed(2)}
+                          {row.balanceAmount !== undefined &&
+                            Number(row.balanceAmount) > 0 && (
+                              <div className="text-[10px] text-warning font-normal">
+                                Bal: ₹{Number(row.balanceAmount).toFixed(2)}
+                              </div>
+                            )}
+                        </TableCell>
+                      )}
                       <TableCell className="text-center">
                         {statusBadge(row.status)}
                       </TableCell>
@@ -459,7 +386,7 @@ export default function PurchasesPage() {
                             </Button>
                           )}
                           {tab === "requests" &&
-                            row.status === "APPROVED" &&
+                            ["APPROVED", "PENDING_APPROVAL"].includes(row.status) &&
                             !row.isConvertedToPo && (
                             <Button
                               size="sm"
@@ -470,7 +397,7 @@ export default function PurchasesPage() {
                                   supplierId: row.supplierId,
                                   items: row.items?.map((i: any) => ({
                                     ...i,
-                                    unitRate: i.preferredRate || 0,
+                                    unitRate: 0,
                                   })),
                                 })
                               }
@@ -497,7 +424,9 @@ export default function PurchasesPage() {
                             </Button>
                           )}
                           {tab === "orders" &&
-                            (row.status === "APPROVED" ||
+                            (row.status === "ORDER_PLACED" ||
+                              row.status === "APPROVED" ||
+                              row.status === "PENDING_APPROVAL" ||
                               row.status === "PARTIALLY_RECEIVED") && (
                               <Button
                                 size="sm"
@@ -561,6 +490,12 @@ export default function PurchasesPage() {
                                     )
                                     .map((i: any) => ({
                                       variantId: i.variantId,
+                                      itemName:
+                                        i.itemName ||
+                                        (i.variant
+                                          ? `${i.variant.product?.name || ""} — ${i.variant.name}`
+                                          : undefined),
+                                      unit: i.unit || "PCS",
                                       grnItemId: i.id,
                                       purchaseOrderItemId:
                                         i.purchaseOrderItemId,
@@ -568,6 +503,7 @@ export default function PurchasesPage() {
                                         Number(i.quantity) -
                                         Number(i.invoicedQuantity || 0),
                                       unitRate: i.unitCost,
+                                      taxRate: "0",
                                     })),
                                 })
                               }
@@ -593,44 +529,8 @@ export default function PurchasesPage() {
                               Post
                             </Button>
                           )}
-                          {tab === "invoices" &&
-                            (row.status === "APPROVED" ||
-                              row.status === "PARTIALLY_PAID") && (
-                              <>
-                                <Button
-                                  size="sm"
-                                  variant="primary"
-                                  onClick={() => {
-                                    setPayAmount(String(row.balanceAmount));
-                                    setPayModal({
-                                      open: true,
-                                      invoice: row,
-                                      isAdvance: false,
-                                    });
-                                  }}
-                                  icon={<CreditCard className="w-3 h-3" />}
-                                >
-                                  Pay
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="secondary"
-                                  onClick={() => handleCreateReturn(row)}
-                                  icon={<RotateCcw className="w-3 h-3" />}
-                                >
-                                  Return
-                                </Button>
-                              </>
-                            )}
-
                           {/* Print */}
-                          {[
-                            "orders",
-                            "grns",
-                            "invoices",
-                            "returns",
-                            "payments",
-                          ].includes(tab) && (
+                          {["orders", "grns", "invoices"].includes(tab) && (
                             <Button
                               size="sm"
                               variant="ghost"
@@ -642,11 +542,7 @@ export default function PurchasesPage() {
                                       ? "PO"
                                       : tab === "grns"
                                         ? "GRN"
-                                        : tab === "invoices"
-                                          ? "INVOICE"
-                                          : tab === "returns"
-                                            ? "RETURN"
-                                            : "PAYMENT",
+                                        : "INVOICE",
                                   id: row.id,
                                 })
                               }
@@ -660,6 +556,7 @@ export default function PurchasesPage() {
                           {["requests", "orders", "grns", "invoices"].includes(
                             tab,
                           ) &&
+                            !(tab === "requests" && row.status === "APPROVED") &&
                             ![
                               "CANCELLED",
                               "PAID",
@@ -680,6 +577,16 @@ export default function PurchasesPage() {
                                 Cancel
                               </Button>
                             )}
+                          {tab === "requests" && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setViewingRequest(row)}
+                              icon={<Eye className="w-3 h-3" />}
+                            >
+                              View Details
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -688,8 +595,7 @@ export default function PurchasesPage() {
               </TableBody>
             </Table>
           )}
-        </>
-      )}
+      </>
 
       {/* Document Drawer */}
       <PurchaseDocumentDrawer
@@ -713,68 +619,115 @@ export default function PurchasesPage() {
         documentId={printState.id}
       />
 
-      {/* Payment Modal */}
       <Modal
-        isOpen={payModal.open}
-        onClose={() => setPayModal({ open: false })}
-        title={
-          payModal.isAdvance
-            ? "Record Supplier Advance Payment"
-            : `Pay Invoice ${payModal.invoice?.invoiceNumber}`
-        }
+        isOpen={Boolean(cancelRequest)}
+        onClose={closeCancelModal}
+        title="Cancel document"
+        description="Provide a reason for cancelling this purchase document."
+        maxWidth="md"
       >
-        <form onSubmit={handleSavePayment} className="space-y-3">
-          {payModal.isAdvance && (
-            <Select
-              label="Supplier *"
-              value={paySupplierId}
-              onChange={(e) => setPaySupplierId(e.target.value)}
-            >
-              {suppliers.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </Select>
-          )}
-          <Input
-            label="Amount (₹) *"
-            type="number"
-            step="0.01"
-            value={payAmount}
-            onChange={(e) => setPayAmount(e.target.value)}
-            required
-          />
-          <Select
-            label="Payment Mode"
-            value={payMode}
-            onChange={(e) => setPayMode(e.target.value as any)}
-          >
-            <option value="BANK_TRANSFER">Bank Transfer</option>
-            <option value="CASH">Cash</option>
-            <option value="UPI">UPI</option>
-            <option value="CHEQUE">Cheque</option>
-          </Select>
-          <Input
-            label="Reference / UTR #"
-            value={payRef}
-            onChange={(e) => setPayRef(e.target.value)}
-            placeholder="Optional transaction reference"
-          />
-          <div className="pt-3 flex justify-end gap-2 border-t border-border">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => setPayModal({ open: false })}
-            >
-              Cancel
+        <form onSubmit={submitCancellation} className="space-y-4">
+          <label className="block space-y-1.5 text-xs font-medium text-text-primary">
+            <span>Cancellation reason *</span>
+            <textarea
+              autoFocus
+              required
+              rows={4}
+              value={cancelReason}
+              onChange={(event) => setCancelReason(event.target.value)}
+              placeholder="Enter the reason for cancellation..."
+              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-accent/40"
+            />
+          </label>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="secondary" onClick={closeCancelModal}>
+              Keep document
             </Button>
-            <Button type="submit" variant="primary">
-              Post Payment
+            <Button type="submit" variant="danger" loading={cancelSubmitting}>
+              Confirm cancellation
             </Button>
           </div>
         </form>
       </Modal>
+
+      <Modal
+        isOpen={Boolean(viewingRequest)}
+        onClose={() => setViewingRequest(null)}
+        title={viewingRequest ? `Purchase Request ${viewingRequest.requestNumber}` : "Purchase Request Details"}
+        description="Purchase request details"
+        maxWidth="lg"
+      >
+        {viewingRequest && (
+          <div className="space-y-4 text-xs">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="text-text-tertiary">Supplier</div>
+                <div className="font-medium text-text-primary">{formatSupplierDisplayName(viewingRequest.supplier) || "—"}</div>
+              </div>
+              <div>
+                <div className="text-text-tertiary">Request date</div>
+                <div className="text-text-primary">
+                  {viewingRequest.requestDate
+                    ? new Date(viewingRequest.requestDate).toLocaleDateString()
+                    : "—"}
+                </div>
+              </div>
+              <div>
+                <div className="text-text-tertiary">Department</div>
+                <div className="text-text-primary">{viewingRequest.department || "—"}</div>
+              </div>
+              <div>
+                <div className="text-text-tertiary">Status</div>
+                <div className="text-text-primary">{viewingRequest.status}</div>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="mb-2 font-semibold text-text-primary">Requested items</h4>
+              <div className="grid grid-cols-12 gap-2 px-2.5 pb-1 text-[10px] font-semibold uppercase text-text-tertiary">
+                <div className="col-span-9">Item</div>
+                <div className="col-span-3 text-right">Quantity</div>
+              </div>
+              <div className="max-h-72 overflow-y-auto rounded-md border border-border divide-y divide-border">
+                {(viewingRequest.items || []).map((item: any) => (
+                  <div key={item.id} className="grid grid-cols-12 gap-2 p-2.5">
+                    <div className="col-span-9">
+                      <div className="font-medium text-text-primary">
+                        {item.itemName ||
+                          [item.variant?.product?.name, item.variant?.name].filter(Boolean).join(" — ") ||
+                          item.description ||
+                          "Item"}
+                      </div>
+                      {item.description && (
+                        <div className="mt-0.5 text-[11px] text-text-tertiary">{item.description}</div>
+                      )}
+                    </div>
+                    <div className="col-span-3 text-right text-text-secondary">
+                      {item.quantity} {item.unit || ""}
+                    </div>
+                  </div>
+                ))}
+                {!viewingRequest.items?.length && (
+                  <div className="p-3 text-center text-text-tertiary">No items recorded.</div>
+                )}
+              </div>
+            </div>
+
+            {viewingRequest.notes && (
+              <div>
+                <div className="text-text-tertiary">Notes</div>
+                <p className="mt-1 whitespace-pre-wrap text-text-primary">{viewingRequest.notes}</p>
+              </div>
+            )}
+            <div className="flex justify-end border-t border-border pt-3">
+              <Button type="button" variant="secondary" onClick={() => setViewingRequest(null)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
     </div>
   );
 }
